@@ -20,7 +20,7 @@ export class RefreshToken {
   @Prop()
   revokedAt?: Date;
 
-  @Prop({ required: true })
+  @Prop({ required: true, index: false })
   expiresAt: Date;
 
   createdAt?: Date;

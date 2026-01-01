@@ -59,6 +59,26 @@ export class PromotionsController {
         activeTo: { type: 'string', format: 'date-time' },
         linkTo: { type: 'string' },
         discountCode: { type: 'string' },
+        discountType: {
+          type: 'string',
+          enum: ['percentage', 'fixed_amount'],
+          description: 'Type of discount: percentage or fixed_amount',
+        },
+        discountValue: {
+          type: 'number',
+          description:
+            'Discount value: percentage (0-100) for percentage type, or fixed amount in kobo for fixed_amount type',
+        },
+        minOrderAmount: {
+          type: 'number',
+          description:
+            'Minimum order amount in kobo to qualify for the discount',
+        },
+        maxDiscountAmount: {
+          type: 'number',
+          description:
+            'Maximum discount amount in kobo (only applicable for percentage discounts)',
+        },
         status: {
           type: 'string',
           enum: ['inactive', 'active', 'ended'],
@@ -82,7 +102,9 @@ export class PromotionsController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Get all active promotions for authenticated users' })
+  @ApiOperation({
+    summary: 'Get all active promotions for authenticated users',
+  })
   @ApiResponse({
     status: 200,
     description: 'Active promotions retrieved successfully',
@@ -127,6 +149,26 @@ export class PromotionsController {
         activeTo: { type: 'string', format: 'date-time' },
         linkTo: { type: 'string' },
         discountCode: { type: 'string' },
+        discountType: {
+          type: 'string',
+          enum: ['percentage', 'fixed_amount'],
+          description: 'Type of discount: percentage or fixed_amount',
+        },
+        discountValue: {
+          type: 'number',
+          description:
+            'Discount value: percentage (0-100) for percentage type, or fixed amount in kobo for fixed_amount type',
+        },
+        minOrderAmount: {
+          type: 'number',
+          description:
+            'Minimum order amount in kobo to qualify for the discount',
+        },
+        maxDiscountAmount: {
+          type: 'number',
+          description:
+            'Maximum discount amount in kobo (only applicable for percentage discounts)',
+        },
         status: {
           type: 'string',
           enum: ['inactive', 'active', 'ended'],

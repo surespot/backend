@@ -31,6 +31,10 @@ export class PromotionsRepository {
     status: PromotionStatus;
     linkTo: string;
     discountCode?: string;
+    discountType?: string;
+    discountValue?: number;
+    minOrderAmount?: number;
+    maxDiscountAmount?: number;
   }): Promise<PromotionDocument> {
     const promotion = new this.promotionModel(data);
     return promotion.save();
@@ -121,5 +125,32 @@ export class PromotionsRepository {
       { status: 'ended' },
     );
     return result.modifiedCount ?? 0;
+  }
+
+  /**
+   * Increment the usage count of a promotion
+   * @param id Promotion ID
+   * @returns Updated promotion document
+   */
+  async incrementUsageCount(id: string): Promise<PromotionDocument | null> {
+    this.validateObjectId(id, 'promotionId');
+    return this.promotionModel
+      .findByIdAndUpdate(id, { $inc: { usageCount: 1 } }, { new: true })
+      .exec();
+  }
+
+  /**
+   * Find a promotion by its discount code
+   * @param discountCode The discount code to search for
+   * @returns Promotion document or null
+   */
+  async findByDiscountCode(
+    discountCode: string,
+  ): Promise<PromotionDocument | null> {
+    return this.promotionModel
+      .findOne({
+        discountCode: { $regex: new RegExp(`^${discountCode}$`, 'i') },
+      })
+      .exec();
   }
 }

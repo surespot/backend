@@ -8,6 +8,7 @@ import {
   Max,
   IsLongitude,
   IsLatitude,
+  IsBoolean,
 } from 'class-validator';
 
 export class UpdateSavedLocationDto {
@@ -83,4 +84,14 @@ export class UpdateSavedLocationDto {
   @IsString()
   @IsOptional()
   regionId?: string;
+
+  @ApiProperty({
+    example: true,
+    description:
+      'Set this location as active (only one can be active at a time)',
+    required: false,
+  })
+  @IsBoolean()
+  @IsOptional()
+  isActive?: boolean;
 }

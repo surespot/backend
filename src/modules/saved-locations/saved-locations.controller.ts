@@ -108,6 +108,47 @@ export class SavedLocationsController {
     return this.savedLocationsService.findAll(user.id);
   }
 
+  @Get('active')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get the active saved location for the current user',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Active location retrieved successfully',
+    schema: {
+      example: {
+        success: true,
+        message: 'Active location retrieved successfully',
+        data: {
+          id: '507f1f77bcf86cd799439011',
+          userId: '507f1f77bcf86cd799439012',
+          label: 'Home',
+          streetAddress: '123 Main Street',
+          latitude: 6.5244,
+          longitude: 3.3792,
+          state: 'Lagos',
+          country: 'Nigeria',
+          regionId: 'region_123',
+          isActive: true,
+          createdAt: '2025-11-27T22:00:00.000Z',
+          updatedAt: '2025-11-27T22:00:00.000Z',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'No active location found',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - Invalid or missing token',
+  })
+  async findActive(@CurrentUser() user: CurrentUser) {
+    return this.savedLocationsService.findActive(user.id);
+  }
+
   @Get(':id')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Get a specific saved location by ID' })

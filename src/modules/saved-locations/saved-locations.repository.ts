@@ -86,6 +86,7 @@ export class SavedLocationsRepository {
       state?: string;
       country?: string;
       regionId?: string;
+      isActive?: boolean;
     },
   ): Promise<SavedLocationDocument | null> {
     this.validateObjectId(locationId, 'locationId');
@@ -97,6 +98,7 @@ export class SavedLocationsRepository {
       state?: string;
       country?: string;
       regionId?: string;
+      isActive?: boolean;
       location?: {
         type: 'Point';
         coordinates: [number, number];
@@ -109,6 +111,7 @@ export class SavedLocationsRepository {
       ...(data.state !== undefined && { state: data.state }),
       ...(data.country !== undefined && { country: data.country }),
       ...(data.regionId !== undefined && { regionId: data.regionId }),
+      ...(data.isActive !== undefined && { isActive: data.isActive }),
     };
 
     // If coordinates are being updated, update the location GeoJSON
@@ -159,6 +162,28 @@ export class SavedLocationsRepository {
         userId: new Types.ObjectId(userId),
         label,
       })
+      .exec();
+  }
+
+  async findActiveByUserId(
+    userId: string,
+  ): Promise<SavedLocationDocument | null> {
+    this.validateObjectId(userId, 'userId');
+    return this.savedLocationModel
+      .findOne({
+        userId: new Types.ObjectId(userId),
+        isActive: true,
+      })
+      .exec();
+  }
+
+  async deactivateAllByUserId(userId: string): Promise<void> {
+    this.validateObjectId(userId, 'userId');
+    await this.savedLocationModel
+      .updateMany(
+        { userId: new Types.ObjectId(userId), isActive: true },
+        { $set: { isActive: false } },
+      )
       .exec();
   }
 }

@@ -15,7 +15,9 @@ import { v4 as uuidv4 } from 'uuid';
 import { Types } from 'mongoose';
 import { AuthRepository } from './auth.repository';
 import { OtpPurpose } from './schemas/otp-code.schema';
-import { UserDocument } from './schemas/user.schema';
+import { UserDocument, UserRole } from './schemas/user.schema';
+import { CloudinaryService } from '../../common/cloudinary/cloudinary.service';
+import { MailService } from '../mail/mail.service';
 import { SendOtpDto } from './dto/send-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ResendOtpDto } from './dto/resend-otp.dto';
@@ -32,6 +34,8 @@ import { VerifyEmailOtpDto } from './dto/verify-email-otp.dto';
 import { ResendEmailOtpDto } from './dto/resend-email-otp.dto';
 import { EmailPasswordResetSendOtpDto } from './dto/email-password-reset-send-otp.dto';
 import { EmailPasswordResetVerifyOtpDto } from './dto/email-password-reset-verify-otp.dto';
+import { AddEmailDto } from './dto/add-email.dto';
+import { VerifyEmailVerificationOtpDto } from './dto/verify-email-verification-otp.dto';
 
 export interface TokenPair {
   accessToken: string;
@@ -66,6 +70,8 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     @Inject(WINSTON_MODULE_PROVIDER) private readonly logger: Logger,
+    private readonly cloudinaryService: CloudinaryService,
+    private readonly mailService: MailService,
   ) {
     this.otpExpiryMinutes = Number(
       this.configService.get('OTP_EXPIRY_MINUTES') ?? 5,
@@ -549,9 +555,23 @@ export class AuthService {
         expiresAt,
       );
 
-      // TODO: Send OTP via email service
-      // For now, log it (REMOVE IN PRODUCTION)
-      console.log(`Email OTP for ${dto.email}: ${otpCode}`);
+      // Send OTP via email service
+      try {
+        await this.mailService.sendOtpEmail({
+          to: dto.email,
+          otp: otpCode,
+          purpose: 'registration',
+          expiresInMinutes: this.otpExpiryMinutes,
+        });
+      } catch (error) {
+        this.logger.error(
+          `Failed to send email OTP to ${this.maskEmail(dto.email)}`,
+          {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
+        // Don't throw - OTP is still saved, user can request resend
+      }
 
       const executionTime = Date.now() - startTime;
       const response = {
@@ -1654,8 +1674,23 @@ export class AuthService {
       expiresAt,
     );
 
-    // TODO: Send OTP via email
-    console.log(`Password reset OTP for ${dto.email}: ${otpCode}`);
+    // Send OTP via email
+    try {
+      await this.mailService.sendOtpEmail({
+        to: dto.email,
+        otp: otpCode,
+        purpose: 'password-reset',
+        expiresInMinutes: this.otpExpiryMinutes,
+      });
+    } catch (error) {
+      this.logger.error(
+        `Failed to send password reset email OTP to ${this.maskEmail(dto.email)}`,
+        {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
+      // Don't throw - OTP is still saved, user can request resend
+    }
 
     return {
       success: true,
@@ -1813,6 +1848,515 @@ export class AuthService {
         return value * 24 * 60 * 60 * 1000;
       default:
         return 900000;
+    }
+  }
+
+  // Secret endpoint to promote user to admin (temporary - remove later)
+  async promoteToAdmin(userId: string) {
+    const user = await this.authRepository.findUserById(userId);
+    if (!user) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'RESOURCE_NOT_FOUND',
+          message: 'User not found',
+        },
+      });
+    }
+
+    const updatedUser = await this.authRepository.updateUser(userId, {
+      role: UserRole.ADMIN,
+    });
+
+    if (!updatedUser) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'RESOURCE_NOT_FOUND',
+          message: 'User not found',
+        },
+      });
+    }
+
+    return {
+      success: true,
+      message: 'User promoted to admin successfully',
+      data: {
+        userId: updatedUser._id.toString(),
+        role: updatedUser.role,
+      },
+    };
+  }
+
+  /**
+   * Send OTP to add email to authenticated user's account
+   */
+  async sendEmailVerificationOtp(
+    userId: string,
+    dto: AddEmailDto,
+  ): Promise<{
+    success: boolean;
+    message: string;
+    data: { expiresIn: number; retryAfter: number };
+  }> {
+    const startTime = Date.now();
+    const maskedEmail = this.maskEmail(dto.email);
+
+    this.logger.info('Email verification OTP request received', {
+      context: 'AuthService',
+      method: 'sendEmailVerificationOtp',
+      userId,
+      email: maskedEmail,
+    });
+
+    try {
+      // Check if email is already in use by another user
+      const existingUser = await this.authRepository.findUserByEmail(dto.email);
+      if (existingUser && existingUser._id.toString() !== userId) {
+        const executionTime = Date.now() - startTime;
+        this.logger.warn(
+          'Email verification OTP request failed - email already in use',
+          {
+            context: 'AuthService',
+            method: 'sendEmailVerificationOtp',
+            userId,
+            email: maskedEmail,
+            errorCode: 'EMAIL_ALREADY_IN_USE',
+            executionTime: `${executionTime}ms`,
+          },
+        );
+        throw new ConflictException({
+          success: false,
+          error: {
+            code: 'EMAIL_ALREADY_IN_USE',
+            message: 'This email address is already in use by another account',
+          },
+        });
+      }
+
+      // Check for recent OTP request (rate limiting)
+      const latestOtp = await this.authRepository.findLatestOtpCode(
+        dto.email,
+        OtpPurpose.EMAIL_VERIFICATION,
+      );
+
+      if (latestOtp && latestOtp.createdAt) {
+        const timeSinceCreation =
+          (Date.now() - latestOtp.createdAt.getTime()) / 1000;
+        if (timeSinceCreation < this.otpResendSeconds) {
+          const retryAfter = Math.ceil(
+            this.otpResendSeconds - timeSinceCreation,
+          );
+          const executionTime = Date.now() - startTime;
+          this.logger.warn('Email verification OTP request rate limited', {
+            context: 'AuthService',
+            method: 'sendEmailVerificationOtp',
+            userId,
+            email: maskedEmail,
+            errorCode: 'EMAIL_OTP_RATE_LIMITED',
+            retryAfter: `${retryAfter}s`,
+            executionTime: `${executionTime}ms`,
+          });
+          throw new BadRequestException({
+            success: false,
+            error: {
+              code: 'EMAIL_OTP_RATE_LIMITED',
+              message: 'Please wait before requesting another OTP',
+              details: {
+                retryAfter,
+              },
+            },
+          });
+        }
+      }
+
+      // Generate 6-digit OTP
+      const otpCode = this.generateOtpCode();
+      const expiresAt = new Date(
+        Date.now() + this.otpExpiryMinutes * 60 * 1000,
+      );
+
+      // Invalidate any existing OTPs for this email
+      await this.authRepository.invalidateOtpCodes(
+        dto.email,
+        OtpPurpose.EMAIL_VERIFICATION,
+      );
+
+      // Save OTP to database
+      await this.authRepository.createOtpCode(
+        dto.email,
+        otpCode,
+        OtpPurpose.EMAIL_VERIFICATION,
+        expiresAt,
+      );
+
+      // Send OTP via email service
+      try {
+        await this.mailService.sendOtpEmail({
+          to: dto.email,
+          otp: otpCode,
+          purpose: 'email-verification',
+          expiresInMinutes: this.otpExpiryMinutes,
+        });
+      } catch (error) {
+        this.logger.error(
+          `Failed to send email verification OTP to ${this.maskEmail(dto.email)}`,
+          {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
+        // Don't throw - OTP is still saved, user can request resend
+      }
+
+      const executionTime = Date.now() - startTime;
+      const response = {
+        success: true,
+        message: 'OTP sent successfully',
+        data: {
+          expiresIn: this.otpExpiryMinutes * 60,
+          retryAfter: this.otpResendSeconds,
+        },
+      };
+
+      this.logger.info('Email verification OTP sent successfully', {
+        context: 'AuthService',
+        method: 'sendEmailVerificationOtp',
+        userId,
+        email: maskedEmail,
+        expiresIn: `${this.otpExpiryMinutes * 60}s`,
+        retryAfter: `${this.otpResendSeconds}s`,
+        executionTime: `${executionTime}ms`,
+      });
+
+      return response;
+    } catch (error) {
+      const executionTime = Date.now() - startTime;
+      if (
+        error instanceof ConflictException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+      this.logger.error(
+        'Email verification OTP request failed with unexpected error',
+        {
+          context: 'AuthService',
+          method: 'sendEmailVerificationOtp',
+          userId,
+          email: maskedEmail,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+          executionTime: `${executionTime}ms`,
+        },
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Verify OTP and add email to authenticated user's account
+   */
+  async verifyEmailVerificationOtp(
+    userId: string,
+    dto: VerifyEmailVerificationOtpDto,
+  ): Promise<{
+    success: boolean;
+    message: string;
+    data: { email: string; isEmailVerified: boolean };
+  }> {
+    const startTime = Date.now();
+    const maskedEmail = this.maskEmail(dto.email);
+    const maskedOtp = this.maskOtp();
+
+    this.logger.info('Email verification OTP verification request received', {
+      context: 'AuthService',
+      method: 'verifyEmailVerificationOtp',
+      userId,
+      email: maskedEmail,
+      otp: maskedOtp,
+    });
+
+    try {
+      // Verify user exists
+      const user = await this.authRepository.findUserById(userId);
+      if (!user) {
+        throw new NotFoundException({
+          success: false,
+          error: {
+            code: 'USER_NOT_FOUND',
+            message: 'User not found',
+          },
+        });
+      }
+
+      // Find OTP record
+      const otpRecord = await this.authRepository.findLatestOtpCode(
+        dto.email,
+        OtpPurpose.EMAIL_VERIFICATION,
+      );
+
+      if (!otpRecord) {
+        const executionTime = Date.now() - startTime;
+        this.logger.warn(
+          'Email verification OTP verification failed - OTP not found',
+          {
+            context: 'AuthService',
+            method: 'verifyEmailVerificationOtp',
+            userId,
+            email: maskedEmail,
+            errorCode: 'EMAIL_OTP_INVALID',
+            executionTime: `${executionTime}ms`,
+          },
+        );
+        throw new BadRequestException({
+          success: false,
+          error: {
+            code: 'EMAIL_OTP_INVALID',
+            message: 'Invalid or expired OTP',
+          },
+        });
+      }
+
+      // Check max attempts
+      if (otpRecord.attempts >= this.maxOtpAttempts) {
+        const executionTime = Date.now() - startTime;
+        this.logger.warn(
+          'Email verification OTP verification failed - max attempts exceeded',
+          {
+            context: 'AuthService',
+            method: 'verifyEmailVerificationOtp',
+            userId,
+            email: maskedEmail,
+            errorCode: 'OTP_MAX_ATTEMPTS',
+            attempts: otpRecord.attempts,
+            maxAttempts: this.maxOtpAttempts,
+            executionTime: `${executionTime}ms`,
+          },
+        );
+        throw new BadRequestException({
+          success: false,
+          error: {
+            code: 'OTP_MAX_ATTEMPTS',
+            message: 'Maximum OTP verification attempts exceeded',
+          },
+        });
+      }
+
+      // Check if OTP matches
+      if (otpRecord.code !== dto.otp) {
+        await this.authRepository.incrementOtpAttempts(otpRecord._id);
+        const executionTime = Date.now() - startTime;
+        this.logger.warn(
+          'Email verification OTP verification failed - invalid OTP code',
+          {
+            context: 'AuthService',
+            method: 'verifyEmailVerificationOtp',
+            userId,
+            email: maskedEmail,
+            errorCode: 'EMAIL_OTP_INVALID',
+            attempts: otpRecord.attempts + 1,
+            maxAttempts: this.maxOtpAttempts,
+            executionTime: `${executionTime}ms`,
+          },
+        );
+        throw new BadRequestException({
+          success: false,
+          error: {
+            code: 'EMAIL_OTP_INVALID',
+            message: 'Invalid OTP code',
+          },
+        });
+      }
+
+      // Check if OTP expired
+      if (otpRecord.expiresAt < new Date()) {
+        const executionTime = Date.now() - startTime;
+        this.logger.warn(
+          'Email verification OTP verification failed - OTP expired',
+          {
+            context: 'AuthService',
+            method: 'verifyEmailVerificationOtp',
+            userId,
+            email: maskedEmail,
+            errorCode: 'EMAIL_OTP_EXPIRED',
+            expiresAt: otpRecord.expiresAt.toISOString(),
+            executionTime: `${executionTime}ms`,
+          },
+        );
+        throw new BadRequestException({
+          success: false,
+          error: {
+            code: 'EMAIL_OTP_EXPIRED',
+            message: 'OTP has expired',
+          },
+        });
+      }
+
+      // Mark OTP as verified
+      await this.authRepository.markOtpAsVerified(otpRecord._id);
+
+      // Update user's email and verification status
+      const updatedUser = await this.authRepository.updateUser(userId, {
+        email: dto.email,
+        isEmailVerified: true,
+      });
+
+      if (!updatedUser) {
+        throw new NotFoundException({
+          success: false,
+          error: {
+            code: 'USER_NOT_FOUND',
+            message: 'User not found',
+          },
+        });
+      }
+
+      const executionTime = Date.now() - startTime;
+      const response = {
+        success: true,
+        message: 'Email verified and added to account successfully',
+        data: {
+          email: updatedUser.email || dto.email,
+          isEmailVerified: updatedUser.isEmailVerified,
+        },
+      };
+
+      this.logger.info('Email verification OTP verified successfully', {
+        context: 'AuthService',
+        method: 'verifyEmailVerificationOtp',
+        userId,
+        email: maskedEmail,
+        executionTime: `${executionTime}ms`,
+      });
+
+      return response;
+    } catch (error) {
+      const executionTime = Date.now() - startTime;
+      if (
+        error instanceof BadRequestException ||
+        error instanceof NotFoundException
+      ) {
+        throw error;
+      }
+      this.logger.error(
+        'Email verification OTP verification failed with unexpected error',
+        {
+          context: 'AuthService',
+          method: 'verifyEmailVerificationOtp',
+          userId,
+          email: maskedEmail,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+          executionTime: `${executionTime}ms`,
+        },
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Upload profile picture for authenticated user
+   */
+  async uploadProfilePicture(
+    userId: string,
+    file: Express.Multer.File,
+  ): Promise<{
+    success: boolean;
+    message: string;
+    data: { avatar: string };
+  }> {
+    // Verify user exists
+    const user = await this.authRepository.findUserById(userId);
+    if (!user) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'USER_NOT_FOUND',
+          message: 'User not found',
+        },
+      });
+    }
+
+    // Validate image type
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    if (!allowedTypes.includes(file.mimetype)) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'INVALID_IMAGE_TYPE',
+          message: 'Image must be JPEG, JPG, PNG, or WebP',
+        },
+      });
+    }
+
+    // Validate file size (max 5MB)
+    const maxSize = 5 * 1024 * 1024; // 5MB in bytes
+    if (file.size > maxSize) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'FILE_TOO_LARGE',
+          message: 'Image size must be less than 5MB',
+        },
+      });
+    }
+
+    try {
+      // Upload to Cloudinary
+      const uploadResult = await this.cloudinaryService.uploadImage(file);
+      const avatarUrl = (uploadResult as { secure_url: string }).secure_url;
+
+      // Update user's avatar
+      const updatedUser = await this.authRepository.updateUser(userId, {
+        avatar: avatarUrl,
+      });
+
+      if (!updatedUser) {
+        throw new NotFoundException({
+          success: false,
+          error: {
+            code: 'USER_NOT_FOUND',
+            message: 'User not found',
+          },
+        });
+      }
+
+      this.logger.info('Profile picture uploaded successfully', {
+        context: 'AuthService',
+        method: 'uploadProfilePicture',
+        userId,
+      });
+
+      return {
+        success: true,
+        message: 'Profile picture uploaded successfully',
+        data: {
+          avatar: updatedUser.avatar || avatarUrl,
+        },
+      };
+    } catch (error) {
+      this.logger.error('Failed to upload profile picture', {
+        context: 'AuthService',
+        method: 'uploadProfilePicture',
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+
+      if (
+        error instanceof BadRequestException ||
+        error instanceof NotFoundException
+      ) {
+        throw error;
+      }
+
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'UPLOAD_FAILED',
+          message: 'Failed to upload profile picture',
+        },
+      });
     }
   }
 }

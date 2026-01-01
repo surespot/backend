@@ -6,6 +6,7 @@ export type OtpCodeDocument = HydratedDocument<OtpCode>;
 export enum OtpPurpose {
   REGISTRATION = 'registration',
   PASSWORD_RESET = 'password_reset',
+  EMAIL_VERIFICATION = 'email_verification',
 }
 
 @Schema({ timestamps: true })
@@ -25,7 +26,7 @@ export class OtpCode {
   @Prop({ default: 0 })
   attempts: number;
 
-  @Prop({ required: true })
+  @Prop({ required: true, index: false })
   expiresAt: Date;
 
   @Prop({ default: false })

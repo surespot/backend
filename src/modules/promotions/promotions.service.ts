@@ -29,6 +29,77 @@ export class PromotionsService {
     }
   }
 
+  private validateDiscountFields(
+    dto: CreatePromotionDto | UpdatePromotionDto,
+  ): void {
+    // If discountType is provided, discountValue must also be provided
+    if (dto.discountType && dto.discountValue === undefined) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'PROMOTION_DISCOUNT_VALUE_REQUIRED',
+          message: 'discountValue is required when discountType is provided',
+        },
+      });
+    }
+
+    // If discountValue is provided, discountType must also be provided
+    if (dto.discountValue !== undefined && !dto.discountType) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'PROMOTION_DISCOUNT_TYPE_REQUIRED',
+          message: 'discountType is required when discountValue is provided',
+        },
+      });
+    }
+
+    // Validate percentage discount
+    if (dto.discountType === 'percentage') {
+      if (
+        dto.discountValue === undefined ||
+        dto.discountValue < 0 ||
+        dto.discountValue > 100
+      ) {
+        throw new BadRequestException({
+          success: false,
+          error: {
+            code: 'PROMOTION_INVALID_PERCENTAGE',
+            message: 'Percentage discount must be between 0 and 100',
+          },
+        });
+      }
+    }
+
+    // Validate fixed amount discount
+    if (dto.discountType === 'fixed_amount') {
+      if (dto.discountValue === undefined || dto.discountValue <= 0) {
+        throw new BadRequestException({
+          success: false,
+          error: {
+            code: 'PROMOTION_INVALID_FIXED_AMOUNT',
+            message: 'Fixed amount discount must be greater than 0',
+          },
+        });
+      }
+    }
+
+    // maxDiscountAmount only makes sense for percentage discounts
+    if (
+      dto.maxDiscountAmount !== undefined &&
+      dto.discountType !== 'percentage'
+    ) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'PROMOTION_MAX_DISCOUNT_INVALID',
+          message:
+            'maxDiscountAmount is only applicable for percentage discounts',
+        },
+      });
+    }
+  }
+
   private toResponse(promotion: PromotionDocument) {
     return {
       id: promotion._id.toString(),
@@ -39,6 +110,11 @@ export class PromotionsService {
       status: promotion.status,
       linkTo: promotion.linkTo,
       discountCode: promotion.discountCode,
+      discountType: promotion.discountType,
+      discountValue: promotion.discountValue,
+      minOrderAmount: promotion.minOrderAmount,
+      maxDiscountAmount: promotion.maxDiscountAmount,
+      usageCount: promotion.usageCount ?? 0,
       createdAt: promotion.createdAt,
       updatedAt: promotion.updatedAt,
     };
@@ -92,6 +168,9 @@ export class PromotionsService {
     const activeTo = this.parseDate(dto.activeTo, 'activeTo') as Date;
     this.ensureValidDateRange(activeFrom, activeTo);
 
+    // Validate discount fields
+    this.validateDiscountFields(dto);
+
     const promotion = await this.promotionsRepository.create({
       imageUrl: (uploadResult as { secure_url: string }).secure_url,
       name: dto.name,
@@ -100,6 +179,10 @@ export class PromotionsService {
       status: dto.status ?? 'inactive',
       linkTo: dto.linkTo,
       discountCode: dto.discountCode,
+      discountType: dto.discountType,
+      discountValue: dto.discountValue,
+      minOrderAmount: dto.minOrderAmount,
+      maxDiscountAmount: dto.maxDiscountAmount,
     });
 
     return {
@@ -174,6 +257,10 @@ export class PromotionsService {
       status?: PromotionDocument['status'];
       linkTo?: string;
       discountCode?: string;
+      discountType?: string;
+      discountValue?: number;
+      minOrderAmount?: number;
+      maxDiscountAmount?: number;
     } = {};
 
     if (dto.name !== undefined) updateData.name = dto.name;
@@ -181,6 +268,32 @@ export class PromotionsService {
     if (dto.discountCode !== undefined) {
       updateData.discountCode = dto.discountCode;
     }
+
+    // Validate discount fields if any are being updated
+    if (
+      dto.discountType !== undefined ||
+      dto.discountValue !== undefined ||
+      dto.minOrderAmount !== undefined ||
+      dto.maxDiscountAmount !== undefined
+    ) {
+      // Merge existing discount fields with new ones for validation
+      const discountDto = {
+        discountType: dto.discountType ?? existing.discountType,
+        discountValue: dto.discountValue ?? existing.discountValue,
+        minOrderAmount: dto.minOrderAmount ?? existing.minOrderAmount,
+        maxDiscountAmount: dto.maxDiscountAmount ?? existing.maxDiscountAmount,
+      };
+      this.validateDiscountFields(discountDto as UpdatePromotionDto);
+    }
+
+    if (dto.discountType !== undefined)
+      updateData.discountType = dto.discountType;
+    if (dto.discountValue !== undefined)
+      updateData.discountValue = dto.discountValue;
+    if (dto.minOrderAmount !== undefined)
+      updateData.minOrderAmount = dto.minOrderAmount;
+    if (dto.maxDiscountAmount !== undefined)
+      updateData.maxDiscountAmount = dto.maxDiscountAmount;
 
     let activeFrom = existing.activeFrom;
     let activeTo = existing.activeTo;
@@ -333,5 +446,109 @@ export class PromotionsService {
     const activated = await this.promotionsRepository.autoActivate(now);
     const ended = await this.promotionsRepository.autoEnd(now);
     return { activated, ended };
+  }
+
+  /**
+   * Validate a discount code and calculate the discount amount
+   * @param discountCode The discount code to validate
+   * @param orderAmount The order amount in kobo
+   * @returns Object with validation result and discount amount
+   */
+  async validateDiscountCode(
+    discountCode: string,
+    orderAmount: number,
+  ): Promise<{
+    valid: boolean;
+    discountAmount?: number;
+    message?: string;
+    promotion?: {
+      id: string;
+      name: string;
+      discountType?: string;
+      discountValue?: number;
+    };
+  }> {
+    const now = new Date();
+    const activePromotions = await this.promotionsRepository.findActive(now);
+
+    const promotion = activePromotions.find(
+      (p) => p.discountCode?.toUpperCase() === discountCode.toUpperCase(),
+    );
+
+    if (!promotion) {
+      return {
+        valid: false,
+        message: 'Invalid or expired discount code',
+      };
+    }
+
+    // Check if promotion has discount configuration
+    if (!promotion.discountType || promotion.discountValue === undefined) {
+      return {
+        valid: false,
+        message: 'This promotion does not have discount configuration',
+      };
+    }
+
+    // Check minimum order amount
+    if (
+      promotion.minOrderAmount !== undefined &&
+      orderAmount < promotion.minOrderAmount
+    ) {
+      return {
+        valid: false,
+        message: `Minimum order amount of ₦${(promotion.minOrderAmount / 100).toFixed(2)} required`,
+      };
+    }
+
+    // Calculate discount amount
+    let discountAmount = 0;
+
+    if (promotion.discountType === 'percentage') {
+      discountAmount = (orderAmount * promotion.discountValue) / 100;
+      // Apply max discount cap if set
+      if (
+        promotion.maxDiscountAmount !== undefined &&
+        discountAmount > promotion.maxDiscountAmount
+      ) {
+        discountAmount = promotion.maxDiscountAmount;
+      }
+    } else if (promotion.discountType === 'fixed_amount') {
+      discountAmount = promotion.discountValue;
+      // Ensure discount doesn't exceed order amount
+      if (discountAmount > orderAmount) {
+        discountAmount = orderAmount;
+      }
+    }
+
+    return {
+      valid: true,
+      discountAmount: Math.round(discountAmount),
+      promotion: {
+        id: promotion._id.toString(),
+        name: promotion.name,
+        discountType: promotion.discountType,
+        discountValue: promotion.discountValue,
+      },
+    };
+  }
+
+  /**
+   * Increment the usage count of a promotion when a promo code is successfully used
+   * @param promotionId The promotion ID to increment usage count for
+   */
+  async incrementPromoUsage(promotionId: string): Promise<void> {
+    await this.promotionsRepository.incrementUsageCount(promotionId);
+  }
+
+  /**
+   * Get a promotion by its discount code
+   * @param discountCode The discount code to search for
+   * @returns Promotion document or null
+   */
+  async getPromotionByDiscountCode(
+    discountCode: string,
+  ): Promise<PromotionDocument | null> {
+    return this.promotionsRepository.findByDiscountCode(discountCode);
   }
 }

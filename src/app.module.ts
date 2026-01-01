@@ -11,6 +11,14 @@ import { CloudinaryModule } from './common/cloudinary/cloudinary.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { SavedLocationsModule } from './modules/saved-locations/saved-locations.module';
 import { PromotionsModule } from './modules/promotions/promotions.module';
+import { FoodItemsModule } from './modules/food-items/food-items.module';
+import { RegionsModule } from './modules/regions/regions.module';
+import { PickupLocationsModule } from './modules/pickup-locations/pickup-locations.module';
+import { CartModule } from './modules/cart/cart.module';
+import { OrdersModule } from './modules/orders/orders.module';
+import { TransactionsModule } from './modules/transactions/transactions.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
+import { QueueModule } from './modules/queue/queue.module';
 
 @Module({
   imports: [
@@ -95,6 +103,30 @@ import { PromotionsModule } from './modules/promotions/promotions.module';
 
     // Promotions module
     PromotionsModule,
+
+    // Food Items module
+    FoodItemsModule,
+
+    // Regions module (admin)
+    RegionsModule,
+
+    // Pickup Locations module
+    PickupLocationsModule,
+
+    // Cart module
+    CartModule,
+
+    // Orders module
+    OrdersModule,
+
+    // Transactions module (Paystack)
+    TransactionsModule,
+
+    // Notifications module
+    NotificationsModule,
+
+    // Queue module (BullMQ)
+    QueueModule,
   ],
   controllers: [AppController],
   providers: [AppService],

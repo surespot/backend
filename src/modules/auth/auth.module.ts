@@ -14,6 +14,7 @@ import {
   RefreshToken,
   RefreshTokenSchema,
 } from './schemas/refresh-token.schema';
+import { MailModule } from '../mail/mail.module';
 
 @Module({
   imports: [
@@ -34,6 +35,9 @@ import {
         secret: configService.get<string>('JWT_SECRET') ?? 'default-secret-key',
       }),
     }),
+
+    // Mail module for sending OTP emails
+    MailModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, AuthRepository, JwtStrategy, RolesGuard],

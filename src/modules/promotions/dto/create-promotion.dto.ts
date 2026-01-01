@@ -5,8 +5,12 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsNumber,
+  Min,
+  Max,
+  ValidateIf,
 } from 'class-validator';
-import type { PromotionStatus } from '../types';
+import type { PromotionStatus, DiscountType } from '../types';
 
 export class CreatePromotionDto {
   @ApiProperty({
@@ -33,7 +37,8 @@ export class CreatePromotionDto {
 
   @ApiProperty({
     example: 'https://surespot.app/promotions/black-friday',
-    description: 'Link to navigate when the banner is tapped, can be deeplink or url',
+    description:
+      'Link to navigate when the banner is tapped, can be deeplink or url',
   })
   @IsString()
   @IsNotEmpty()
@@ -46,6 +51,46 @@ export class CreatePromotionDto {
   @IsOptional()
   @IsString()
   discountCode?: string;
+
+  @ApiPropertyOptional({
+    enum: ['percentage', 'fixed_amount'],
+    example: 'percentage',
+    description: 'Type of discount: percentage or fixed_amount',
+  })
+  @IsOptional()
+  @IsEnum(['percentage', 'fixed_amount'])
+  discountType?: DiscountType;
+
+  @ApiPropertyOptional({
+    example: 20,
+    description:
+      'Discount value: percentage (0-100) for percentage type, or fixed amount in kobo for fixed_amount type',
+  })
+  @ValidateIf((o) => o.discountType !== undefined)
+  @IsNumber()
+  @Min(0)
+  @ValidateIf((o) => o.discountType === 'percentage')
+  @Max(100, { message: 'Percentage discount must be between 0 and 100' })
+  discountValue?: number;
+
+  @ApiPropertyOptional({
+    example: 50000,
+    description: 'Minimum order amount in kobo to qualify for the discount',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  minOrderAmount?: number;
+
+  @ApiPropertyOptional({
+    example: 100000,
+    description:
+      'Maximum discount amount in kobo (only applicable for percentage discounts)',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  maxDiscountAmount?: number;
 
   @ApiPropertyOptional({
     enum: ['inactive', 'active', 'ended'],

@@ -121,6 +121,11 @@ export class SavedLocationsService {
       }
     }
 
+    // If setting this location as active, deactivate all other locations for this user
+    if (dto.isActive === true) {
+      await this.savedLocationsRepository.deactivateAllByUserId(userId);
+    }
+
     const updated = await this.savedLocationsRepository.update(
       locationId,
       userId,
@@ -166,6 +171,27 @@ export class SavedLocationsService {
     };
   }
 
+  async findActive(userId: string) {
+    const location =
+      await this.savedLocationsRepository.findActiveByUserId(userId);
+
+    if (!location) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'NO_ACTIVE_LOCATION',
+          message: 'No active location found',
+        },
+      });
+    }
+
+    return {
+      success: true,
+      message: 'Active location retrieved successfully',
+      data: this.formatLocation(location),
+    };
+  }
+
   private formatLocation(location: SavedLocationDocument) {
     return {
       id: location._id.toString(),
@@ -177,6 +203,7 @@ export class SavedLocationsService {
       state: location.state,
       country: location.country,
       regionId: location.regionId,
+      isActive: location.isActive,
       createdAt: location.createdAt,
       updatedAt: location.updatedAt,
     };
