@@ -12,6 +12,7 @@ import {
   TransactionDocument,
   TransactionStatus,
   PaymentProvider,
+  TransactionType,
 } from './schemas/transaction.schema';
 import { OrdersService } from '../orders/orders.service';
 import { PaymentStatus } from '../orders/schemas/order.schema';
@@ -27,7 +28,9 @@ export interface InitializePaymentResult {
 export interface TransactionResponse {
   id: string;
   orderId?: string;
-  userId: string;
+  userId?: string;
+  riderProfileId?: string;
+  type?: string;
   amount: number;
   formattedAmount: string;
   currency: string;
@@ -123,6 +126,7 @@ export class TransactionsService {
       const transaction = await this.transactionsRepository.create({
         orderId,
         userId,
+        type: TransactionType.PAYMENT,
         amount,
         paymentMethod,
         provider: PaymentProvider.PAYSTACK,
@@ -512,7 +516,9 @@ export class TransactionsService {
     return {
       id: transaction._id.toString(),
       orderId: transaction.orderId?.toString(),
-      userId: transaction.userId.toString(),
+      userId: transaction.userId?.toString(),
+      riderProfileId: transaction.riderProfileId?.toString(),
+      type: transaction.type,
       amount: transaction.amount,
       formattedAmount: this.formatPrice(transaction.amount),
       currency: transaction.currency,

@@ -7,7 +7,10 @@ import {
   NotificationJobResult,
   ChannelDeliveryResult,
 } from './types/notification-job.types';
-import { NotificationChannel, NotificationType } from './schemas/notification.schema';
+import {
+  NotificationChannel,
+  NotificationType,
+} from './schemas/notification.schema';
 import { NotificationContextService } from './notification-context.service';
 import { NotificationsGateway } from './notifications.gateway';
 import { PushNotificationService } from './push-notification.service';
@@ -98,7 +101,9 @@ export class NotificationsProcessor extends WorkerHost {
     channel: NotificationChannel,
     type: NotificationType,
     notificationId: string,
-    user: NonNullable<Awaited<ReturnType<NotificationContextService['fetchUserContext']>>>,
+    user: NonNullable<
+      Awaited<ReturnType<NotificationContextService['fetchUserContext']>>
+    >,
     order: Awaited<ReturnType<NotificationContextService['fetchOrderContext']>>,
     title: string,
     message: string,
@@ -107,16 +112,29 @@ export class NotificationsProcessor extends WorkerHost {
     try {
       switch (channel) {
         case NotificationChannel.IN_APP:
-          return await this.processInApp(type, notificationId, user, order, data);
+          return await this.processInApp(
+            type,
+            notificationId,
+            user,
+            order,
+            data,
+          );
 
         case NotificationChannel.SMS:
-          return await this.processSms(type, user, order);
+          return await this.processSms(type, user, order, data);
 
         case NotificationChannel.EMAIL:
           return await this.processEmail(type, user, order, data);
 
         case NotificationChannel.PUSH:
-          return await this.processPush(type, user, order, title, message, data);
+          return await this.processPush(
+            type,
+            user,
+            order,
+            title,
+            message,
+            data,
+          );
 
         default:
           return {
@@ -126,7 +144,8 @@ export class NotificationsProcessor extends WorkerHost {
           };
       }
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       this.logger.error(
         `Error processing ${channel} for notification ${notificationId}`,
         { error: errorMessage },
@@ -145,7 +164,9 @@ export class NotificationsProcessor extends WorkerHost {
   private async processInApp(
     type: NotificationType,
     notificationId: string,
-    user: NonNullable<Awaited<ReturnType<NotificationContextService['fetchUserContext']>>>,
+    user: NonNullable<
+      Awaited<ReturnType<NotificationContextService['fetchUserContext']>>
+    >,
     order: Awaited<ReturnType<NotificationContextService['fetchOrderContext']>>,
     data?: Record<string, unknown>,
   ): Promise<ChannelDeliveryResult> {
@@ -262,8 +283,11 @@ export class NotificationsProcessor extends WorkerHost {
    */
   private async processSms(
     type: NotificationType,
-    user: NonNullable<Awaited<ReturnType<NotificationContextService['fetchUserContext']>>>,
+    user: NonNullable<
+      Awaited<ReturnType<NotificationContextService['fetchUserContext']>>
+    >,
     order: Awaited<ReturnType<NotificationContextService['fetchOrderContext']>>,
+    data?: Record<string, unknown>,
   ): Promise<ChannelDeliveryResult> {
     if (!user.phone) {
       return {
@@ -286,11 +310,12 @@ export class NotificationsProcessor extends WorkerHost {
         break;
 
       case NotificationType.ORDER_OUT_FOR_DELIVERY:
-        // TODO: Get rider name when AssignedRider schema is ready
+        // Extract riderName from notification data if available
+        const riderName = data?.riderName as string | undefined;
         result = await this.smsService.sendOrderPickedUpNotification(
           user.phone,
           orderNumber,
-          undefined, // riderName
+          riderName,
         );
         break;
 
@@ -322,7 +347,9 @@ export class NotificationsProcessor extends WorkerHost {
    */
   private async processEmail(
     type: NotificationType,
-    user: NonNullable<Awaited<ReturnType<NotificationContextService['fetchUserContext']>>>,
+    user: NonNullable<
+      Awaited<ReturnType<NotificationContextService['fetchUserContext']>>
+    >,
     order: Awaited<ReturnType<NotificationContextService['fetchOrderContext']>>,
     data?: Record<string, unknown>,
   ): Promise<ChannelDeliveryResult> {
@@ -406,7 +433,9 @@ export class NotificationsProcessor extends WorkerHost {
    */
   private async processPush(
     type: NotificationType,
-    user: NonNullable<Awaited<ReturnType<NotificationContextService['fetchUserContext']>>>,
+    user: NonNullable<
+      Awaited<ReturnType<NotificationContextService['fetchUserContext']>>
+    >,
     order: Awaited<ReturnType<NotificationContextService['fetchOrderContext']>>,
     title: string,
     message: string,
@@ -521,4 +550,3 @@ export class NotificationsProcessor extends WorkerHost {
     }
   }
 }
-

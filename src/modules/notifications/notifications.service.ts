@@ -435,13 +435,18 @@ export class NotificationsService {
     userId: string,
     orderNumber: string,
     orderId: string,
+    riderName?: string,
   ): Promise<void> {
+    const message = riderName
+      ? `${riderName} has picked up your order ${orderNumber} and is on the way to you.`
+      : `Your order ${orderNumber} has been picked up and is on its way to you.`;
+
     await this.queueNotification(
       userId,
       NotificationType.ORDER_OUT_FOR_DELIVERY,
       'Order Picked Up',
-      `Your order ${orderNumber} has been picked up and is on its way to you.`,
-      { orderId, orderNumber },
+      message,
+      { orderId, orderNumber, riderName },
       [NotificationChannel.IN_APP, NotificationChannel.SMS],
     );
   }
@@ -609,8 +614,7 @@ export class NotificationsService {
       }
 
       // Get existing tokens or initialize empty array
-      const existingTokens: string[] =
-        (user.expoPushTokens as string[] | undefined) || [];
+      const existingTokens: string[] = user.expoPushTokens || [];
 
       // Add token if it doesn't exist
       if (!existingTokens.includes(token)) {
@@ -655,8 +659,7 @@ export class NotificationsService {
         });
       }
 
-      const existingTokens: string[] =
-        (user.expoPushTokens as string[] | undefined) || [];
+      const existingTokens: string[] = user.expoPushTokens || [];
       const updatedTokens: string[] = existingTokens.filter(
         (t: string) => t !== token,
       );

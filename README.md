@@ -64,7 +64,8 @@ Swagger documentation: `http://localhost:3000/docs`
 
 - **Port:** 6379
 - **Password:** surespot_redis_password
-- **Ready for future caching implementation**
+- **Used for:** BullMQ job queue (notifications processing)
+- **Connection:** Handled automatically by BullMQ
 
 ### Managing Services
 
@@ -116,79 +117,92 @@ npm run start:prod         # Start production build
 
 ```
 src/
-├── common/                 # Shared modules (Cloudinary, etc.)
-│   └── cloudinary/
+├── common/                 # Shared modules
+│   └── cloudinary/        # Cloudinary media upload service
 ├── modules/                # Feature modules
-│   └── auth/              # Authentication module
-│       ├── dto/           # Data transfer objects
-│       ├── schemas/       # Mongoose schemas
-│       ├── auth.controller.ts
-│       ├── auth.service.ts
-│       ├── auth.repository.ts
-│       └── auth.module.ts
+│   ├── auth/              # Authentication & authorization
+│   ├── cart/              # Shopping cart management
+│   ├── food-items/        # Food catalog, categories, extras
+│   ├── orders/            # Order placement & tracking
+│   ├── transactions/      # Payment processing (Paystack)
+│   ├── notifications/     # Multi-channel notifications system
+│   ├── saved-locations/   # User address management
+│   ├── pickup-locations/  # Restaurant/pickup point management
+│   ├── promotions/        # Discount codes & campaigns
+│   ├── regions/           # Geographic region management
+│   ├── mail/              # Email templating & delivery
+│   ├── sms/               # SMS message building & delivery
+│   └── queue/             # Background job processing (BullMQ)
 ├── app.module.ts          # Root module
 └── main.ts                # Application entry point
 ```
 
-## Authentication Endpoints
+## API Documentation
 
-### Registration Flow
+Full interactive API documentation is available at `/docs` when running the server. The Swagger UI provides:
 
-1. `POST /auth/phone/send-otp` - Send OTP to phone
-2. `POST /auth/phone/verify-otp` - Verify OTP code
-3. `POST /auth/password/create` - Create password
-4. `POST /auth/profile/complete` - Complete profile & get tokens
+- Complete endpoint listings with request/response schemas
+- Interactive testing interface
+- Authentication token management
+- Request/response examples
 
-### Login & Token Management
-
-- `POST /auth/login` - Login with phone + password
-- `POST /auth/refresh` - Refresh access token
-- `POST /auth/logout` - Logout & revoke token
-
-### Password Reset
-
-1. `POST /auth/password/reset/send-otp` - Send reset OTP
-2. `POST /auth/password/reset/verify-otp` - Verify reset OTP
-3. `POST /auth/password/reset/update` - Update password
-
-See full API documentation at `/docs` when running the server.
-
-## Testing Auth Flow
-
-1. **Start the server and MongoDB:**
-   ```bash
-   docker compose up -d
-   npm run start:dev
-   ```
-
-2. **Send OTP** (check console logs for the code):
-   ```bash
-   curl -X POST http://localhost:3000/auth/phone/send-otp \
-     -H "Content-Type: application/json" \
-     -d '{"phone": "+2349012345678", "countryCode": "+234"}'
-   ```
-
-3. **Verify OTP:**
-   ```bash
-   curl -X POST http://localhost:3000/auth/phone/verify-otp \
-     -H "Content-Type: application/json" \
-     -d '{"phone": "+2349012345678", "otp": "123456"}'
-   ```
-
-4. **Continue with the flow using Swagger UI** at `http://localhost:3000/docs`
+To access: `http://localhost:3000/docs`
 
 ## Environment Variables
 
-See `.env.development` for all available configuration options.
+See `.env.development` or `env.example` for all available configuration options.
 
-Key variables:
+### Core Configuration
+
+- `NODE_ENV` - Environment (development/production)
+- `PORT` - Server port (default: 3000)
+- `API_VERSION` - API version prefix (default: v1)
+
+### Database
 
 - `MONGODB_URI` - MongoDB connection string
+- `MONGODB_DB_NAME` - Database name
+
+### Authentication
+
 - `JWT_SECRET` - Secret for signing JWT tokens (change in production!)
 - `JWT_ACCESS_EXPIRY` - Access token expiry (default: 1h)
 - `JWT_REFRESH_EXPIRY` - Refresh token expiry (default: 30d)
 - `OTP_EXPIRY_MINUTES` - OTP code validity (default: 5)
-- `CLOUDINARY_*` - Cloudinary credentials for file uploads
+- `OTP_RESEND_SECONDS` - Minimum time between OTP resends (default: 30)
+- `OTP_MAX_ATTEMPTS` - Maximum OTP verification attempts (default: 5)
+
+### Redis (Queue)
+
+- `REDIS_HOST` - Redis host (default: localhost)
+- `REDIS_PORT` - Redis port (default: 6379)
+- `REDIS_PASSWORD` - Redis password
+
+### Media Storage
+
+- `CLOUDINARY_CLOUD_NAME` - Cloudinary cloud name
+- `CLOUDINARY_API_KEY` - Cloudinary API key
+- `CLOUDINARY_API_SECRET` - Cloudinary API secret
+
+### Notifications
+
+- `EXPO_ACCESS_TOKEN` - Expo push notification access token (optional, for higher rate limits)
+- `GMAIL_USER` - Gmail account for sending emails
+- `GMAIL_APP_PASSWORD` - Gmail app-specific password
+- `MAIL_FROM_NAME` - Email sender name
+- `SMS_API_URL` - SMS provider API endpoint
+- `SMS_API_KEY` - SMS provider API key
+- `SMS_SENDER_ID` - SMS sender identifier
+
+### Payments
+
+- `PAYSTACK_SECRET_KEY` - Paystack secret key for payment processing
+
+### Security
+
+- `RATE_LIMIT_WINDOW_MS` - Rate limit window in milliseconds (default: 60000)
+- `RATE_LIMIT_MAX_REQUESTS` - Max requests per window (default: 100)
+- `CORS_ORIGIN` - Allowed CORS origins (comma-separated)
 
 ## MongoDB Connection
 
@@ -207,25 +221,65 @@ docker compose exec mongodb mongosh -u surespot -p surespot_dev_password --authe
 
 ## Features
 
-✅ Phone-based authentication with OTP  
+### Authentication & Authorization
+✅ Phone & email-based authentication with OTP  
 ✅ JWT access & refresh tokens with rotation  
-✅ Password reset flow  
+✅ Password reset flow (phone & email)  
 ✅ Bcrypt password hashing  
+✅ JWT guards for protected routes  
+✅ Role-based access control  
+
+### Core Business Logic
+✅ Food catalog with categories, extras, and search  
+✅ Shopping cart with automatic expiration  
+✅ Order placement & tracking (door-delivery & pickup)  
+✅ Payment processing via Paystack  
+✅ Promotions & discount codes  
+✅ Saved locations management  
+✅ Pickup locations management  
+
+### Notifications System
+✅ Multi-channel notifications (Email, SMS, In-App, Push)  
+✅ Real-time WebSocket gateway for in-app notifications  
+✅ Expo push notifications  
+✅ BullMQ queue for asynchronous processing  
+✅ Notification history & read status tracking  
+
+### Infrastructure
+✅ MongoDB with Mongoose ODM  
+✅ Redis for job queue (BullMQ)  
+✅ Cloudinary integration for media uploads  
 ✅ Rate limiting & throttling  
 ✅ Input validation with class-validator  
 ✅ Swagger API documentation  
 ✅ Winston logging  
-✅ MongoDB with Mongoose ODM  
-✅ Cloudinary integration (ready for media uploads)  
+✅ Scheduled tasks (cron jobs)  
+
+## Architecture Highlights
+
+### Notification System
+
+The notification system uses a queue-based architecture for reliable, asynchronous delivery:
+
+- **Channels:** Email, SMS, In-App (WebSocket), Push (Expo)
+- **Queue Processing:** BullMQ with Redis backend, 3 concurrent workers
+- **Real-time Delivery:** Socket.IO gateway for instant in-app notifications
+- **Context Fetching:** Parallel data fetching within workers for optimal performance
+
+### Order Management
+
+- Order number format: `ORD-YYYY-XXXXXX`
+- Status flow: `pending` → `confirmed` → `preparing` → `ready` → `out-for-delivery` → `delivered`
+- Delivery types: `door-delivery`, `pickup`
+- Payment status tracking: `pending`, `paid`, `failed`, `refunded`
 
 ## TODO
 
-- [ ] Integrate SMS provider for OTP delivery (currently logs to console)
-- [ ] Add Google OAuth authentication
-- [ ] Implement JWT Guards for protected routes
 - [ ] Add unit and e2e tests
-- [ ] Create user profile management endpoints
-- [ ] Implement food listings module
+- [ ] Profile management endpoints
+- [ ] Reviews & ratings system
+- [ ] Admin dashboard endpoints
+- [ ] Analytics & reporting
 
 ## Security Notes
 
@@ -242,12 +296,42 @@ The credentials in `compose.yml` and `.env.development` are for local developmen
 5. Review and harden CORS settings
 6. Enable rate limiting at the network level
 
+## Development Notes
+
+### Notification System Integration
+
+The notification system is fully integrated with:
+- Order status changes trigger appropriate notifications
+- Payment success/failure notifications
+- Welcome notifications on user registration
+- Rate reminder notifications for delivered orders
+- Promotion notifications
+
+See the notification service for available helper methods and channel configurations.
+
+### Queue Processing
+
+Background jobs are processed automatically when the server is running. The notification processor:
+- Fetches notification context in parallel
+- Dispatches to appropriate channels based on notification type
+- Updates sent status flags in the database
+- Handles errors gracefully with retry logic
+
+### Testing
+
+For testing the notification system:
+1. Ensure Redis is running (`docker compose up -d`)
+2. Start the development server (`npm run start:dev`)
+3. Trigger notifications through order/payment flows
+4. Check WebSocket connections via the gateway logs
+5. Monitor queue processing in the console
+
 ## Support
 
 For questions or issues, refer to:
 - `plan.md` - Complete API specification
-- `AUTH_MODULE_README.md` - Auth module documentation
-- Swagger docs at `/docs`
+- `REFERENCE.md` - Architecture and design reference
+- Swagger docs at `/docs` when server is running
 
 ## License
 

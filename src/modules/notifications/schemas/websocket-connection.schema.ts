@@ -1,13 +1,23 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
 
-export type WebSocketConnectionDocument =
-  HydratedDocument<WebSocketConnection>;
+export type WebSocketConnectionDocument = HydratedDocument<WebSocketConnection>;
 
 @Schema({ timestamps: true })
 export class WebSocketConnection {
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
-  userId: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: false, index: true })
+  userId?: Types.ObjectId;
+
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'PickupLocation',
+    required: false,
+    index: true,
+  })
+  pickupLocationId?: Types.ObjectId;
+
+  @Prop({ required: true })
+  connectionType: 'user' | 'pickup_location';
 
   @Prop({ required: true, unique: true, index: true })
   socketId: string;
@@ -33,6 +43,6 @@ export const WebSocketConnectionSchema =
 
 // Indexes
 WebSocketConnectionSchema.index({ userId: 1, isActive: 1 });
+WebSocketConnectionSchema.index({ pickupLocationId: 1, isActive: 1 });
 WebSocketConnectionSchema.index({ socketId: 1 });
 WebSocketConnectionSchema.index({ lastActivityAt: 1 });
-

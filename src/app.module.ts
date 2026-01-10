@@ -19,6 +19,8 @@ import { OrdersModule } from './modules/orders/orders.module';
 import { TransactionsModule } from './modules/transactions/transactions.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { QueueModule } from './modules/queue/queue.module';
+import { RidersModule } from './modules/riders/riders.module';
+import { WalletsModule } from './modules/wallets/wallets.module';
 
 @Module({
   imports: [
@@ -127,6 +129,12 @@ import { QueueModule } from './modules/queue/queue.module';
 
     // Queue module (BullMQ)
     QueueModule,
+
+    // Riders module
+    RidersModule,
+
+    // Wallets module
+    WalletsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

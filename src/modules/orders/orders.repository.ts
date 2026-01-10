@@ -1,6 +1,8 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { InjectConnection } from '@nestjs/mongoose';
+import { Connection } from 'mongoose';
 import {
   Order,
   OrderDocument,
@@ -30,6 +32,8 @@ export interface PaginationResult<T> {
 
 @Injectable()
 export class OrdersRepository {
+  private readonly logger = new Logger(OrdersRepository.name);
+
   constructor(
     @InjectModel(Order.name)
     private orderModel: Model<OrderDocument>,
@@ -39,6 +43,7 @@ export class OrdersRepository {
     private orderExtraModel: Model<OrderExtraDocument>,
     @InjectModel(OrderDeliveryStatus.name)
     private orderDeliveryStatusModel: Model<OrderDeliveryStatusDocument>,
+    @InjectConnection() private connection: Connection,
   ) {}
 
   private validateObjectId(id: string, fieldName: string): void {
@@ -237,6 +242,85 @@ export class OrdersRepository {
     };
   }
 
+  async findByRegionAndStatus(
+    regionId: string,
+    status: OrderStatus,
+    pagination: {
+      page?: number;
+      limit?: number;
+    },
+  ): Promise<PaginationResult<OrderDocument>> {
+    this.validateObjectId(regionId, 'regionId');
+
+    const page = pagination.page || 1;
+    const limit = pagination.limit || 20;
+    const skip = (page - 1) * limit;
+
+    // Find orders with the specified status that have a pickup location in the region
+    // We need to populate pickupLocationId first, then filter by regionId
+    const query: any = {
+      status,
+      deliveryType: DeliveryType.DOOR_DELIVERY, // Only door delivery orders
+      paymentStatus: PaymentStatus.PAID, // Only paid orders
+      pickupLocationId: { $exists: true, $ne: null },
+      $or: [{ assignedRiderId: { $exists: false } }, { assignedRiderId: null }], // Only unassigned orders
+    };
+
+    // First, get all pickup locations in the region
+    const pickupLocationModel = this.connection.models.PickupLocation;
+    const pickupLocations = await pickupLocationModel
+      .find({ regionId: new Types.ObjectId(regionId), isActive: true })
+      .select('_id')
+      .lean()
+      .exec();
+
+    const pickupLocationIds = pickupLocations.map(
+      (pl: { _id: unknown }) => new Types.ObjectId(pl._id as string),
+    );
+
+    if (pickupLocationIds.length === 0) {
+      // No pickup locations in region, return empty result
+      return {
+        items: [],
+        pagination: {
+          page,
+          limit,
+          total: 0,
+          totalPages: 0,
+          hasNext: false,
+          hasPrev: false,
+        },
+      };
+    }
+
+    query.pickupLocationId = { $in: pickupLocationIds };
+
+    const [orders, total] = await Promise.all([
+      this.orderModel
+        .find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate('pickupLocationId')
+        .exec(),
+      this.orderModel.countDocuments(query).exec(),
+    ]);
+
+    const totalPages = Math.ceil(total / limit);
+
+    return {
+      items: orders,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrev: page > 1,
+      },
+    };
+  }
+
   async updateOrder(
     id: string,
     data: Partial<{
@@ -273,6 +357,210 @@ export class OrdersRepository {
       .findByIdAndUpdate(id, { $set: updateData }, { new: true })
       .populate('pickupLocationId')
       .exec();
+  }
+
+  /**
+   * Atomically assign a rider to an order
+   * Uses findOneAndUpdate with conditions to prevent race conditions
+   * Returns null if order is already assigned or doesn't meet conditions
+   */
+  async assignRiderToOrder(
+    orderId: string,
+    riderProfileId: string,
+    userId: string,
+  ): Promise<OrderDocument | null> {
+    this.validateObjectId(orderId, 'orderId');
+    this.validateObjectId(riderProfileId, 'riderProfileId');
+    this.validateObjectId(userId, 'userId');
+
+    // Atomic update: only assign if order is READY, not already assigned, and is DOOR_DELIVERY
+    const updatedOrder = await this.orderModel
+      .findOneAndUpdate(
+        {
+          _id: new Types.ObjectId(orderId),
+          status: OrderStatus.READY,
+          $or: [
+            { assignedRiderId: { $exists: false } },
+            { assignedRiderId: null },
+          ], // Not already assigned
+          deliveryType: DeliveryType.DOOR_DELIVERY,
+        },
+        {
+          $set: {
+            assignedRiderId: new Types.ObjectId(riderProfileId),
+            assignedAt: new Date(),
+            assignedBy: new Types.ObjectId(userId),
+          },
+        },
+        { new: true },
+      )
+      .populate('pickupLocationId')
+      .exec();
+
+    return updatedOrder;
+  }
+
+  /**
+   * Find orders assigned to a specific rider
+   */
+  async findByAssignedRider(
+    riderProfileId: string,
+    filter: {
+      page?: number;
+      limit?: number;
+      status?: OrderStatus;
+    },
+  ): Promise<PaginationResult<OrderDocument>> {
+    this.validateObjectId(riderProfileId, 'riderProfileId');
+
+    const page = filter.page || 1;
+    const limit = filter.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const query: Record<string, unknown> = {
+      assignedRiderId: new Types.ObjectId(riderProfileId),
+    };
+
+    if (filter.status) {
+      query.status = filter.status;
+    }
+
+    const [orders, total] = await Promise.all([
+      this.orderModel
+        .find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate('pickupLocationId')
+        .exec(),
+      this.orderModel.countDocuments(query).exec(),
+    ]);
+
+    const totalPages = Math.ceil(total / limit);
+
+    return {
+      items: orders,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrev: page > 1,
+      },
+    };
+  }
+
+  /**
+   * Count active orders assigned to a rider (not delivered or cancelled)
+   */
+  async countActiveAssignedOrders(riderProfileId: string): Promise<number> {
+    this.validateObjectId(riderProfileId, 'riderProfileId');
+
+    return this.orderModel
+      .countDocuments({
+        assignedRiderId: new Types.ObjectId(riderProfileId),
+        status: {
+          $nin: [OrderStatus.DELIVERED, OrderStatus.CANCELLED],
+        },
+      })
+      .exec();
+  }
+
+  /**
+   * Get today's stats for a rider (completed orders and earnings)
+   */
+  async getTodayStatsForRider(riderProfileId: string): Promise<{
+    completedOrders: number;
+    earnings: number; // in kobo
+  }> {
+    this.validateObjectId(riderProfileId, 'riderProfileId');
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+
+    const [completedOrders, earningsResult] = await Promise.all([
+      this.orderModel
+        .countDocuments({
+          assignedRiderId: new Types.ObjectId(riderProfileId),
+          status: OrderStatus.DELIVERED,
+          deliveredAt: { $gte: todayStart, $lte: todayEnd },
+        })
+        .exec(),
+      this.orderModel
+        .aggregate([
+          {
+            $match: {
+              assignedRiderId: new Types.ObjectId(riderProfileId),
+              status: OrderStatus.DELIVERED,
+              deliveredAt: { $gte: todayStart, $lte: todayEnd },
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              totalEarnings: { $sum: '$deliveryFee' },
+            },
+          },
+        ])
+        .exec(),
+    ]);
+
+    return {
+      completedOrders,
+      earnings: earningsResult[0]?.totalEarnings || 0,
+    };
+  }
+
+  /**
+   * Get today's earnings grouped by rider (for daily processing)
+   */
+  async getTodayEarningsByRider(): Promise<
+    Array<{
+      riderProfileId: string;
+      totalEarnings: number;
+      orderCount: number;
+      orderIds: string[];
+    }>
+  > {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+
+    const results = await this.orderModel
+      .aggregate<{
+        _id: Types.ObjectId;
+        totalEarnings: number;
+        orderCount: number;
+        orderIds: Types.ObjectId[];
+      }>([
+        {
+          $match: {
+            status: OrderStatus.DELIVERED,
+            deliveredAt: { $gte: todayStart, $lte: todayEnd },
+            assignedRiderId: { $exists: true, $ne: null },
+          },
+        },
+        {
+          $group: {
+            _id: '$assignedRiderId',
+            totalEarnings: { $sum: '$deliveryFee' },
+            orderCount: { $sum: 1 },
+            orderIds: { $push: '$_id' },
+          },
+        },
+      ])
+      .exec();
+
+    return results.map((r) => ({
+      riderProfileId: r._id.toString(),
+      totalEarnings: r.totalEarnings,
+      orderCount: r.orderCount,
+      orderIds: r.orderIds.map((id) => id.toString()),
+    }));
   }
 
   async countOrdersForYear(year: number): Promise<number> {

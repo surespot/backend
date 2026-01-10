@@ -10,4 +10,3 @@ export class RegisterPushTokenDto {
   @IsNotEmpty()
   token: string;
 }
-

@@ -1,0 +1,319 @@
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  UseGuards,
+  HttpCode,
+  HttpStatus,
+  Query,
+} from '@nestjs/common';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+  ApiQuery,
+} from '@nestjs/swagger';
+import { WalletsService } from './wallets.service';
+import { AddPaymentDetailsDto } from './dto/add-payment-details.dto';
+import { InitiateWithdrawalDto } from './dto/initiate-withdrawal.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { UserRole } from '../auth/schemas/user.schema';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { RidersService } from '../riders/riders.service';
+import { NotFoundException } from '@nestjs/common';
+
+@ApiTags('wallets')
+@Controller('wallets')
+export class WalletsController {
+  constructor(
+    private readonly walletsService: WalletsService,
+    private readonly ridersService: RidersService,
+  ) {}
+
+  // ============ RIDER ENDPOINTS ============
+
+  @Get('me/balance')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.RIDER)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get wallet balance (Rider only)',
+    description: 'Get the current wallet balance for the authenticated rider',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Wallet balance retrieved successfully',
+    schema: {
+      example: {
+        success: true,
+        message: 'Wallet balance retrieved successfully',
+        data: {
+          walletBalance: 500000,
+          formattedBalance: '₦5,000.00',
+          currency: 'NGN',
+          isVerified: true,
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Rider access required' })
+  async getMyBalance(@CurrentUser() user: { id: string }) {
+    const riderProfile = await this.ridersService.findProfileByUserId(user.id);
+    if (!riderProfile) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'RIDER_PROFILE_NOT_FOUND',
+          message: 'Rider profile not found',
+        },
+      });
+    }
+
+    const balance = await this.walletsService.getWalletBalance(
+      riderProfile._id.toString(),
+    );
+
+    return {
+      success: true,
+      message: 'Wallet balance retrieved successfully',
+      data: balance,
+    };
+  }
+
+  @Get('me/transactions')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.RIDER)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get wallet transaction history (Rider only)',
+    description: 'Get transaction history for the authenticated rider',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    description: 'Number of transactions to return',
+    example: 50,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Transaction history retrieved successfully',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Rider access required' })
+  async getMyTransactions(
+    @CurrentUser() user: { id: string },
+    @Query('limit') limit?: number,
+  ) {
+    const riderProfile = await this.ridersService.findProfileByUserId(user.id);
+    if (!riderProfile) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'RIDER_PROFILE_NOT_FOUND',
+          message: 'Rider profile not found',
+        },
+      });
+    }
+
+    const transactions = await this.walletsService.getWalletTransactions(
+      riderProfile._id.toString(),
+      limit ? Number(limit) : 50,
+    );
+
+    return {
+      success: true,
+      message: 'Transaction history retrieved successfully',
+      data: transactions,
+    };
+  }
+
+  @Post('me/payment-details')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.RIDER)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Add payment details (Rider only)',
+    description: 'Add bank account details for withdrawals',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Payment details added successfully',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Rider access required' })
+  async addPaymentDetails(
+    @CurrentUser() user: { id: string },
+    @Body() dto: AddPaymentDetailsDto,
+  ) {
+    const riderProfile = await this.ridersService.findProfileByUserId(user.id);
+    if (!riderProfile) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'RIDER_PROFILE_NOT_FOUND',
+          message: 'Rider profile not found',
+        },
+      });
+    }
+
+    const result = await this.walletsService.createTransferRecipient(
+      riderProfile._id.toString(),
+      dto.accountNumber,
+      dto.bankCode,
+      dto.accountName,
+    );
+
+    return {
+      success: true,
+      message: 'Payment details added successfully',
+      data: result,
+    };
+  }
+
+  @Post('me/withdraw')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.RIDER)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Initiate withdrawal (Rider only)',
+    description: 'Withdraw funds from wallet to bank account',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Withdrawal initiated successfully',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Rider access required' })
+  async initiateWithdrawal(
+    @CurrentUser() user: { id: string },
+    @Body() dto: InitiateWithdrawalDto,
+  ) {
+    const riderProfile = await this.ridersService.findProfileByUserId(user.id);
+    if (!riderProfile) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'RIDER_PROFILE_NOT_FOUND',
+          message: 'Rider profile not found',
+        },
+      });
+    }
+
+    const result = await this.walletsService.initiateWithdrawal(
+      riderProfile._id.toString(),
+      dto.amount,
+    );
+
+    return {
+      success: true,
+      message: 'Withdrawal initiated successfully',
+      data: result,
+    };
+  }
+
+  // ============ ADMIN ENDPOINTS ============
+
+  @Get('admin/all')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'List all wallets (Admin only)',
+    description: 'Get all rider wallets',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    description: 'Number of wallets to return',
+    example: 100,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Wallets retrieved successfully',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Admin access required' })
+  async listAllWallets(@Query('limit') limit?: number) {
+    const wallets = await this.walletsService.listAllWallets(
+      limit ? Number(limit) : 100,
+    );
+
+    return {
+      success: true,
+      message: 'Wallets retrieved successfully',
+      data: wallets,
+    };
+  }
+
+  @Get('admin/rider/:riderProfileId')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get wallet details for a rider (Admin only)',
+    description: 'Get detailed wallet information for a specific rider',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Wallet details retrieved successfully',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Admin access required' })
+  @ApiResponse({ status: 404, description: 'Wallet not found' })
+  async getWalletDetails(@Param('riderProfileId') riderProfileId: string) {
+    const wallet = await this.walletsService.getWalletDetails(riderProfileId);
+
+    return {
+      success: true,
+      message: 'Wallet details retrieved successfully',
+      data: wallet,
+    };
+  }
+
+  @Post('admin/rider/:riderProfileId/payment-details')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Add payment details for a rider (Admin only)',
+    description: 'Admin can add bank account details for a rider',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Payment details added successfully',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Admin access required' })
+  async addPaymentDetailsForRider(
+    @Param('riderProfileId') riderProfileId: string,
+    @Body() dto: AddPaymentDetailsDto,
+  ) {
+    const result = await this.walletsService.createTransferRecipient(
+      riderProfileId,
+      dto.accountNumber,
+      dto.bankCode,
+      dto.accountName,
+    );
+
+    return {
+      success: true,
+      message: 'Payment details added successfully',
+      data: result,
+    };
+  }
+}

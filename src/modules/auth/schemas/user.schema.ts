@@ -5,6 +5,7 @@ export type UserDocument = HydratedDocument<User>;
 
 export enum UserRole {
   USER = 'user',
+  RIDER = 'rider',
   RESTAURANT = 'restaurant',
   ADMIN = 'admin',
 }
@@ -43,6 +44,9 @@ export class User {
 
   @Prop({ type: String, enum: UserRole, default: UserRole.USER })
   role: UserRole;
+
+  @Prop({ default: false })
+  isRider: boolean;
 
   @Prop({ default: true })
   isActive: boolean;

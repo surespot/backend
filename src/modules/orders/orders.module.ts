@@ -1,8 +1,11 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { JwtModule } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import { OrdersController, CheckoutController } from './orders.controller';
 import { OrdersService } from './orders.service';
 import { OrdersRepository } from './orders.repository';
+import { OrdersGateway } from './orders.gateway';
 import { Order, OrderSchema } from './schemas/order.schema';
 import { OrderItem, OrderItemSchema } from './schemas/order-item.schema';
 import { OrderExtra, OrderExtraSchema } from './schemas/order-extra.schema';
@@ -18,6 +21,7 @@ import { PromotionsModule } from '../promotions/promotions.module';
 import { FoodItemsModule } from '../food-items/food-items.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { TransactionsModule } from '../transactions/transactions.module';
+import { RidersModule } from '../riders/riders.module';
 
 @Module({
   imports: [
@@ -27,6 +31,12 @@ import { TransactionsModule } from '../transactions/transactions.module';
       { name: OrderExtra.name, schema: OrderExtraSchema },
       { name: OrderDeliveryStatus.name, schema: OrderDeliveryStatusSchema },
     ]),
+    JwtModule.registerAsync({
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        secret: configService.get<string>('JWT_SECRET') ?? 'default-secret-key',
+      }),
+    }),
     AuthModule,
     forwardRef(() => CartModule),
     PickupLocationsModule,
@@ -35,9 +45,10 @@ import { TransactionsModule } from '../transactions/transactions.module';
     forwardRef(() => FoodItemsModule),
     NotificationsModule,
     forwardRef(() => TransactionsModule),
+    forwardRef(() => RidersModule),
   ],
   controllers: [OrdersController, CheckoutController],
-  providers: [OrdersService, OrdersRepository],
-  exports: [OrdersService, OrdersRepository],
+  providers: [OrdersService, OrdersRepository, OrdersGateway],
+  exports: [OrdersService, OrdersRepository, OrdersGateway],
 })
 export class OrdersModule {}

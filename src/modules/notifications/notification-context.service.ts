@@ -119,4 +119,3 @@ export class NotificationContextService {
     return { user, order };
   }
 }
-

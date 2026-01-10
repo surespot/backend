@@ -102,4 +102,3 @@ export interface NotificationJobResult {
   channelResults: ChannelDeliveryResult[];
   processedAt: Date;
 }
-

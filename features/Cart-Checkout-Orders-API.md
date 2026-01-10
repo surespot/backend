@@ -1045,7 +1045,128 @@ GET /orders/507f1f77bcf86cd799439018
 
 ---
 
-### 3.4 Reorder
+### 3.4 Update Order Status (Admin/Restaurant Only)
+
+**Endpoint:** `PATCH /orders/:orderId/status`
+
+**Description:**  
+Update the status of an order. This endpoint is only available to admin and restaurant staff. When an order is set to "ready", it triggers notifications to nearby riders (for door delivery orders) and customers.
+
+**Path Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `orderId` | string | Yes | Order ID |
+
+**Request Body:**
+
+```typescript
+{
+  status: DeliveryStatus;        // Required: New delivery status
+  message?: string;              // Optional: Status message (max 500 chars)
+  latitude?: number;            // Optional: Latitude coordinate (-90 to 90)
+  longitude?: number;           // Optional: Longitude coordinate (-180 to 180)
+}
+```
+
+**DeliveryStatus Enum:**
+
+```typescript
+type DeliveryStatus = 
+  | "pending"           // Order is pending
+  | "preparing"         // Order is being prepared
+  | "ready"             // Order is ready for pickup/delivery
+  | "rider_requested"   // Rider has been requested
+  | "rider_present"     // Rider is present at pickup location
+  | "rider_picked_up"   // Rider has picked up the order
+  | "delivered"         // Order has been delivered
+  | "cancelled";        // Order has been cancelled
+```
+
+**Example Request - Set Order to Ready:**
+
+```http
+PATCH /orders/507f1f77bcf86cd799439013/status
+Authorization: Bearer <admin_or_restaurant_token>
+Content-Type: application/json
+
+{
+  "status": "ready",
+  "message": "Order is ready for pickup"
+}
+```
+
+**Response Format:**
+
+```typescript
+{
+  success: boolean;
+  message: string;
+  data: Order;                  // Updated order with new status
+}
+```
+
+**Example Response:**
+
+```json
+{
+  "success": true,
+  "message": "Order status updated successfully",
+  "data": {
+    "id": "507f1f77bcf86cd799439013",
+    "orderNumber": "ORD-2024-001234",
+    "status": "ready",
+    "deliveryType": "door-delivery",
+    "items": [...],
+    "total": 640000,
+    "formattedTotal": "₦6,400.00",
+    "paymentStatus": "paid",
+    "createdAt": "2024-01-15T10:25:00.000Z",
+    "updatedAt": "2024-01-15T11:00:00.000Z"
+  }
+}
+```
+
+**Status Update Behavior:**
+
+- **`preparing`**: Sends "Order is being prepared" notification to customer
+- **`ready`**: 
+  - Sends "Order is ready" notification to customer
+  - For door delivery orders: Automatically finds and notifies nearby active riders (within 5KM of both pickup and delivery locations) via WebSocket
+  - For pickup orders: Customer is notified to come pick up
+- **`rider_picked_up`**: Sends "Order is out for delivery" notification to customer
+- **`delivered`**: Sends "Order has been delivered" notification to customer and sets `deliveredAt` timestamp
+- **`cancelled`**: Cancels the order and sends cancellation notification
+
+**Validation Rules:**
+
+- User must have ADMIN or RESTAURANT role
+- Order must exist
+- Status must be a valid DeliveryStatus enum value
+- Message (if provided) must be max 500 characters
+- Latitude must be between -90 and 90
+- Longitude must be between -180 and 180
+
+**Error Responses:**
+
+- `404 ORDER_NOT_FOUND`: Order not found
+- `403 FORBIDDEN`: User does not have admin/restaurant permissions
+- `400 BAD_REQUEST`: Invalid status or validation error
+- `401 UNAUTHORIZED`: Authentication required
+
+**Notes:**
+
+- When setting status to "ready" for door delivery orders, the system automatically:
+  1. Finds active riders in the same region
+  2. Checks if riders are within 5KM of both pickup location and delivery address
+  3. Sends WebSocket notifications to eligible riders
+  4. Riders can then see the order in their eligible orders list and accept it
+- Status updates create a delivery status entry for tracking history
+- All status changes trigger appropriate notifications to customers
+
+---
+
+### 3.5 Reorder
 
 **Endpoint:** `POST /orders/:orderId/reorder`
 

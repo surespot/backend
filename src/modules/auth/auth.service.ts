@@ -823,7 +823,11 @@ export class AuthService {
   ): Promise<{
     success: boolean;
     message: string;
-    data: { userId: string; requiresProfileCompletion: boolean };
+    data: {
+      userId: string;
+      requiresProfileCompletion: boolean;
+      tokens: TokenPair;
+    };
   }> {
     const startTime = Date.now();
     const maskedToken = this.maskToken(verificationToken);
@@ -965,6 +969,12 @@ export class AuthService {
 
       const user = await this.authRepository.createUser(userData);
 
+      // Generate JWT tokens for immediate authentication
+      const tokens = await this.generateTokenPair(
+        user._id.toString(),
+        user.role,
+      );
+
       const executionTime = Date.now() - startTime;
       const response = {
         success: true,
@@ -972,6 +982,7 @@ export class AuthService {
         data: {
           userId: user._id.toString(),
           requiresProfileCompletion: true,
+          tokens,
         },
       };
 
@@ -981,6 +992,9 @@ export class AuthService {
         identifier: maskedIdentifier,
         userId: user._id.toString(),
         requiresProfileCompletion: true,
+        accessToken: this.maskToken(tokens.accessToken),
+        refreshToken: this.maskToken(tokens.refreshToken),
+        expiresIn: `${tokens.expiresIn}s`,
         executionTime: `${executionTime}ms`,
       });
 

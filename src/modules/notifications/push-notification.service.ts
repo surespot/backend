@@ -49,9 +49,7 @@ export class PushNotificationService {
       );
 
       if (validTokens.length === 0) {
-        this.logger.warn(
-          `No valid push tokens found for user ${userId}`,
-        );
+        this.logger.warn(`No valid push tokens found for user ${userId}`);
         return false;
       }
 
@@ -100,10 +98,9 @@ export class PushNotificationService {
       });
 
       if (errors.length > 0) {
-        this.logger.warn(
-          `Some push notifications failed for user ${userId}`,
-          { errors },
-        );
+        this.logger.warn(`Some push notifications failed for user ${userId}`, {
+          errors,
+        });
       }
 
       this.logger.log(
@@ -112,13 +109,10 @@ export class PushNotificationService {
 
       return true;
     } catch (error) {
-      this.logger.error(
-        `Error sending push notification to user ${userId}`,
-        {
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-        },
-      );
+      this.logger.error(`Error sending push notification to user ${userId}`, {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       return false;
     }
   }
@@ -156,9 +150,7 @@ export class PushNotificationService {
         await this.authRepository.updateUser(userId, {
           expoPushTokens: updatedTokens,
         });
-        this.logger.log(
-          `Removed invalid push token for user ${userId}`,
-        );
+        this.logger.log(`Removed invalid push token for user ${userId}`);
       }
     } catch (error) {
       this.logger.error(
@@ -253,4 +245,3 @@ export class PushNotificationService {
     });
   }
 }
-

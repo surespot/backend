@@ -158,6 +158,20 @@ export class Order {
   @Prop()
   cancellationReason?: string;
 
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'RiderProfile',
+    required: false,
+    index: true,
+  })
+  assignedRiderId?: Types.ObjectId;
+
+  @Prop({ type: Date })
+  assignedAt?: Date;
+
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  assignedBy?: Types.ObjectId; // Rider who accepted the order
+
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -170,3 +184,4 @@ OrderSchema.index({ userId: 1, createdAt: -1 });
 OrderSchema.index({ status: 1, createdAt: -1 });
 OrderSchema.index({ paymentStatus: 1 });
 OrderSchema.index({ createdAt: -1 });
+OrderSchema.index({ assignedRiderId: 1, status: 1 });

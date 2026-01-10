@@ -3,8 +3,11 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  ConflictException,
+  InternalServerErrorException,
   Inject,
   forwardRef,
+  Logger,
 } from '@nestjs/common';
 import { OrdersRepository } from './orders.repository';
 import { CartService } from '../cart/cart.service';
@@ -13,10 +16,21 @@ import { SavedLocationsService } from '../saved-locations/saved-locations.servic
 import { PromotionsService } from '../promotions/promotions.service';
 import { FoodItemsRepository } from '../food-items/food-items.repository';
 import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationsGateway } from '../notifications/notifications.gateway';
+import { OrdersGateway } from './orders.gateway';
+import {
+  NotificationType,
+  NotificationChannel,
+} from '../notifications/schemas/notification.schema';
 import { TransactionsService } from '../transactions/transactions.service';
+import { RiderLocationRepository } from '../riders/rider-location.repository';
+import { RidersRepository } from '../riders/riders.repository';
+import { RiderStatus } from '../riders/schemas/rider-profile.schema';
+import { Types } from 'mongoose';
 import { ValidateCheckoutDto } from './dto/validate-checkout.dto';
 import { PlaceOrderDto } from './dto/place-order.dto';
 import { GetOrdersFilterDto } from './dto/get-orders-filter.dto';
+import { GetRiderOrdersDto } from './dto/get-rider-orders.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import {
   OrderDocument,
@@ -27,6 +41,7 @@ import {
 import { OrderItemDocument } from './schemas/order-item.schema';
 import { OrderExtraDocument } from './schemas/order-extra.schema';
 import { DeliveryStatus } from './schemas/order-delivery-status.schema';
+import { PickupLocationDocument } from '../pickup-locations/schemas/pickup-location.schema';
 
 export interface OrderExtraResponse {
   id: string;
@@ -96,6 +111,9 @@ export interface OrderResponse {
   deliveredAt?: string;
   cancelledAt?: string;
   cancellationReason?: string;
+  assignedRiderId?: string;
+  assignedAt?: string;
+  assignedBy?: string;
 }
 
 @Injectable()
@@ -109,6 +127,8 @@ export class OrdersService {
   // Delivery time estimation (in minutes)
   private readonly DELIVERY_TIME_PER_KM = 3; // 3 minutes per km
 
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(
     private readonly ordersRepository: OrdersRepository,
     private readonly cartService: CartService,
@@ -117,6 +137,10 @@ export class OrdersService {
     private readonly promotionsService: PromotionsService,
     private readonly foodItemsRepository: FoodItemsRepository,
     private readonly notificationsService: NotificationsService,
+    private readonly notificationsGateway: NotificationsGateway,
+    private readonly ordersGateway: OrdersGateway,
+    private readonly riderLocationRepository: RiderLocationRepository,
+    private readonly ridersRepository: RidersRepository,
     @Inject(forwardRef(() => TransactionsService))
     private readonly transactionsService: TransactionsService,
   ) {}
@@ -583,13 +607,24 @@ export class OrdersService {
     // Clear cart
     await this.cartService.clearCartAfterOrder(userId);
 
-    // Send order placed notification
+    // Send order placed notification to customer
     await this.notificationsService.sendOrderPlacedNotification(
       userId,
       orderNumber,
       order._id.toString(),
       order.total,
     );
+
+    // Send notification to pickup location if order has one
+    if (order.pickupLocationId) {
+      await this.notificationsGateway.emitOrderPlacedToPickupLocation(
+        order.pickupLocationId.toString(),
+        orderNumber,
+        order._id.toString(),
+        order.total,
+        order.itemCount,
+      );
+    }
 
     // Fix timing issue: If payment was already successful (webhook/verify ran before order creation),
     // verify and update payment status now
@@ -974,7 +1009,7 @@ export class OrdersService {
   }
 
   /**
-   * Update order status (admin/rider)
+   * Update order status (admin/restaurant)
    */
   async updateOrderStatus(
     orderId: string,
@@ -1006,6 +1041,57 @@ export class OrdersService {
     };
 
     const newOrderStatus = orderStatusMap[dto.status];
+
+    // Validate status transitions
+    const allowedTransitions: Record<OrderStatus, OrderStatus[]> = {
+      [OrderStatus.PENDING]: [OrderStatus.PREPARING, OrderStatus.CANCELLED],
+      [OrderStatus.CONFIRMED]: [OrderStatus.PREPARING], // If CONFIRMED is used, allow transition to PREPARING
+      [OrderStatus.PREPARING]: [OrderStatus.READY],
+      [OrderStatus.READY]: [OrderStatus.OUT_FOR_DELIVERY],
+      [OrderStatus.OUT_FOR_DELIVERY]: [OrderStatus.DELIVERED],
+      [OrderStatus.DELIVERED]: [], // No transitions from DELIVERED
+      [OrderStatus.CANCELLED]: [], // No transitions from CANCELLED
+    };
+
+    // Check if cancellation is allowed (only from PENDING)
+    if (dto.status === DeliveryStatus.CANCELLED) {
+      if (order.status !== OrderStatus.PENDING) {
+        throw new BadRequestException({
+          success: false,
+          error: {
+            code: 'ORDER_CANNOT_BE_CANCELLED',
+            message: 'Only pending orders can be cancelled',
+          },
+        });
+      }
+    } else {
+      // Check if the transition is allowed
+      const currentStatus = order.status;
+      if (!allowedTransitions[currentStatus]?.includes(newOrderStatus)) {
+        throw new BadRequestException({
+          success: false,
+          error: {
+            code: 'INVALID_STATUS_TRANSITION',
+            message: `Cannot change order status from ${currentStatus} to ${newOrderStatus}. Allowed transitions: ${allowedTransitions[currentStatus]?.join(', ') || 'none'}`,
+          },
+        });
+      }
+
+      // Validate that order is paid before allowing status change to anything other than PENDING or CANCELLED
+      if (
+        newOrderStatus !== OrderStatus.PENDING &&
+        newOrderStatus !== OrderStatus.CANCELLED &&
+        order.paymentStatus !== PaymentStatus.PAID
+      ) {
+        throw new BadRequestException({
+          success: false,
+          error: {
+            code: 'ORDER_NOT_PAID',
+            message: 'Order must be paid before status can be changed. Please ensure payment is completed first.',
+          },
+        });
+      }
+    }
 
     // Update order status if needed
     const updateData: {
@@ -1051,14 +1137,33 @@ export class OrdersService {
           orderId,
           order.deliveryType === DeliveryType.PICKUP,
         );
+
+        // Find nearby active riders for door delivery orders
+        if (order.deliveryType === DeliveryType.DOOR_DELIVERY) {
+          await this.findAndNotifyNearbyRiders(order);
+        }
         break;
-      case DeliveryStatus.RIDER_PICKED_UP:
+      case DeliveryStatus.RIDER_PICKED_UP: {
+        // Fetch rider name if order is assigned to a rider
+        let riderName: string | undefined;
+        if (order.assignedRiderId) {
+          const riderProfile = await this.ridersRepository.findById(
+            order.assignedRiderId.toString(),
+          );
+          if (riderProfile) {
+            riderName =
+              `${riderProfile.firstName || ''} ${riderProfile.lastName || ''}`.trim() ||
+              undefined;
+          }
+        }
         await this.notificationsService.sendOrderOutForDeliveryNotification(
           userId,
           order.orderNumber,
           orderId,
+          riderName,
         );
         break;
+      }
       case DeliveryStatus.DELIVERED:
         await this.notificationsService.sendOrderDeliveredNotification(
           userId,
@@ -1094,9 +1199,21 @@ export class OrdersService {
       return;
     }
 
-    await this.ordersRepository.updateOrder(order._id.toString(), {
+    // Update payment status and order status if payment is successful
+    const updateData: { paymentStatus: PaymentStatus; status?: OrderStatus } = {
       paymentStatus,
-    });
+    };
+
+    // When payment is successful, set order status to CONFIRMED if it's currently PENDING
+    // Pickup location will manually set it to PREPARING when they start preparing
+    if (
+      paymentStatus === PaymentStatus.PAID &&
+      order.status === OrderStatus.PENDING
+    ) {
+      updateData.status = OrderStatus.CONFIRMED;
+    }
+
+    await this.ordersRepository.updateOrder(order._id.toString(), updateData);
 
     // Send notification based on payment status
     if (paymentStatus === PaymentStatus.PAID) {
@@ -1106,6 +1223,20 @@ export class OrdersService {
         order._id.toString(),
         order.total,
       );
+
+      // Notify pickup location about the paid order
+      if (order.pickupLocationId) {
+        await this.notificationsGateway.emitOrderPlacedToPickupLocation(
+          order.pickupLocationId.toString(),
+          order.orderNumber,
+          order._id.toString(),
+          order.total,
+          order.itemCount,
+        );
+        this.logger.log(
+          `[updatePaymentStatusByReference] Notified pickup location ${order.pickupLocationId.toString()} about paid order ${order.orderNumber}`,
+        );
+      }
     } else if (paymentStatus === PaymentStatus.FAILED) {
       await this.notificationsService.sendPaymentFailedNotification(
         order.userId.toString(),
@@ -1170,6 +1301,9 @@ export class OrdersService {
       deliveredAt: order.deliveredAt?.toISOString(),
       cancelledAt: order.cancelledAt?.toISOString(),
       cancellationReason: order.cancellationReason,
+      assignedRiderId: order.assignedRiderId?.toString(),
+      assignedAt: order.assignedAt?.toISOString(),
+      assignedBy: order.assignedBy?.toString(),
     };
   }
 
@@ -1241,6 +1375,746 @@ export class OrdersService {
         quantity: e.quantity,
       })),
       lineTotal: item.lineTotal,
+    };
+  }
+
+  /**
+   * Find nearby active riders when order is ready
+   * Riders must be within 15KM of both pickup location and delivery address
+   */
+  private async findAndNotifyNearbyRiders(order: OrderDocument): Promise<void> {
+    try {
+      // Get pickup location to get region and coordinates
+      if (!order.pickupLocationId) {
+        return; // No pickup location, skip
+      }
+
+      // Handle both ObjectId and populated object cases
+      let pickupLocationId: string;
+      if (
+        order.pickupLocationId &&
+        typeof order.pickupLocationId === 'object' &&
+        '_id' in order.pickupLocationId
+      ) {
+        // Populated object - extract _id
+        pickupLocationId = (
+          order.pickupLocationId as unknown as PickupLocationDocument
+        )._id.toString();
+      } else {
+        // ObjectId - convert directly
+        pickupLocationId = (
+          order.pickupLocationId as Types.ObjectId
+        ).toString();
+      }
+
+      // Get pickup location - use the same coordinate extraction as getRiderEligibleOrders
+      // First check if pickupLocationId is already populated
+      let orderWithPickup: OrderDocument = order;
+      if (
+        !order.pickupLocationId ||
+        typeof order.pickupLocationId === 'string' ||
+        !('location' in (order.pickupLocationId as any))
+      ) {
+        // Need to fetch with populated pickupLocationId
+        const fetchedOrder = await this.ordersRepository.findById(
+          order._id.toString(),
+        );
+        if (!fetchedOrder) {
+          return; // Order not found, skip
+        }
+        orderWithPickup = fetchedOrder;
+      }
+
+      // Get populated pickup location
+      const populatedPickupLocation = orderWithPickup.pickupLocationId as any;
+      if (
+        !populatedPickupLocation ||
+        !populatedPickupLocation.location?.coordinates
+      ) {
+        return; // No pickup location coordinates, skip
+      }
+
+      const regionId = populatedPickupLocation.regionId?.toString();
+      if (!regionId) {
+        return; // No region, skip
+      }
+
+      // Get delivery address coordinates
+      if (
+        !order.deliveryAddress?.coordinates?.latitude ||
+        !order.deliveryAddress?.coordinates?.longitude
+      ) {
+        return; // No delivery coordinates, skip
+      }
+
+      // Extract coordinates in same format as getRiderEligibleOrders
+      const pickupLat = populatedPickupLocation.location.coordinates[1]; // GeoJSON: [lng, lat]
+      const pickupLng = populatedPickupLocation.location.coordinates[0];
+      const deliveryLat = order.deliveryAddress.coordinates.latitude;
+      const deliveryLng = order.deliveryAddress.coordinates.longitude;
+
+      // Find active riders in the region
+      const { profiles } = await this.ridersRepository.findProfiles(
+        {
+          status: RiderStatus.ACTIVE,
+          regionId: regionId,
+        },
+        { page: 1, limit: 100 }, // Get up to 100 active riders
+      );
+
+      if (profiles.length === 0) {
+        return; // No active riders in region
+      }
+
+      // Get rider profile IDs
+      const riderProfileIds = profiles.map((p) => p._id);
+
+      // Find riders within 15KM of both pickup location and delivery address
+      const MAX_DISTANCE_METERS = 15000; // 15KM
+
+      const nearbyRiders =
+        await this.riderLocationRepository.findNearbyMultiplePoints(
+          [
+            { latitude: pickupLat, longitude: pickupLng },
+            { latitude: deliveryLat, longitude: deliveryLng },
+          ],
+          MAX_DISTANCE_METERS,
+          riderProfileIds,
+        );
+
+      // Notify nearby riders via WebSocket (only those within 15KM of both locations)
+      if (nearbyRiders.length > 0) {
+        // Get pickup location details for notification
+        const pickupLocationData = {
+          id: populatedPickupLocation._id.toString(),
+          name: populatedPickupLocation.name,
+          address: populatedPickupLocation.address,
+          latitude: pickupLat,
+          longitude: pickupLng,
+        };
+
+        const deliveryAddressData = {
+          address: order.deliveryAddress.address,
+          coordinates: {
+            latitude: deliveryLat,
+            longitude: deliveryLng,
+          },
+        };
+
+        // Emit to each nearby rider individually via their personal room
+        const notificationPromises = nearbyRiders.map((riderLocation) => {
+          const riderProfileId = riderLocation.riderProfileId.toString();
+          return this.ordersGateway
+            .emitOrderReadyToRider(
+              riderProfileId,
+              order._id.toString(),
+              order.orderNumber,
+              pickupLocationData,
+              deliveryAddressData,
+              order.total,
+              order.itemCount,
+            )
+            .catch((err) => {
+              this.logger.warn(
+                `Failed to send notification to rider ${riderProfileId}: ${err instanceof Error ? err.message : String(err)}`,
+              );
+              return false;
+            });
+        });
+
+        await Promise.all(notificationPromises);
+
+        this.logger.log(
+          `Order ready notifications sent to ${nearbyRiders.length} nearby rider(s) for order ${order.orderNumber}`,
+        );
+      } else {
+        this.logger.debug(
+          `No nearby riders found within 15KM of both pickup and delivery locations for order ${order.orderNumber}`,
+        );
+      }
+    } catch (error) {
+      // Log error but don't fail the order status update
+      this.logger.error('Error finding nearby riders:', {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+    }
+  }
+
+  /**
+   * Get orders eligible for rider
+   * Returns orders that are READY and in the rider's region
+   * Filters by proximity: rider must be within 15KM of both pickup location and delivery address
+   */
+  async getRiderEligibleOrders(userId: string, filter: GetRiderOrdersDto) {
+    // Get rider profile to get region
+    const riderProfile = await this.ridersRepository.findByUserId(userId);
+    if (!riderProfile) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'RIDER_PROFILE_NOT_FOUND',
+          message: 'Rider profile not found',
+        },
+      });
+    }
+
+    // Get rider's current location
+    const riderLocation =
+      await this.riderLocationRepository.findByRiderProfileId(
+        riderProfile._id.toString(),
+      );
+
+    if (!riderLocation) {
+      // If rider hasn't set their location, return empty result
+      // They need to update their location first to see orders
+      return {
+        success: true,
+        message: 'Eligible orders retrieved successfully',
+        data: {
+          orders: [],
+          pagination: {
+            page: filter.page || 1,
+            limit: filter.limit || 20,
+            total: 0,
+            totalPages: 0,
+            hasNext: false,
+            hasPrev: false,
+          },
+        },
+      };
+    }
+
+    const riderLat = riderLocation.location.coordinates[1]; // GeoJSON: [lng, lat]
+    const riderLng = riderLocation.location.coordinates[0];
+
+    // Only show READY orders in the rider's region
+    const regionId = riderProfile.regionId.toString();
+    const status = filter.status || OrderStatus.READY;
+
+    // Get a larger set of orders to filter by proximity
+    // We'll filter by proximity after fetching, so get more than needed
+    const page = filter.page || 1;
+    const limit = filter.limit || 20;
+    const fetchLimit = limit * 3; // Fetch 3x to account for proximity filtering
+
+    // Find orders in the region with the specified status
+    const orders = await this.ordersRepository.findByRegionAndStatus(
+      regionId,
+      status,
+      {
+        page: 1, // Start from page 1
+        limit: fetchLimit, // Fetch more to filter
+      },
+    );
+
+    // Filter orders by proximity: rider must be within 15KM of both pickup and delivery
+    const MAX_DISTANCE_KM = 15;
+    const eligibleOrders = orders.items.filter((order) => {
+      // Check pickup location proximity
+      const pickupLocationDoc = order.pickupLocationId as any;
+      if (!pickupLocationDoc || !pickupLocationDoc.location?.coordinates) {
+        return false; // No pickup location coordinates
+      }
+
+      const pickupLat = pickupLocationDoc.location.coordinates[1];
+      const pickupLng = pickupLocationDoc.location.coordinates[0];
+      const distanceToPickup = this.calculateDistance(
+        riderLat,
+        riderLng,
+        pickupLat,
+        pickupLng,
+      );
+
+      if (distanceToPickup > MAX_DISTANCE_KM) {
+        return false; // Too far from pickup
+      }
+
+      // Check delivery address proximity
+      if (
+        !order.deliveryAddress?.coordinates?.latitude ||
+        !order.deliveryAddress?.coordinates?.longitude
+      ) {
+        return false; // No delivery coordinates
+      }
+
+      const deliveryLat = order.deliveryAddress.coordinates.latitude;
+      const deliveryLng = order.deliveryAddress.coordinates.longitude;
+      const distanceToDelivery = this.calculateDistance(
+        riderLat,
+        riderLng,
+        deliveryLat,
+        deliveryLng,
+      );
+
+      if (distanceToDelivery > MAX_DISTANCE_KM) {
+        return false; // Too far from delivery
+      }
+
+      return true; // Within 15KM of both locations
+    });
+
+    // Apply pagination to filtered results
+    const skip = (page - 1) * limit;
+    const paginatedOrders = eligibleOrders.slice(skip, skip + limit);
+    const total = eligibleOrders.length;
+    const totalPages = Math.ceil(total / limit);
+
+    const formattedOrders = await Promise.all(
+      paginatedOrders.map((order) => this.formatOrder(order)),
+    );
+
+    return {
+      success: true,
+      message: 'Eligible orders retrieved successfully',
+      data: {
+        orders: formattedOrders,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages,
+          hasNext: page < totalPages,
+          hasPrev: page > 1,
+        },
+      },
+    };
+  }
+
+  /**
+   * Accept an order (Rider only)
+   * Atomically assigns a rider to an order, preventing race conditions
+   */
+  async acceptOrder(userId: string, orderId: string) {
+    // Get rider profile
+    const riderProfile = await this.ridersRepository.findByUserId(userId);
+    if (!riderProfile) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'RIDER_PROFILE_NOT_FOUND',
+          message: 'Rider profile not found',
+        },
+      });
+    }
+
+    // Verify rider is active
+    if (riderProfile.status !== RiderStatus.ACTIVE) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'RIDER_NOT_ACTIVE',
+          message: 'Only active riders can accept orders',
+        },
+      });
+    }
+
+    // Check if rider has less than 3 active orders
+    const activeOrdersCount =
+      await this.ordersRepository.countActiveAssignedOrders(
+        riderProfile._id.toString(),
+      );
+
+    if (activeOrdersCount >= 3) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'MAX_ORDERS_REACHED',
+          message:
+            'You cannot accept more than 3 orders at once. Please deliver some orders first.',
+        },
+      });
+    }
+
+    // Atomically assign rider to order (prevents race conditions)
+    const order = await this.ordersRepository.assignRiderToOrder(
+      orderId,
+      riderProfile._id.toString(),
+      userId,
+    );
+
+    if (!order) {
+      // Order might be already assigned, not READY, or not DOOR_DELIVERY
+      const existingOrder = await this.ordersRepository.findById(orderId);
+      if (!existingOrder) {
+        throw new NotFoundException({
+          success: false,
+          error: {
+            code: 'ORDER_NOT_FOUND',
+            message: 'Order not found',
+          },
+        });
+      }
+
+      if (existingOrder.assignedRiderId) {
+        throw new ConflictException({
+          success: false,
+          error: {
+            code: 'ORDER_ALREADY_ASSIGNED',
+            message: 'This order has already been assigned to another rider',
+          },
+        });
+      }
+
+      if (existingOrder.status !== OrderStatus.READY) {
+        throw new BadRequestException({
+          success: false,
+          error: {
+            code: 'ORDER_NOT_READY',
+            message: 'Order is not ready for assignment',
+          },
+        });
+      }
+
+      if (existingOrder.deliveryType !== DeliveryType.DOOR_DELIVERY) {
+        throw new BadRequestException({
+          success: false,
+          error: {
+            code: 'INVALID_ORDER_TYPE',
+            message: 'Only door delivery orders can be assigned to riders',
+          },
+        });
+      }
+
+      // If we get here, something unexpected happened
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'ORDER_ASSIGNMENT_FAILED',
+          message: 'Failed to assign order. Please try again.',
+        },
+      });
+    }
+
+    // At this point, order is guaranteed to be non-null
+    // Get formatted order
+    const formattedOrder = await this.formatOrder(order);
+
+    // Notify customer that rider is on the way (using normal notification flow)
+    const riderName =
+      `${riderProfile.firstName || ''} ${riderProfile.lastName || ''}`.trim() ||
+      'A rider';
+    await this.notificationsService.queueNotification(
+      order.userId.toString(),
+      NotificationType.ORDER_OUT_FOR_DELIVERY,
+      'Rider Assigned',
+      `${riderName} is on the way to pick up your order ${order.orderNumber}.`,
+      {
+        orderId: order._id.toString(),
+        orderNumber: order.orderNumber,
+        riderName,
+        riderProfileId: riderProfile._id.toString(),
+      },
+      [NotificationChannel.IN_APP, NotificationChannel.SMS],
+    );
+
+    // Notify pickup location that rider is on the way
+    if (order.pickupLocationId) {
+      await this.notificationsGateway.emitRiderAssignedToPickupLocation(
+        order.pickupLocationId.toString(),
+        order.orderNumber,
+        order._id.toString(),
+        {
+          riderName:
+            `${riderProfile.firstName || ''} ${riderProfile.lastName || ''}`.trim() ||
+            'A rider',
+          orderNumber: order.orderNumber,
+        },
+      );
+    }
+
+    return {
+      success: true,
+      message: 'Order accepted successfully',
+      data: formattedOrder,
+    };
+  }
+
+  /**
+   * Get orders assigned to the current rider
+   * Returns orders that have been accepted by the rider
+   */
+  async getRiderAssignedOrders(userId: string, filter: GetRiderOrdersDto) {
+    // Get rider profile
+    const riderProfile = await this.ridersRepository.findByUserId(userId);
+    if (!riderProfile) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'RIDER_PROFILE_NOT_FOUND',
+          message: 'Rider profile not found',
+        },
+      });
+    }
+
+    // Find orders assigned to this rider
+    const orders = await this.ordersRepository.findByAssignedRider(
+      riderProfile._id.toString(),
+      {
+        page: filter.page || 1,
+        limit: filter.limit || 20,
+        status: filter.status,
+      },
+    );
+
+    const formattedOrders = await Promise.all(
+      orders.items.map((order) => this.formatOrder(order)),
+    );
+
+    return {
+      success: true,
+      message: 'Assigned orders retrieved successfully',
+      data: {
+        orders: formattedOrders,
+        pagination: orders.pagination,
+      },
+    };
+  }
+
+  /**
+   * Mark order as delivered (Rider only)
+   * Only the assigned rider can mark their order as delivered
+   */
+  async markOrderAsDelivered(
+    orderId: string,
+    userId: string,
+    message?: string,
+    latitude?: number,
+    longitude?: number,
+  ) {
+    // Get rider profile
+    const riderProfile = await this.ridersRepository.findByUserId(userId);
+    if (!riderProfile) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'RIDER_PROFILE_NOT_FOUND',
+          message: 'Rider profile not found',
+        },
+      });
+    }
+
+    // Get order
+    const order = await this.ordersRepository.findById(orderId);
+    if (!order) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'ORDER_NOT_FOUND',
+          message: 'Order not found',
+        },
+      });
+    }
+
+    // Verify order is assigned to this rider
+    if (!order.assignedRiderId) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'ORDER_NOT_ASSIGNED',
+          message: 'This order is not assigned to any rider',
+        },
+      });
+    }
+
+    if (order.assignedRiderId.toString() !== riderProfile._id.toString()) {
+      throw new ForbiddenException({
+        success: false,
+        error: {
+          code: 'ORDER_NOT_ASSIGNED_TO_RIDER',
+          message: 'This order is not assigned to you',
+        },
+      });
+    }
+
+    // Verify order can be marked as delivered (must be OUT_FOR_DELIVERY)
+    if (order.status !== OrderStatus.OUT_FOR_DELIVERY) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'INVALID_ORDER_STATUS',
+          message: `Order must be out for delivery to mark as delivered. Current status: ${order.status}`,
+        },
+      });
+    }
+
+    // Update order status to DELIVERED
+    const updatedOrder = await this.ordersRepository.updateOrder(orderId, {
+      status: OrderStatus.DELIVERED,
+      deliveredAt: new Date(),
+    });
+
+    if (!updatedOrder) {
+      throw new InternalServerErrorException({
+        success: false,
+        error: {
+          code: 'ORDER_UPDATE_FAILED',
+          message: 'Failed to update order status',
+        },
+      });
+    }
+
+    // Create delivery status entry
+    await this.ordersRepository.createDeliveryStatus({
+      orderId,
+      status: DeliveryStatus.DELIVERED,
+      message: message || 'Order has been delivered',
+      updatedBy: userId,
+      latitude,
+      longitude,
+    });
+
+    // Calculate and update distance covered
+    // Need to fetch order with populated pickupLocationId to get coordinates
+    const orderWithPickup = await this.ordersRepository.findById(orderId);
+    if (
+      orderWithPickup?.pickupLocationId &&
+      orderWithPickup.deliveryAddress?.coordinates
+    ) {
+      const pickupLocation = orderWithPickup.pickupLocationId as any; // Populated
+      const pickupCoords = pickupLocation.location?.coordinates;
+      const deliveryCoords = orderWithPickup.deliveryAddress.coordinates;
+
+      if (pickupCoords && deliveryCoords) {
+        // Calculate distance in kilometers, then convert to meters
+        const distanceKm = this.calculateDistance(
+          pickupCoords[1], // pickup lat
+          pickupCoords[0], // pickup lng
+          deliveryCoords.latitude,
+          deliveryCoords.longitude,
+        );
+        const distanceMeters = distanceKm * 1000;
+
+        // Update rider profile with distance
+        // Need to fetch current value first since updateProfile doesn't support $inc
+        const currentDistance = riderProfile.totalDistanceToday || 0;
+        await this.ridersRepository.updateProfile(riderProfile._id.toString(), {
+          totalDistanceToday: currentDistance + distanceMeters,
+        });
+      }
+    }
+
+    // Send delivery notification to customer
+    await this.notificationsService.sendOrderDeliveredNotification(
+      order.userId.toString(),
+      order.orderNumber,
+      orderId,
+    );
+
+    return {
+      success: true,
+      message: 'Order marked as delivered successfully',
+      data: await this.formatOrder(updatedOrder),
+    };
+  }
+
+  /**
+   * Mark order as picked up (Rider only)
+   * Only the assigned rider can mark their order as picked up
+   */
+  async markOrderAsPickedUp(
+    orderId: string,
+    userId: string,
+    message?: string,
+    latitude?: number,
+    longitude?: number,
+  ) {
+    // Get rider profile
+    const riderProfile = await this.ridersRepository.findByUserId(userId);
+    if (!riderProfile) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'RIDER_PROFILE_NOT_FOUND',
+          message: 'Rider profile not found',
+        },
+      });
+    }
+
+    // Get order
+    const order = await this.ordersRepository.findById(orderId);
+    if (!order) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'ORDER_NOT_FOUND',
+          message: 'Order not found',
+        },
+      });
+    }
+
+    // Verify order is assigned to this rider
+    if (!order.assignedRiderId) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'ORDER_NOT_ASSIGNED',
+          message: 'This order is not assigned to any rider',
+        },
+      });
+    }
+
+    if (order.assignedRiderId.toString() !== riderProfile._id.toString()) {
+      throw new ForbiddenException({
+        success: false,
+        error: {
+          code: 'ORDER_NOT_ASSIGNED_TO_RIDER',
+          message: 'This order is not assigned to you',
+        },
+      });
+    }
+
+    // Verify order can be marked as picked up (must be READY)
+    if (order.status !== OrderStatus.READY) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'INVALID_ORDER_STATUS',
+          message: `Order must be ready to mark as picked up. Current status: ${order.status}`,
+        },
+      });
+    }
+
+    // Update order status to OUT_FOR_DELIVERY
+    const updatedOrder = await this.ordersRepository.updateOrder(orderId, {
+      status: OrderStatus.OUT_FOR_DELIVERY,
+    });
+
+    if (!updatedOrder) {
+      throw new InternalServerErrorException({
+        success: false,
+        error: {
+          code: 'ORDER_UPDATE_FAILED',
+          message: 'Failed to update order status',
+        },
+      });
+    }
+
+    // Create delivery status entry
+    await this.ordersRepository.createDeliveryStatus({
+      orderId,
+      status: DeliveryStatus.RIDER_PICKED_UP,
+      message: message || 'Order has been picked up by rider',
+      updatedBy: userId,
+      latitude,
+      longitude,
+    });
+
+    // Send notification to customer
+    const riderName =
+      `${riderProfile.firstName || ''} ${riderProfile.lastName || ''}`.trim() ||
+      'A rider';
+    await this.notificationsService.sendOrderOutForDeliveryNotification(
+      order.userId.toString(),
+      order.orderNumber,
+      orderId,
+      riderName,
+    );
+
+    return {
+      success: true,
+      message: 'Order marked as picked up successfully',
+      data: await this.formatOrder(updatedOrder),
     };
   }
 }

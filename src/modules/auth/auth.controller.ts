@@ -199,6 +199,11 @@ export class AuthController {
         data: {
           userId: '507f1f77bcf86cd799439011',
           requiresProfileCompletion: true,
+          tokens: {
+            accessToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+            refreshToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+            expiresIn: 3600,
+          },
         },
       },
     },

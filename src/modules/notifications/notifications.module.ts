@@ -33,8 +33,7 @@ import { PickupLocationsModule } from '../pickup-locations/pickup-locations.modu
     JwtModule.registerAsync({
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
-        secret:
-          configService.get<string>('JWT_SECRET') ?? 'default-secret-key',
+        secret: configService.get<string>('JWT_SECRET') ?? 'default-secret-key',
       }),
     }),
     BullModule.registerQueue({

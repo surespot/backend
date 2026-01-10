@@ -6,6 +6,7 @@ import {
   TransactionDocument,
   TransactionStatus,
   PaymentProvider,
+  TransactionType,
 } from './schemas/transaction.schema';
 
 @Injectable()
@@ -29,28 +30,43 @@ export class TransactionsRepository {
 
   async create(data: {
     orderId?: string;
-    userId: string;
+    userId?: string;
+    riderProfileId?: string;
+    type?: TransactionType;
     amount: number;
     currency?: string;
-    paymentMethod: string;
+    paymentMethod?: string;
     provider?: PaymentProvider;
     reference?: string;
     authorizationUrl?: string;
     accessCode?: string;
   }): Promise<TransactionDocument> {
-    this.validateObjectId(data.userId, 'userId');
+    if (data.userId) {
+      this.validateObjectId(data.userId, 'userId');
+    }
+    if (data.riderProfileId) {
+      this.validateObjectId(data.riderProfileId, 'riderProfileId');
+    }
 
     const transactionData: Record<string, unknown> = {
-      userId: new Types.ObjectId(data.userId),
       amount: data.amount,
       currency: data.currency || 'NGN',
-      paymentMethod: data.paymentMethod,
+      paymentMethod: data.paymentMethod || 'wallet',
       provider: data.provider || PaymentProvider.PAYSTACK,
+      type: data.type || TransactionType.PAYMENT,
       status: TransactionStatus.PENDING,
       reference: data.reference,
       authorizationUrl: data.authorizationUrl,
       accessCode: data.accessCode,
     };
+
+    if (data.userId) {
+      transactionData.userId = new Types.ObjectId(data.userId);
+    }
+
+    if (data.riderProfileId) {
+      transactionData.riderProfileId = new Types.ObjectId(data.riderProfileId);
+    }
 
     if (data.orderId) {
       this.validateObjectId(data.orderId, 'orderId');
@@ -86,6 +102,18 @@ export class TransactionsRepository {
     this.validateObjectId(userId, 'userId');
     return this.transactionModel
       .find({ userId: new Types.ObjectId(userId) })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .exec();
+  }
+
+  async findByRiderProfileId(
+    riderProfileId: string,
+    limit: number = 20,
+  ): Promise<TransactionDocument[]> {
+    this.validateObjectId(riderProfileId, 'riderProfileId');
+    return this.transactionModel
+      .find({ riderProfileId: new Types.ObjectId(riderProfileId) })
       .sort({ createdAt: -1 })
       .limit(limit)
       .exec();
