@@ -16,6 +16,7 @@ Each feature document provides:
 ## Current Features
 
 - **[FoodItems-Catalog.md](./FoodItems-Catalog.md)** - Product listing, details, categories, and search APIs
+- **[RIDER_WALLET_API_DOCUMENTATION.md](./RIDER_WALLET_API_DOCUMENTATION.md)** - Rider wallet balance, transactions, payment details, and withdrawals APIs
 
 ## How to Use
 

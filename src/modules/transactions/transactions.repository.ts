@@ -40,6 +40,8 @@ export class TransactionsRepository {
     reference?: string;
     authorizationUrl?: string;
     accessCode?: string;
+    status?: TransactionStatus;
+    providerResponse?: Record<string, unknown>;
   }): Promise<TransactionDocument> {
     if (data.userId) {
       this.validateObjectId(data.userId, 'userId');
@@ -54,7 +56,7 @@ export class TransactionsRepository {
       paymentMethod: data.paymentMethod || 'wallet',
       provider: data.provider || PaymentProvider.PAYSTACK,
       type: data.type || TransactionType.PAYMENT,
-      status: TransactionStatus.PENDING,
+      status: data.status ?? TransactionStatus.PENDING,
       reference: data.reference,
       authorizationUrl: data.authorizationUrl,
       accessCode: data.accessCode,
@@ -71,6 +73,10 @@ export class TransactionsRepository {
     if (data.orderId) {
       this.validateObjectId(data.orderId, 'orderId');
       transactionData.orderId = new Types.ObjectId(data.orderId);
+    }
+
+    if (data.providerResponse) {
+      transactionData.providerResponse = data.providerResponse;
     }
 
     const transaction = new this.transactionModel(transactionData);
@@ -117,6 +123,139 @@ export class TransactionsRepository {
       .sort({ createdAt: -1 })
       .limit(limit)
       .exec();
+  }
+
+  async findByRiderProfileIdWithFilters(
+    riderProfileId: string,
+    options: {
+      page?: number;
+      limit?: number;
+      type?: TransactionType;
+      status?: TransactionStatus;
+      startDate?: Date;
+      endDate?: Date;
+    } = {},
+  ): Promise<{
+    transactions: TransactionDocument[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  }> {
+    this.validateObjectId(riderProfileId, 'riderProfileId');
+
+    const page = options.page || 1;
+    const limit = options.limit || 20;
+    const skip = (page - 1) * limit;
+
+    // Build query
+    const query: Record<string, any> = {
+      riderProfileId: new Types.ObjectId(riderProfileId),
+    };
+
+    if (options.type) {
+      query.type = options.type;
+    }
+
+    if (options.status) {
+      query.status = options.status;
+    }
+
+    if (options.startDate || options.endDate) {
+      query.createdAt = {};
+      if (options.startDate) {
+        query.createdAt.$gte = options.startDate;
+      }
+      if (options.endDate) {
+        query.createdAt.$lte = options.endDate;
+      }
+    }
+
+    // Get total count
+    const total = await this.transactionModel.countDocuments(query).exec();
+
+    // Get transactions
+    const transactions = await this.transactionModel
+      .find(query)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .exec();
+
+    return {
+      transactions,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  async getRiderTransactionStats(
+    riderProfileId: string,
+    startDate?: Date,
+    endDate?: Date,
+  ): Promise<{
+    totalEarnings: number;
+    totalWithdrawals: number;
+  }> {
+    this.validateObjectId(riderProfileId, 'riderProfileId');
+
+    const query: Record<string, any> = {
+      riderProfileId: new Types.ObjectId(riderProfileId),
+    };
+
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) {
+        query.createdAt.$gte = startDate;
+      }
+      if (endDate) {
+        query.createdAt.$lte = endDate;
+      }
+    }
+
+    // Get total earnings (successful rider_earning transactions)
+    const earningsResult = await this.transactionModel
+      .aggregate([
+        {
+          $match: {
+            ...query,
+            type: TransactionType.RIDER_EARNING,
+            status: TransactionStatus.SUCCESS,
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$amount' },
+          },
+        },
+      ])
+      .exec();
+
+    // Get total withdrawals (all rider_withdrawal transactions, regardless of status)
+    const withdrawalsResult = await this.transactionModel
+      .aggregate([
+        {
+          $match: {
+            ...query,
+            type: TransactionType.RIDER_WITHDRAWAL,
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$amount' },
+          },
+        },
+      ])
+      .exec();
+
+    return {
+      totalEarnings: earningsResult[0]?.total || 0,
+      totalWithdrawals: withdrawalsResult[0]?.total || 0,
+    };
   }
 
   async updateStatus(

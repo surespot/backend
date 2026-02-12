@@ -172,6 +172,9 @@ export class Order {
   @Prop({ type: Types.ObjectId, ref: 'User' })
   assignedBy?: Types.ObjectId; // Rider who accepted the order
 
+  @Prop({ type: String, length: 4 })
+  deliveryConfirmationCode?: string; // 4-digit code for customer to give rider
+
   createdAt?: Date;
   updatedAt?: Date;
 }

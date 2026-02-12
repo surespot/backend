@@ -668,4 +668,26 @@ export class NotificationsGateway
       timestamp: new Date().toISOString(),
     });
   }
+
+  /**
+   * Emit order picked up notification to pickup location
+   */
+  async emitOrderPickedUpToPickupLocation(
+    pickupLocationId: string,
+    orderNumber: string,
+    orderId: string,
+    riderName?: string,
+  ): Promise<boolean> {
+    const message = riderName
+      ? `${riderName} has picked up order ${orderNumber}.`
+      : `Order ${orderNumber} has been picked up.`;
+
+    return this.sendToPickupLocation(pickupLocationId, 'order_picked_up', {
+      orderId,
+      orderNumber,
+      riderName,
+      message,
+      timestamp: new Date().toISOString(),
+    });
+  }
 }

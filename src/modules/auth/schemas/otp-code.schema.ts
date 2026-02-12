@@ -7,6 +7,7 @@ export enum OtpPurpose {
   REGISTRATION = 'registration',
   PASSWORD_RESET = 'password_reset',
   EMAIL_VERIFICATION = 'email_verification',
+  ADMIN_LOGIN = 'admin_login',
 }
 
 @Schema({ timestamps: true })

@@ -16,6 +16,11 @@ import {
   PaymentProvider,
 } from '../transactions/schemas/transaction.schema';
 import { OrderStatus } from '../orders/schemas/order.schema';
+import {
+  NotificationChannel,
+  NotificationType,
+} from '../notifications/schemas/notification.schema';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class WalletsService {
@@ -29,77 +34,11 @@ export class WalletsService {
     private readonly transactionsService: TransactionsService,
     private readonly ordersRepository: OrdersRepository,
     private readonly ridersRepository: RidersRepository,
+    private readonly notificationsService: NotificationsService,
     private readonly configService: ConfigService,
   ) {
     this.paystackSecretKey =
       this.configService.get<string>('PAYSTACK_SECRET_KEY') || '';
-  }
-
-  /**
-   * Process daily earnings for all riders (runs at 10pm)
-   * Credits wallets with earnings from completed deliveries today
-   */
-  async processDailyEarnings(): Promise<{
-    processed: number;
-    totalCredited: number;
-    errors: string[];
-  }> {
-    this.logger.log('Starting daily earnings processing...');
-
-    // Get all delivered orders from today, grouped by rider
-    const ordersByRider = await this.ordersRepository.getTodayEarningsByRider();
-
-    let processed = 0;
-    let totalCredited = 0;
-    const errors: string[] = [];
-
-    for (const riderEarnings of ordersByRider) {
-      const riderProfileId = riderEarnings.riderProfileId;
-      const earnings = riderEarnings.totalEarnings;
-      const orderCount = riderEarnings.orderCount;
-
-      if (earnings <= 0) {
-        continue;
-      }
-
-      try {
-        // Credit wallet
-        await this.walletsRepository.creditWallet(riderProfileId, earnings);
-
-        // Create transaction record
-        const reference = `EARN-${Date.now()}-${riderProfileId.substring(0, 8)}`;
-        await this.transactionsRepository.create({
-          riderProfileId,
-          type: TransactionType.RIDER_EARNING,
-          amount: earnings,
-          paymentMethod: 'daily_earnings',
-          provider: PaymentProvider.PAYSTACK,
-          reference,
-          status: TransactionStatus.SUCCESS,
-        });
-
-        processed++;
-        totalCredited += earnings;
-
-        this.logger.log(
-          `Credited ₦${(earnings / 100).toFixed(2)} to rider ${riderProfileId} (${orderCount} orders)`,
-        );
-      } catch (error) {
-        const errorMsg = `Failed to process earnings for rider ${riderProfileId}: ${error.message}`;
-        errors.push(errorMsg);
-        this.logger.error(errorMsg, error);
-      }
-    }
-
-    this.logger.log(
-      `Daily earnings processing completed: ${processed} riders processed, ₦${(totalCredited / 100).toFixed(2)} total credited`,
-    );
-
-    return {
-      processed,
-      totalCredited,
-      errors,
-    };
   }
 
   /**
@@ -144,6 +83,268 @@ export class WalletsService {
       createdAt: t.createdAt?.toISOString(),
       orderId: t.orderId?.toString(),
     }));
+  }
+
+  /**
+   * Get wallet transactions with filtering and pagination
+   */
+  async getWalletTransactionsWithFilters(
+    riderProfileId: string,
+    options: {
+      page?: number;
+      limit?: number;
+      type?: 'earned' | 'withdrew' | 'all';
+      status?: 'completed' | 'pending' | 'failed' | 'all';
+      period?: 'this-month' | 'last-month' | 'this-year' | 'all-time';
+    } = {},
+  ): Promise<{
+    transactions: any[];
+    pagination: {
+      page: number;
+      limit: number;
+      total: number;
+      totalPages: number;
+      hasNext: boolean;
+      hasPrev: boolean;
+    };
+  }> {
+    // Map frontend type to TransactionType
+    let transactionType: TransactionType | undefined;
+    if (options.type === 'earned') {
+      transactionType = TransactionType.RIDER_EARNING;
+    } else if (options.type === 'withdrew') {
+      transactionType = TransactionType.RIDER_WITHDRAWAL;
+    }
+
+    // Map frontend status to TransactionStatus
+    let transactionStatus: TransactionStatus | undefined;
+    if (options.status === 'completed') {
+      transactionStatus = TransactionStatus.SUCCESS;
+    } else if (options.status === 'pending') {
+      transactionStatus = TransactionStatus.PENDING;
+    } else if (options.status === 'failed') {
+      transactionStatus = TransactionStatus.FAILED;
+    }
+
+    // Calculate date range based on period
+    let startDate: Date | undefined;
+    let endDate: Date | undefined;
+    const now = new Date();
+
+    if (options.period === 'this-month') {
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+      endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+    } else if (options.period === 'last-month') {
+      startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      endDate = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
+    } else if (options.period === 'this-year') {
+      startDate = new Date(now.getFullYear(), 0, 1);
+      endDate = new Date(now.getFullYear(), 11, 31, 23, 59, 59);
+    }
+
+    const result = await this.transactionsRepository.findByRiderProfileIdWithFilters(
+      riderProfileId,
+      {
+        page: options.page || 1,
+        limit: options.limit || 20,
+        type: transactionType,
+        status: transactionStatus,
+        startDate,
+        endDate,
+      },
+    );
+
+    const transactions = result.transactions.map((t) => ({
+      id: t._id.toString(),
+      type: t.type === TransactionType.RIDER_EARNING ? 'earned' : 'withdrew',
+      amount: t.amount,
+      formattedAmount: `₦${(t.amount / 100).toLocaleString('en-NG')}`,
+      status:
+        t.status === TransactionStatus.SUCCESS
+          ? 'completed'
+          : t.status === TransactionStatus.PENDING
+            ? 'pending'
+            : 'failed',
+      reference: t.reference,
+      createdAt: t.createdAt?.toISOString(),
+      orderId: t.orderId?.toString(),
+      description: this.getTransactionDescription(t),
+    }));
+
+    return {
+      transactions,
+      pagination: {
+        page: result.page,
+        limit: result.limit,
+        total: result.total,
+        totalPages: result.totalPages,
+        hasNext: result.page < result.totalPages,
+        hasPrev: result.page > 1,
+      },
+    };
+  }
+
+  /**
+   * Credit rider earnings immediately for a delivered order
+   */
+  async creditRiderEarningForOrder(params: {
+    riderProfileId: string;
+    orderId: string;
+    orderNumber: string;
+    amount: number; // in kobo
+  }): Promise<void> {
+    const { riderProfileId, orderId, orderNumber, amount } = params;
+
+    if (amount <= 0) {
+      this.logger.debug(
+        `Skipping rider earning credit for order ${orderId} - non-positive amount: ${amount}`,
+      );
+      return;
+    }
+
+    // Credit wallet balance
+    await this.walletsRepository.creditWallet(riderProfileId, amount);
+
+    // Create transaction record (initially pending)
+    const reference = `EARN-${orderNumber}-${Date.now()}`;
+    const transaction = await this.transactionsRepository.create({
+      riderProfileId,
+      orderId,
+      type: TransactionType.RIDER_EARNING,
+      amount,
+      paymentMethod: 'per_delivery',
+      provider: PaymentProvider.PAYSTACK,
+      reference,
+    });
+
+    // Mark transaction as successful
+    await this.transactionsRepository.updateStatus(
+      transaction._id.toString(),
+      TransactionStatus.SUCCESS,
+    );
+
+    this.logger.log(
+      `Credited ₦${(amount / 100).toFixed(2)} to rider ${riderProfileId} for order ${orderId}`,
+    );
+
+    // Notify rider about wallet credit (non-blocking)
+    try {
+      const rider = await this.ridersRepository.findById(riderProfileId);
+      if (rider && rider.userId) {
+        await this.notificationsService.queueNotification(
+          rider.userId.toString(),
+          NotificationType.PAYMENT_SUCCESS,
+          'Wallet Credited',
+          `You received ₦${(amount / 100).toFixed(2)} for order ${orderNumber}.`,
+          {
+            orderId,
+            orderNumber,
+            amount,
+            source: 'wallet_credit',
+          },
+          [NotificationChannel.IN_APP, NotificationChannel.PUSH],
+        );
+      }
+    } catch (error) {
+      this.logger.error(
+        `Failed to send wallet credit notification for rider ${riderProfileId}`,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
+  /**
+   * Get transaction description based on type
+   */
+  private getTransactionDescription(t: any): string {
+    if (t.type === TransactionType.RIDER_EARNING) {
+      return 'Earnings from delivery';
+    } else if (t.type === TransactionType.RIDER_WITHDRAWAL) {
+      return 'Withdrawal to bank account';
+    }
+    return 'Transaction';
+  }
+
+  /**
+   * Get wallet summary/statistics
+   */
+  async getWalletSummary(
+    riderProfileId: string,
+    period: 'this-month' | 'last-month' | 'this-year' | 'all-time' = 'all-time',
+  ): Promise<{
+    totalEarnings: number;
+    formattedTotalEarnings: string;
+    totalWithdrawals: number;
+    formattedTotalWithdrawals: string;
+    availableBalance: number;
+    formattedAvailableBalance: string;
+    period: string;
+  }> {
+    // Get current wallet balance
+    const wallet = await this.walletsRepository.findOrCreate(riderProfileId);
+    const availableBalance = wallet.walletBalance || 0;
+
+    // Calculate date range based on period
+    let startDate: Date | undefined;
+    let endDate: Date | undefined;
+    const now = new Date();
+
+    if (period === 'this-month') {
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+      endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+    } else if (period === 'last-month') {
+      startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      endDate = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
+    } else if (period === 'this-year') {
+      startDate = new Date(now.getFullYear(), 0, 1);
+      endDate = new Date(now.getFullYear(), 11, 31, 23, 59, 59);
+    }
+    // 'all-time' means no date filter
+
+    const stats = await this.transactionsRepository.getRiderTransactionStats(
+      riderProfileId,
+      startDate,
+      endDate,
+    );
+
+    return {
+      totalEarnings: stats.totalEarnings,
+      formattedTotalEarnings: `₦${(stats.totalEarnings / 100).toLocaleString('en-NG')}`,
+      totalWithdrawals: stats.totalWithdrawals,
+      formattedTotalWithdrawals: `₦${(stats.totalWithdrawals / 100).toLocaleString('en-NG')}`,
+      availableBalance,
+      formattedAvailableBalance: `₦${(availableBalance / 100).toLocaleString('en-NG')}`,
+      period,
+    };
+  }
+
+  /**
+   * Get payment details (bank account information)
+   */
+  async getPaymentDetails(riderProfileId: string): Promise<{
+    recipientCode?: string;
+    accountNumber?: string;
+    bankCode?: string;
+    bankName?: string;
+    accountName?: string;
+    isVerified: boolean;
+  } | null> {
+    const wallet = await this.walletsRepository.findByRiderProfileId(
+      riderProfileId,
+    );
+
+    if (!wallet || !wallet.paystackRecipientCode) {
+      return null;
+    }
+
+    return {
+      recipientCode: wallet.paystackRecipientCode,
+      accountNumber: wallet.accountNumber,
+      bankCode: wallet.bankCode,
+      bankName: wallet.bankName,
+      accountName: wallet.accountName,
+      isVerified: wallet.isVerified || false,
+    };
   }
 
   /**
@@ -341,6 +542,33 @@ export class WalletsService {
       this.logger.log(
         `Withdrawal initiated for rider ${riderProfileId}: ₦${(amount / 100).toFixed(2)}`,
       );
+
+      // Notify rider about withdrawal (non-blocking)
+      try {
+        const rider = await this.ridersRepository.findById(riderProfileId);
+        if (rider && rider.userId) {
+          await this.notificationsService.queueNotification(
+            rider.userId.toString(),
+            NotificationType.GENERAL,
+            'Withdrawal Initiated',
+            `Your withdrawal of ₦${(amount / 100).toFixed(2)} has been initiated to your bank account.`,
+            {
+              amount,
+              reference: transfer.reference || reference,
+              transferCode: transfer.transfer_code,
+              source: 'wallet_withdrawal',
+            },
+            [NotificationChannel.IN_APP, NotificationChannel.PUSH],
+          );
+        }
+      } catch (notifyError) {
+        this.logger.error(
+          `Failed to send withdrawal notification for rider ${riderProfileId}`,
+          notifyError instanceof Error
+            ? notifyError.message
+            : String(notifyError),
+        );
+      }
 
       return {
         transferCode: transfer.transfer_code,

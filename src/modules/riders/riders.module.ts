@@ -27,6 +27,7 @@ import { MailModule } from '../mail/mail.module';
 import { RegionsModule } from '../regions/regions.module';
 import { forwardRef } from '@nestjs/common';
 import { OrdersModule } from '../orders/orders.module';
+import { TransactionsModule } from '../transactions/transactions.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { OrdersModule } from '../orders/orders.module';
     MailModule,
     RegionsModule,
     forwardRef(() => OrdersModule),
+    TransactionsModule,
   ],
   controllers: [RidersController, RiderLocationController],
   providers: [

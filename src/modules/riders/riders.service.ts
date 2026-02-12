@@ -29,6 +29,7 @@ import {
 import { RiderDocumentationDocument } from './schemas/rider-documentation.schema';
 import { UserRole } from '../auth/schemas/user.schema';
 import { OrdersRepository } from '../orders/orders.repository';
+import { TransactionsRepository } from '../transactions/transactions.repository';
 
 @Injectable()
 export class RidersService {
@@ -42,6 +43,7 @@ export class RidersService {
     private readonly mailService: MailService,
     private readonly cloudinaryService: CloudinaryService,
     private readonly ordersRepository: OrdersRepository,
+    private readonly transactionsRepository: TransactionsRepository,
   ) {}
 
   // ============ ADMIN METHODS ============
@@ -627,19 +629,28 @@ export class RidersService {
       });
     }
 
-    // Fetch profile and stats in parallel
+    // Fetch profile and stats
     const formattedProfile = this.formatProfile(profile, false);
-    const todayStats = await this.ordersRepository.getTodayStatsForRider(
-      profile._id.toString(),
-    );
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+
+    const [todayStats, todayTransactionStats] = await Promise.all([
+      this.ordersRepository.getTodayStatsForRider(profile._id.toString()),
+      this.transactionsRepository.getRiderTransactionStats(
+        profile._id.toString(),
+        todayStart,
+        todayEnd,
+      ),
+    ]);
 
     // Calculate distance covered in kilometers
     const distanceCoveredKm = (profile.totalDistanceToday || 0) / 1000;
 
     // Calculate time online
     let timeOnlineMinutes = profile.totalOnlineTimeToday || 0;
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
 
     // If there's an active session today, add current session time
     if (profile.sessionStartTime && profile.sessionStartTime >= todayStart) {
@@ -654,11 +665,13 @@ export class RidersService {
     const timeOnlineFormatted =
       hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
 
+    const todayEarnings = todayTransactionStats.totalEarnings;
+
     const stats = {
       today: {
         completedOrders: todayStats.completedOrders,
-        earnings: todayStats.earnings,
-        earningsFormatted: `₦${(todayStats.earnings / 100).toLocaleString('en-NG')}`,
+        earnings: todayEarnings,
+        earningsFormatted: `₦${(todayEarnings / 100).toLocaleString('en-NG')}`,
         distanceCoveredKm: Math.round(distanceCoveredKm * 100) / 100, // Round to 2 decimal places
         distanceCoveredFormatted: `${Math.round(distanceCoveredKm * 100) / 100} km`,
         timeOnlineMinutes,

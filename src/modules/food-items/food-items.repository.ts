@@ -516,6 +516,7 @@ export class FoodItemsRepository {
   async createExtra(data: {
     name: string;
     description?: string;
+    imageUrl?: string;
     price: number;
     currency?: string;
     isAvailable?: boolean;

@@ -348,6 +348,7 @@ export class OrdersController {
     return this.ordersService.markOrderAsDelivered(
       orderId,
       user.id,
+      dto.confirmationCode,
       dto.message,
       dto.latitude,
       dto.longitude,

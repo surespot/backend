@@ -5,6 +5,7 @@ export interface CurrentUser {
   role: string;
   email?: string;
   phone?: string;
+  pickupLocationId?: string;
 }
 
 export const CurrentUser = createParamDecorator(

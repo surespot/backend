@@ -1,5 +1,6 @@
 import {
   Controller,
+  Get,
   Post,
   Body,
   Headers,
@@ -41,6 +42,7 @@ import { EmailPasswordResetSendOtpDto } from './dto/email-password-reset-send-ot
 import { EmailPasswordResetVerifyOtpDto } from './dto/email-password-reset-verify-otp.dto';
 import { AddEmailDto } from './dto/add-email.dto';
 import { VerifyEmailVerificationOtpDto } from './dto/verify-email-verification-otp.dto';
+import { VerifyAdminLoginCodeDto } from './dto/verify-admin-login-code.dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -166,6 +168,27 @@ export class AuthController {
     return this.authService.verifyEmailOtp(dto);
   }
 
+  @Post('admin/pickup/verify-login-code')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Verify pickup admin login code sent when the admin user was created',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Admin login code verified successfully',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid or expired admin login code',
+  })
+  async verifyAdminLoginCode(@Body() dto: VerifyAdminLoginCodeDto) {
+    return this.authService.verifyAdminLoginCode({
+      email: dto.email,
+      code: dto.code,
+    });
+  }
+
   @Post('email/resend-otp')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Resend OTP for email registration' })
@@ -217,6 +240,44 @@ export class AuthController {
     @Body() dto: CreatePasswordDto,
   ) {
     return this.authService.createPassword(verificationToken, dto);
+  }
+
+  @Post('admin/pickup/create-password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Create password for an existing pickup admin after verifying login code',
+  })
+  @ApiHeader({
+    name: 'X-Verification-Token',
+    description:
+      'Verification token from /auth/admin/pickup/verify-login-code response',
+    required: true,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Password created successfully and admin logged in',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Validation error (e.g. passwords do not match)',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Invalid or expired verification token',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'User not found',
+  })
+  async createPasswordForPickupAdmin(
+    @Headers('x-verification-token') verificationToken: string,
+    @Body() dto: CreatePasswordDto,
+  ) {
+    return this.authService.createPasswordForExistingUser(
+      verificationToken,
+      dto,
+    );
   }
 
   @Post('profile/complete')
@@ -575,6 +636,48 @@ export class AuthController {
     @Body() dto: VerifyEmailVerificationOtpDto,
   ) {
     return this.authService.verifyEmailVerificationOtp(user.id, dto);
+  }
+
+  @Get('me')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Get current authenticated user profile' })
+  @ApiResponse({
+    status: 200,
+    description: 'User profile retrieved successfully',
+    schema: {
+      example: {
+        success: true,
+        data: {
+          id: '507f1f77bcf86cd799439011',
+          firstName: 'Sure',
+          lastName: 'Spot',
+          phone: '+2349014226320',
+          email: 'demo@surespot.app',
+          birthday: '1995-05-17',
+          avatar: 'https://res.cloudinary.com/your-cloud/image/upload/v1234567890/surespot/avatar.jpg',
+          role: 'user',
+          isRider: false,
+          isPhoneVerified: true,
+          isEmailVerified: true,
+          isActive: true,
+          createdAt: '2025-11-23T10:30:00.000Z',
+          lastLoginAt: '2025-11-23T15:45:00.000Z',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'User not found',
+  })
+  async getCurrentUser(@CurrentUser() user: { id: string }) {
+    return this.authService.getCurrentUser(user.id);
   }
 
   @Post('profile/avatar')

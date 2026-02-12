@@ -66,6 +66,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       role: user.role,
       email: user.email,
       phone: user.phone,
+      pickupLocationId: user.pickupLocationId
+        ? user.pickupLocationId.toString()
+        : undefined,
     };
   }
 }

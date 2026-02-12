@@ -7,12 +7,15 @@ import {
   HttpStatus,
   Headers,
   Req,
+  Get,
+  Query,
 } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
   ApiResponse,
   ApiBearerAuth,
+  ApiQuery,
 } from '@nestjs/swagger';
 import { TransactionsService } from './transactions.service';
 import { InitializePaymentDto } from './dto/initialize-payment.dto';
@@ -152,6 +155,85 @@ export class TransactionsController {
     return {
       success: true,
       message: 'Webhook processed successfully',
+    };
+  }
+
+  @Get('banks')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'List supported banks from Paystack' })
+  @ApiQuery({
+    name: 'country',
+    required: false,
+    description: 'Country code (default: nigeria)',
+    example: 'nigeria',
+  })
+  @ApiQuery({
+    name: 'currency',
+    required: false,
+    description: 'Currency code (default: NGN)',
+    example: 'NGN',
+  })
+  @ApiQuery({
+    name: 'type',
+    required: false,
+    description: 'Account type (default: nuban)',
+    example: 'nuban',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Bank list retrieved successfully',
+  })
+  async listBanks(
+    @Query('country') country?: string,
+    @Query('currency') currency?: string,
+    @Query('type') type?: string,
+  ) {
+    const banks = await this.transactionsService.listBanks({
+      country,
+      currency,
+      type,
+    });
+    return {
+      success: true,
+      data: banks,
+    };
+  }
+
+  @Get('banks/resolve')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Verify bank account details via Paystack' })
+  @ApiQuery({
+    name: 'accountNumber',
+    required: true,
+    description: 'Bank account number (e.g. 0123456789)',
+    example: '0123456789',
+  })
+  @ApiQuery({
+    name: 'bankCode',
+    required: true,
+    description: 'Paystack bank code (e.g. 058 for GTBank)',
+    example: '058',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Bank account verification result',
+  })
+  async verifyBankAccount(
+    @Query('accountNumber') accountNumber: string,
+    @Query('bankCode') bankCode: string,
+  ) {
+    const result = await this.transactionsService.verifyBankAccount({
+      accountNumber,
+      bankCode,
+    });
+
+    return {
+      success: result.status === 'valid',
+      data: result,
     };
   }
 }

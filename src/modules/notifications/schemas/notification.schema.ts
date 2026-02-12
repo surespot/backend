@@ -15,6 +15,7 @@ export enum NotificationType {
   PAYMENT_FAILED = 'payment_failed',
   PROMOTION = 'promotion',
   GENERAL = 'general',
+  CHAT_MESSAGE = 'chat_message',
 }
 
 export enum NotificationChannel {

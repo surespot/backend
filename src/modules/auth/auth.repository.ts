@@ -37,6 +37,14 @@ export class AuthRepository {
     return this.userModel.findOne({ _id: id, deletedAt: null }).exec();
   }
 
+  async findUserByPickupLocationId(
+    pickupLocationId: string | Types.ObjectId,
+  ): Promise<UserDocument | null> {
+    return this.userModel
+      .findOne({ pickupLocationId, deletedAt: null })
+      .exec();
+  }
+
   async findUserByGoogleId(googleId: string): Promise<UserDocument | null> {
     return this.userModel.findOne({ googleId, deletedAt: null }).exec();
   }

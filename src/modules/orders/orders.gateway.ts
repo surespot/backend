@@ -355,4 +355,45 @@ export class OrdersGateway
       return false;
     }
   }
+
+  /**
+   * Emit order:picked_up notification to a specific rider (when pickup location marks as picked up)
+   */
+  async emitOrderPickedUpToRider(
+    riderProfileId: string,
+    orderId: string,
+    orderNumber: string,
+  ): Promise<boolean> {
+    try {
+      const roomName = `rider-${riderProfileId}`;
+      const activeConnections = await this.server.in(roomName).fetchSockets();
+
+      if (activeConnections.length === 0) {
+        this.logger.debug(
+          `No active connection for rider ${riderProfileId}, picked up notification not sent`,
+        );
+        return false;
+      }
+
+      this.server.to(roomName).emit('order:picked_up', {
+        orderId,
+        orderNumber,
+        message: `Order ${orderNumber} has been picked up from the pickup location.`,
+        timestamp: new Date().toISOString(),
+      });
+
+      this.logger.log(
+        `Order picked up notification sent to rider ${riderProfileId} for order ${orderNumber}`,
+      );
+      return true;
+    } catch (error) {
+      this.logger.error(
+        `Error sending order picked up notification to rider ${riderProfileId}`,
+        {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
+      return false;
+    }
+  }
 }

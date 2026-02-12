@@ -12,6 +12,8 @@ import { AuthRepository } from '../auth/auth.repository';
 import { OrdersRepository } from '../orders/orders.repository';
 import { PickupLocationsService } from '../pickup-locations/pickup-locations.service';
 import { NotificationsGateway } from './notifications.gateway';
+import { PushNotificationService } from './push-notification.service';
+import { SmsService } from '../sms/sms.service';
 import {
   NotificationJobData,
   NotificationJobName,
@@ -42,6 +44,8 @@ export class NotificationsService {
     private readonly ordersRepository: OrdersRepository,
     private readonly pickupLocationsService: PickupLocationsService,
     private readonly gateway: NotificationsGateway,
+    private readonly pushNotificationService: PushNotificationService,
+    private readonly smsService: SmsService,
     @InjectQueue('notifications') private readonly notificationQueue: Queue,
   ) {}
 
@@ -86,8 +90,53 @@ export class NotificationsService {
       }
     }
 
-    // TODO: Send push notification if channel includes PUSH
-    // TODO: Send SMS if channel includes SMS
+    // Send push notification if channel includes PUSH
+    if (channels.includes(NotificationChannel.PUSH)) {
+      try {
+        await this.pushNotificationService.sendToUser(userId, {
+          title,
+          body: message,
+          data: data,
+        });
+        this.logger.debug(
+          `Push notification sent to user ${userId} for notification ${notification.id}`,
+        );
+      } catch (error) {
+        this.logger.warn(
+          `Failed to send push notification for user ${userId}`,
+          {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
+        // Don't throw - push failure shouldn't break notification creation
+      }
+    }
+
+    // Send SMS if channel includes SMS
+    if (channels.includes(NotificationChannel.SMS)) {
+      try {
+        const user = await this.authRepository.findUserById(userId);
+        if (user && user.phone) {
+          await this.smsService.sendSms({
+            from: 'SureSpot',
+            to: user.phone,
+            body: `${title}\n\n${message}`,
+          });
+          this.logger.debug(
+            `SMS notification sent to user ${userId} for notification ${notification.id}`,
+          );
+        } else {
+          this.logger.debug(
+            `Skipping SMS notification for user ${userId} - no phone number`,
+          );
+        }
+      } catch (error) {
+        this.logger.warn(`Failed to send SMS notification for user ${userId}`, {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        // Don't throw - SMS failure shouldn't break notification creation
+      }
+    }
 
     return notification;
   }

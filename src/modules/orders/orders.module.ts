@@ -22,6 +22,9 @@ import { FoodItemsModule } from '../food-items/food-items.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { TransactionsModule } from '../transactions/transactions.module';
 import { RidersModule } from '../riders/riders.module';
+import { WalletsModule } from '../wallets/wallets.module';
+import { ChatModule } from '../chat/chat.module';
+import { AdminModule } from '../admin/admin.module';
 
 @Module({
   imports: [
@@ -46,9 +49,24 @@ import { RidersModule } from '../riders/riders.module';
     NotificationsModule,
     forwardRef(() => TransactionsModule),
     forwardRef(() => RidersModule),
+    forwardRef(() => WalletsModule),
+    forwardRef(() => ChatModule),
+    forwardRef(() => AdminModule),
   ],
   controllers: [OrdersController, CheckoutController],
-  providers: [OrdersService, OrdersRepository, OrdersGateway],
+  providers: [
+    OrdersService,
+    OrdersRepository,
+    OrdersGateway,
+    {
+      provide: 'AdminGateway',
+      useFactory: (adminModule: any) => {
+        // Lazy load AdminGateway to avoid circular dependency
+        return adminModule?.adminGateway;
+      },
+      inject: [{ token: 'AdminModule', optional: true }],
+    },
+  ],
   exports: [OrdersService, OrdersRepository, OrdersGateway],
 })
 export class OrdersModule {}

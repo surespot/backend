@@ -1,4 +1,4 @@
-import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsString,
   IsOptional,
@@ -6,9 +6,27 @@ import {
   Min,
   Max,
   MaxLength,
+  IsNotEmpty,
+  Matches,
+  Length,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
 
 export class MarkOrderDeliveredDto {
+  @ApiProperty({
+    description: '4-digit delivery confirmation code provided by customer',
+    example: '1234',
+    pattern: '^[0-9]{4}$',
+  })
+  @Transform(({ value }) => (value != null ? String(value).trim() : value))
+  @IsString()
+  @IsNotEmpty({ message: 'confirmationCode is required' })
+  @Length(4, 4, { message: 'confirmationCode must be exactly 4 digits' })
+  @Matches(/^[0-9]{4}$/, {
+    message: 'confirmationCode must be exactly 4 digits',
+  })
+  confirmationCode: string;
+
   @ApiPropertyOptional({
     description: 'Optional delivery message',
     example: 'Order delivered successfully',

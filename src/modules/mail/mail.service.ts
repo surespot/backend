@@ -4,7 +4,7 @@ import { MailerService } from '@nestjs-modules/mailer';
 export interface SendOtpEmailOptions {
   to: string;
   otp: string;
-  purpose: 'registration' | 'password-reset' | 'email-verification';
+  purpose: 'registration' | 'password-reset' | 'email-verification' | 'admin-login';
   expiresInMinutes?: number;
 }
 
@@ -47,6 +47,7 @@ export class MailService {
         registration: 'Complete your registration',
         'password-reset': 'Reset your password',
         'email-verification': 'Verify your email address',
+        'admin-login': 'Log in to your admin dashboard',
       };
 
       const purposeMessage =
@@ -91,7 +92,7 @@ export class MailService {
         context: {
           orderNumber: options.orderNumber,
           orderId: options.orderId,
-          deliveredAt: options.deliveredAt,
+          deliveredAt: this.formatDate(options.deliveredAt),
           currentYear: new Date().getFullYear(),
         },
       });
@@ -188,6 +189,26 @@ export class MailService {
       );
       throw error;
     }
+  }
+
+  private formatDate(dateInput: string | Date): string {
+    if (!dateInput) return '';
+
+    const date =
+      typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
+
+    if (isNaN(date.getTime())) {
+      return String(dateInput);
+    }
+
+    return date.toLocaleString('en-NG', {
+      weekday: 'short',
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
   }
 
   private formatPrice(price: number, currency: string = 'NGN'): string {

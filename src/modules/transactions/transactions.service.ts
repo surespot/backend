@@ -217,7 +217,8 @@ export class TransactionsService {
         },
       );
 
-      const data = await response.json();
+      const data: { status: boolean; message?: string; data?: any } =
+        await response.json();
 
       if (!data.status) {
         throw new BadRequestException({
@@ -296,6 +297,255 @@ export class TransactionsService {
         error: {
           code: 'PAYMENT_VERIFICATION_FAILED',
           message: 'Failed to verify payment',
+        },
+      });
+    }
+  }
+
+  /**
+   * List supported banks from Paystack
+   */
+  async listBanks(params?: {
+    country?: string;
+    currency?: string;
+    type?: string;
+  }): Promise<Record<string, unknown>[]> {
+    const country = params?.country ?? 'nigeria';
+    const currency = params?.currency ?? 'NGN';
+    const type = params?.type ?? 'nuban';
+
+    try {
+      const url = new URL(`${this.paystackBaseUrl}/bank`);
+      url.searchParams.set('country', country);
+      url.searchParams.set('currency', currency);
+      url.searchParams.set('type', type);
+
+      const response = await fetch(url.toString(), {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${this.paystackSecretKey}`,
+        },
+      });
+
+      const data = (await response.json()) as {
+        status: boolean;
+        message?: string;
+        data?: Record<string, unknown>[];
+      };
+
+      if (!data.status) {
+        throw new BadRequestException({
+          success: false,
+          error: {
+            code: 'BANK_LIST_FAILED',
+            message: data.message || 'Failed to fetch bank list',
+          },
+        });
+      }
+
+      return data.data ?? [];
+    } catch (error) {
+      this.logger.error(
+        'Failed to fetch bank list from Paystack',
+        error instanceof Error ? error.message : String(error),
+      );
+
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'BANK_LIST_FAILED',
+          message: 'Failed to fetch bank list',
+        },
+      });
+    }
+  }
+
+  /**
+   * Verify bank account details via Paystack (/bank/resolve)
+   */
+  async verifyBankAccount(params: {
+    accountNumber: string;
+    bankCode: string;
+  }): Promise<{
+    status: 'valid' | 'invalid';
+    accountName?: string;
+    raw?: Record<string, unknown>;
+    message?: string;
+  }> {
+    const { accountNumber, bankCode } = params;
+
+    try {
+      const url = new URL(`${this.paystackBaseUrl}/bank/resolve`);
+      url.searchParams.set('account_number', accountNumber);
+      url.searchParams.set('bank_code', bankCode);
+
+      const response = await fetch(url.toString(), {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${this.paystackSecretKey}`,
+        },
+      });
+
+      const data = (await response.json()) as {
+        status: boolean;
+        message?: string;
+        data?: { account_name?: string } & Record<string, unknown>;
+      };
+
+      if (!data.status || !data.data) {
+        const message = data.message || 'Bank account verification failed';
+        this.logger.warn(
+          `Bank account verification failed for ${accountNumber}/${bankCode}: ${message}`,
+        );
+        return {
+          status: 'invalid',
+          message,
+          raw: data.data,
+        };
+      }
+
+      return {
+        status: 'valid',
+        accountName: data.data.account_name,
+        raw: data.data,
+      };
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `Error verifying bank account ${accountNumber}/${bankCode}`,
+        message,
+      );
+
+      return {
+        status: 'invalid',
+        message,
+      };
+    }
+  }
+
+  /**
+   * Request a refund for a successful Paystack transaction by reference.
+   * This will:
+   * - Check that the local transaction exists and is in SUCCESS state
+   * - Call Paystack's /refund endpoint with the transaction reference
+   * - Mark the local transaction (and any linked order) as REFUNDED
+   */
+  async requestRefund(
+    reference: string,
+    amountKobo?: number,
+  ): Promise<{ success: boolean; data?: Record<string, unknown> }> {
+    this.logger.log(`Requesting refund for transaction ${reference}`);
+
+    // Find existing transaction
+    const transaction = await this.transactionsRepository.findByReference(
+      reference,
+    );
+
+    if (!transaction) {
+      this.logger.warn(
+        `Cannot request refund - transaction not found for reference ${reference}`,
+      );
+      return {
+        success: false,
+        data: { error: 'Transaction not found' },
+      };
+    }
+
+    if (transaction.status !== TransactionStatus.SUCCESS) {
+      this.logger.warn(
+        `Cannot request refund - transaction ${reference} is not in SUCCESS state (current: ${transaction.status})`,
+      );
+      return {
+        success: false,
+        data: { error: 'Transaction is not in a refundable state' },
+      };
+    }
+
+    try {
+      const body: Record<string, unknown> = {
+        transaction: transaction.reference ?? reference,
+      };
+
+      if (typeof amountKobo === 'number' && Number.isFinite(amountKobo)) {
+        body.amount = amountKobo;
+      }
+
+      const response = await fetch(`${this.paystackBaseUrl}/refund`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.paystackSecretKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+
+      const data = (await response.json()) as {
+        status: boolean;
+        message?: string;
+        data?: Record<string, unknown>;
+      };
+
+      if (!data.status) {
+        this.logger.error(
+          `Failed to request refund for ${reference}: ${
+            data.message || 'Unknown error'
+          }`,
+        );
+        throw new BadRequestException({
+          success: false,
+          error: {
+            code: 'REFUND_FAILED',
+            message: data.message || 'Failed to request refund',
+          },
+        });
+      }
+
+      // Mark transaction as refunded (idempotent with webhook handler)
+      await this.transactionsRepository.updateByReference(reference, TransactionStatus.REFUNDED, {
+        providerResponse: data.data,
+        refundedAt: new Date(),
+      });
+
+      // Update linked order payment status if any (idempotent)
+      try {
+        await this.ordersService.updatePaymentStatusByReference(
+          reference,
+          PaymentStatus.REFUNDED,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Requested refund for ${reference} but could not update order status: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+
+      this.logger.log(`Refund requested successfully for transaction ${reference}`);
+
+      return {
+        success: true,
+        data: data.data,
+      };
+    } catch (error) {
+      this.logger.error(
+        `Error while requesting refund for ${reference}`,
+        error instanceof Error ? error.message : String(error),
+      );
+
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'REFUND_FAILED',
+          message: 'Failed to request refund',
         },
       });
     }

@@ -15,6 +15,7 @@ import {
   RefreshTokenSchema,
 } from './schemas/refresh-token.schema';
 import { MailModule } from '../mail/mail.module';
+import { SmsModule } from '../sms/sms.module';
 
 @Module({
   imports: [
@@ -38,6 +39,9 @@ import { MailModule } from '../mail/mail.module';
 
     // Mail module for sending OTP emails
     MailModule,
+
+    // SMS module for sending OTP SMS
+    SmsModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, AuthRepository, JwtStrategy, RolesGuard],

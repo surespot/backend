@@ -18,6 +18,7 @@ import { OtpPurpose } from './schemas/otp-code.schema';
 import { UserDocument, UserRole } from './schemas/user.schema';
 import { CloudinaryService } from '../../common/cloudinary/cloudinary.service';
 import { MailService } from '../mail/mail.service';
+import { SmsService } from '../sms/sms.service';
 import { SendOtpDto } from './dto/send-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ResendOtpDto } from './dto/resend-otp.dto';
@@ -72,6 +73,7 @@ export class AuthService {
     @Inject(WINSTON_MODULE_PROVIDER) private readonly logger: Logger,
     private readonly cloudinaryService: CloudinaryService,
     private readonly mailService: MailService,
+    private readonly smsService: SmsService,
   ) {
     this.otpExpiryMinutes = Number(
       this.configService.get('OTP_EXPIRY_MINUTES') ?? 5,
@@ -209,9 +211,31 @@ export class AuthService {
         expiresAt,
       );
 
-      // TODO: Send OTP via SMS service
-      // For now, log it (REMOVE IN PRODUCTION)
-      console.log(`OTP for ${dto.phone}: ${otpCode}`);
+      // Send OTP via SMS service
+      try {
+        await this.smsService.sendOtp(dto.phone, {
+          otpCode,
+          purpose: 'REGISTRATION',
+          expiresInMinutes: this.otpExpiryMinutes,
+        });
+        this.logger.info('OTP SMS sent successfully', {
+          context: 'AuthService',
+          method: 'sendOtp',
+          phone: maskedPhone,
+        });
+      } catch (smsError) {
+        // Log error but don't fail the request - OTP is saved and can be verified
+        this.logger.error('Failed to send OTP SMS', {
+          context: 'AuthService',
+          method: 'sendOtp',
+          phone: maskedPhone,
+          error: smsError instanceof Error ? smsError.message : String(smsError),
+        });
+        // Fallback: log OTP for development (REMOVE IN PRODUCTION)
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`OTP for ${dto.phone}: ${otpCode}`);
+        }
+      }
 
       const executionTime = Date.now() - startTime;
       const response = {
@@ -817,6 +841,99 @@ export class AuthService {
     }
   }
 
+  /**
+   * Verify a pickup admin login code (sent when the admin user was created)
+   * and return a short-lived verification token that can be used to set
+   * their password.
+   */
+  async verifyAdminLoginCode(dto: {
+    email: string;
+    code: string;
+  }): Promise<{
+    success: boolean;
+    message: string;
+    data: { verificationToken: string; expiresIn: number };
+  }> {
+    const otpRecord = await this.authRepository.findLatestOtpCode(
+      dto.email,
+      OtpPurpose.ADMIN_LOGIN,
+    );
+
+    if (!otpRecord) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'ADMIN_LOGIN_CODE_INVALID',
+          message: 'Invalid or expired admin login code',
+        },
+      });
+    }
+
+    if (otpRecord.attempts >= this.maxOtpAttempts) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'OTP_MAX_ATTEMPTS',
+          message: 'Maximum verification attempts exceeded',
+        },
+      });
+    }
+
+    if (otpRecord.code !== dto.code) {
+      await this.authRepository.incrementOtpAttempts(otpRecord._id);
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'ADMIN_LOGIN_CODE_INVALID',
+          message: 'Invalid admin login code',
+        },
+      });
+    }
+
+    if (otpRecord.expiresAt < new Date()) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'ADMIN_LOGIN_CODE_EXPIRED',
+          message: 'Admin login code has expired',
+        },
+      });
+    }
+
+    await this.authRepository.markOtpAsVerified(otpRecord._id);
+
+    // Find the associated user
+    const user = await this.authRepository.findUserByEmail(dto.email);
+    if (!user) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'USER_NOT_FOUND',
+          message: 'User not found for this email',
+        },
+      });
+    }
+
+    // Generate a short-lived verification token bound to this user
+    const verificationToken = this.jwtService.sign(
+      {
+        sub: user._id.toString(),
+        email: dto.email,
+        purpose: 'pickup_admin_set_password',
+      },
+      { expiresIn: '10m' },
+    );
+
+    return {
+      success: true,
+      message: 'Admin login code verified successfully',
+      data: {
+        verificationToken,
+        expiresIn: 600,
+      },
+    };
+  }
+
   async createPassword(
     verificationToken: string,
     dto: CreatePasswordDto,
@@ -1021,6 +1138,109 @@ export class AuthService {
       );
       throw error;
     }
+  }
+
+  /**
+   * Set password for an existing user (e.g. pickup admin created by a super admin)
+   * after verifying a one-time admin login code.
+   */
+  async createPasswordForExistingUser(
+    verificationToken: string,
+    dto: CreatePasswordDto,
+  ): Promise<{
+    success: boolean;
+    message: string;
+    data: AuthResponse;
+  }> {
+    // Verify token
+    let payload: { sub: string; purpose: string; email?: string };
+    try {
+      payload = this.jwtService.verify<{
+        sub: string;
+        purpose: string;
+        email?: string;
+      }>(verificationToken);
+    } catch {
+      throw new UnauthorizedException({
+        success: false,
+        error: {
+          code: 'AUTH_TOKEN_INVALID',
+          message: 'Invalid or expired verification token',
+        },
+      });
+    }
+
+    if (payload.purpose !== 'pickup_admin_set_password') {
+      throw new UnauthorizedException({
+        success: false,
+        error: {
+          code: 'AUTH_TOKEN_INVALID',
+          message: 'Invalid verification token purpose',
+        },
+      });
+    }
+
+    if (dto.password !== dto.confirmPassword) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Passwords do not match',
+        },
+      });
+    }
+
+    const userId = payload.sub;
+    const user = await this.authRepository.findUserById(userId);
+    if (!user) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'USER_NOT_FOUND',
+          message: 'User not found',
+        },
+      });
+    }
+
+    // Hash and set password
+    const hashedPassword = await bcrypt.hash(dto.password, 12);
+    const updatedUser = await this.authRepository.updateUser(userId, {
+      password: hashedPassword,
+    });
+
+    if (!updatedUser) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'USER_NOT_FOUND',
+          message: 'User not found',
+        },
+      });
+    }
+
+    // Generate tokens for immediate dashboard access
+    const tokens = await this.generateTokenPair(
+      updatedUser._id.toString(),
+      updatedUser.role,
+    );
+
+    return {
+      success: true,
+      message: 'Password created successfully',
+      data: {
+        user: {
+          id: updatedUser._id.toString(),
+          firstName: updatedUser.firstName ?? '',
+          lastName: updatedUser.lastName ?? '',
+          phone: updatedUser.phone,
+          email: updatedUser.email,
+          birthday: updatedUser.birthday?.toISOString().split('T')[0],
+          avatar: updatedUser.avatar,
+          createdAt: updatedUser.createdAt!,
+        },
+        tokens,
+      },
+    };
   }
 
   async completeProfile(
@@ -1448,8 +1668,32 @@ export class AuthService {
       expiresAt,
     );
 
-    // TODO: Send OTP via SMS
-    console.log(`Password reset OTP for ${dto.phone}: ${otpCode}`);
+    // Send OTP via SMS service
+    const maskedPhone = this.maskPhone(dto.phone);
+    try {
+      await this.smsService.sendOtp(dto.phone, {
+        otpCode,
+        purpose: 'PASSWORD_RESET',
+        expiresInMinutes: this.otpExpiryMinutes,
+      });
+      this.logger.info('Password reset OTP SMS sent successfully', {
+        context: 'AuthService',
+        method: 'passwordResetSendOtp',
+        phone: maskedPhone,
+      });
+    } catch (smsError) {
+      // Log error but don't fail the request - OTP is saved and can be verified
+      this.logger.error('Failed to send password reset OTP SMS', {
+        context: 'AuthService',
+        method: 'passwordResetSendOtp',
+        phone: maskedPhone,
+        error: smsError instanceof Error ? smsError.message : String(smsError),
+      });
+      // Fallback: log OTP for development (REMOVE IN PRODUCTION)
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`Password reset OTP for ${dto.phone}: ${otpCode}`);
+      }
+    }
 
     return {
       success: true,
@@ -2271,6 +2515,65 @@ export class AuthService {
   /**
    * Upload profile picture for authenticated user
    */
+  /**
+   * Get current authenticated user's profile information
+   */
+  async getCurrentUser(userId: string): Promise<{
+    success: boolean;
+    data: {
+      id: string;
+      firstName: string;
+      lastName: string;
+      phone?: string;
+      email?: string;
+      birthday?: string;
+      avatar?: string;
+      role: UserRole;
+      isRider: boolean;
+      isPhoneVerified: boolean;
+      isEmailVerified: boolean;
+      isActive: boolean;
+      createdAt: Date;
+      lastLoginAt?: Date;
+      pickupLocationId?: string;
+    };
+  }> {
+    const user = await this.authRepository.findUserById(userId);
+
+    if (!user) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'USER_NOT_FOUND',
+          message: 'User not found',
+        },
+      });
+    }
+
+    return {
+      success: true,
+      data: {
+        id: user._id.toString(),
+        firstName: user.firstName ?? '',
+        lastName: user.lastName ?? '',
+        phone: user.phone,
+        email: user.email,
+        birthday: user.birthday?.toISOString().split('T')[0],
+        avatar: user.avatar,
+        role: user.role,
+        isRider: user.isRider,
+        isPhoneVerified: user.isPhoneVerified,
+        isEmailVerified: user.isEmailVerified,
+        isActive: user.isActive,
+        createdAt: user.createdAt!,
+        lastLoginAt: user.lastLoginAt,
+        pickupLocationId: user.pickupLocationId
+          ? (user.pickupLocationId as Types.ObjectId).toString()
+          : undefined,
+      },
+    };
+  }
+
   async uploadProfilePicture(
     userId: string,
     file: Express.Multer.File,

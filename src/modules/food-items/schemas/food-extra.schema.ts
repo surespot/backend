@@ -11,6 +11,9 @@ export class FoodExtra {
   @Prop()
   description?: string;
 
+  @Prop()
+  imageUrl?: string;
+
   @Prop({ required: true })
   price: number; // Price in kobo (smallest currency unit)
 

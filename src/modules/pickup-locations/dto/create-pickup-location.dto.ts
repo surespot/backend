@@ -10,6 +10,7 @@ import {
   IsLatitude,
   IsBoolean,
   IsMongoId,
+  IsEmail,
 } from 'class-validator';
 
 export class CreatePickupLocationDto {
@@ -71,4 +72,38 @@ export class CreatePickupLocationDto {
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
+
+  @ApiProperty({
+    example: 'Ada',
+    description: 'First name of the pickup location admin user',
+  })
+  @IsString()
+  @IsNotEmpty()
+  adminFirstName: string;
+
+  @ApiProperty({
+    example: 'Okafor',
+    description: 'Last name of the pickup location admin user',
+  })
+  @IsString()
+  @IsNotEmpty()
+  adminLastName: string;
+
+  @ApiProperty({
+    example: 'pickup-admin@surespot.app',
+    description: 'Email address for the pickup location admin dashboard user',
+  })
+  @IsEmail()
+  @IsNotEmpty()
+  adminEmail: string;
+
+  @ApiProperty({
+    example: '+2349012345678',
+    description:
+      'Optional phone number for the pickup location admin (for contact only)',
+    required: false,
+  })
+  @IsString()
+  @IsOptional()
+  adminPhone?: string;
 }

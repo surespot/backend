@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument } from 'mongoose';
+import { HydratedDocument, Types } from 'mongoose';
 
 export type UserDocument = HydratedDocument<User>;
 
@@ -8,6 +8,7 @@ export enum UserRole {
   RIDER = 'rider',
   RESTAURANT = 'restaurant',
   ADMIN = 'admin',
+  PICKUP_ADMIN = 'pickup_admin',
 }
 
 @Schema({ timestamps: true })
@@ -44,6 +45,9 @@ export class User {
 
   @Prop({ type: String, enum: UserRole, default: UserRole.USER })
   role: UserRole;
+
+  @Prop({ type: Types.ObjectId, ref: 'PickupLocation', required: false, index: true })
+  pickupLocationId?: Types.ObjectId;
 
   @Prop({ default: false })
   isRider: boolean;

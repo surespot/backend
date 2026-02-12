@@ -22,6 +22,14 @@ export class CreateFoodExtraDto {
   @IsString()
   description?: string;
 
+  @ApiPropertyOptional({
+    description: 'Image URL for the extra',
+    example: 'https://res.cloudinary.com/demo/image/upload/v1234567890/extra.jpg',
+  })
+  @IsOptional()
+  @IsString()
+  imageUrl?: string;
+
   @ApiProperty({
     description: 'Price in kobo (smallest currency unit)',
     example: 50000,

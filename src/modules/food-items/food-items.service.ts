@@ -684,6 +684,7 @@ export class FoodItemsService {
     const extra = await this.foodItemsRepository.createExtra({
       name: dto.name,
       description: dto.description,
+      imageUrl: dto.imageUrl,
       price: dto.price,
       currency: dto.currency || 'NGN',
       isAvailable: dto.isAvailable,

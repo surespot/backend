@@ -94,14 +94,42 @@ export class WalletsController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Get wallet transaction history (Rider only)',
-    description: 'Get transaction history for the authenticated rider',
+    description: 'Get transaction history for the authenticated rider with filtering and pagination',
+  })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    type: Number,
+    description: 'Page number (1-indexed)',
+    example: 1,
   })
   @ApiQuery({
     name: 'limit',
     required: false,
     type: Number,
-    description: 'Number of transactions to return',
-    example: 50,
+    description: 'Number of transactions per page',
+    example: 20,
+  })
+  @ApiQuery({
+    name: 'type',
+    required: false,
+    enum: ['earned', 'withdrew', 'all'],
+    description: 'Filter by transaction type',
+    example: 'earned',
+  })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    enum: ['completed', 'pending', 'failed', 'all'],
+    description: 'Filter by transaction status',
+    example: 'completed',
+  })
+  @ApiQuery({
+    name: 'period',
+    required: false,
+    enum: ['this-month', 'last-month', 'this-year', 'all-time'],
+    description: 'Filter by time period',
+    example: 'this-month',
   })
   @ApiResponse({
     status: 200,
@@ -111,7 +139,11 @@ export class WalletsController {
   @ApiResponse({ status: 403, description: 'Forbidden - Rider access required' })
   async getMyTransactions(
     @CurrentUser() user: { id: string },
+    @Query('page') page?: number,
     @Query('limit') limit?: number,
+    @Query('type') type?: 'earned' | 'withdrew' | 'all',
+    @Query('status') status?: 'completed' | 'pending' | 'failed' | 'all',
+    @Query('period') period?: 'this-month' | 'last-month' | 'this-year' | 'all-time',
   ) {
     const riderProfile = await this.ridersService.findProfileByUserId(user.id);
     if (!riderProfile) {
@@ -124,15 +156,122 @@ export class WalletsController {
       });
     }
 
-    const transactions = await this.walletsService.getWalletTransactions(
+    const result = await this.walletsService.getWalletTransactionsWithFilters(
       riderProfile._id.toString(),
-      limit ? Number(limit) : 50,
+      {
+        page: page ? Number(page) : undefined,
+        limit: limit ? Number(limit) : undefined,
+        type: type || 'all',
+        status: status || 'all',
+        period: period || 'all-time',
+      },
     );
 
     return {
       success: true,
       message: 'Transaction history retrieved successfully',
-      data: transactions,
+      data: result,
+    };
+  }
+
+  @Get('me/summary')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.RIDER)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get wallet summary/statistics (Rider only)',
+    description: 'Get wallet summary with total earnings, withdrawals, and available balance for a period',
+  })
+  @ApiQuery({
+    name: 'period',
+    required: false,
+    enum: ['this-month', 'last-month', 'this-year', 'all-time'],
+    description: 'Time period for statistics',
+    example: 'this-month',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Wallet summary retrieved successfully',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Rider access required' })
+  async getMySummary(
+    @CurrentUser() user: { id: string },
+    @Query('period') period?: 'this-month' | 'last-month' | 'this-year' | 'all-time',
+  ) {
+    const riderProfile = await this.ridersService.findProfileByUserId(user.id);
+    if (!riderProfile) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'RIDER_PROFILE_NOT_FOUND',
+          message: 'Rider profile not found',
+        },
+      });
+    }
+
+    const summary = await this.walletsService.getWalletSummary(
+      riderProfile._id.toString(),
+      period || 'all-time',
+    );
+
+    return {
+      success: true,
+      message: 'Wallet summary retrieved successfully',
+      data: summary,
+    };
+  }
+
+  @Get('me/payment-details')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.RIDER)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get payment details (Rider only)',
+    description: 'Get saved bank account details for withdrawals',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Payment details retrieved successfully',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Payment details not found',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Rider access required' })
+  async getMyPaymentDetails(@CurrentUser() user: { id: string }) {
+    const riderProfile = await this.ridersService.findProfileByUserId(user.id);
+    if (!riderProfile) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'RIDER_PROFILE_NOT_FOUND',
+          message: 'Rider profile not found',
+        },
+      });
+    }
+
+    const paymentDetails = await this.walletsService.getPaymentDetails(
+      riderProfile._id.toString(),
+    );
+
+    if (!paymentDetails) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'PAYMENT_DETAILS_NOT_FOUND',
+          message: 'Payment details not found. Please add bank account details first.',
+        },
+      });
+    }
+
+    return {
+      success: true,
+      message: 'Payment details retrieved successfully',
+      data: paymentDetails,
     };
   }
 

@@ -21,6 +21,8 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { QueueModule } from './modules/queue/queue.module';
 import { RidersModule } from './modules/riders/riders.module';
 import { WalletsModule } from './modules/wallets/wallets.module';
+import { ChatModule } from './modules/chat/chat.module';
+import { AdminModule } from './modules/admin/admin.module';
 
 @Module({
   imports: [
@@ -135,6 +137,12 @@ import { WalletsModule } from './modules/wallets/wallets.module';
 
     // Wallets module
     WalletsModule,
+
+    // Chat module
+    ChatModule,
+
+    // Admin Dashboard module
+    AdminModule,
   ],
   controllers: [AppController],
   providers: [AppService],
