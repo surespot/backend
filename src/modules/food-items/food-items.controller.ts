@@ -31,6 +31,7 @@ import { CreateFoodItemDto } from './dto/create-food-item.dto';
 import { UpdateFoodItemDto } from './dto/update-food-item.dto';
 import { UpdateFoodItemExtrasDto } from './dto/update-food-item-extras.dto';
 import { CreateFoodInteractionDto } from './dto/create-food-interaction.dto';
+import { CreateReviewDto } from './dto/create-review.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -781,5 +782,51 @@ export class FoodItemsController {
     @CurrentUser() user: { id: string },
   ) {
     return this.foodItemsService.toggleInteraction(id, user.id, dto);
+  }
+
+  @Post(':id/reviews')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Create a review for a food item' })
+  @ApiParam({
+    name: 'id',
+    description: 'Food item ID or slug',
+    example: '507f1f77bcf86cd799439011',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Review created successfully',
+    schema: {
+      example: {
+        success: true,
+        message: 'Review created successfully',
+        data: {
+          id: '507f1f77bcf86cd799439012',
+          foodItemId: '507f1f77bcf86cd799439011',
+          userId: '507f1f77bcf86cd799439013',
+          rating: 5,
+          comment: 'Honestly did not expect it to be this good.',
+          createdAt: '2026-02-16T12:00:00.000Z',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Food item not found',
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'User has already reviewed this food item',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - Invalid or missing token',
+  })
+  async createReview(
+    @Param('id') id: string,
+    @Body() dto: CreateReviewDto,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.foodItemsService.createReview(id, user.id, dto);
   }
 }

@@ -35,6 +35,12 @@ export class PromotionsRepository {
     discountValue?: number;
     minOrderAmount?: number;
     maxDiscountAmount?: number;
+    targetCategory?: string;
+    targetFoodItemIds?: import('mongoose').Types.ObjectId[];
+    maxFreeQuantity?: number;
+    buyQuantity?: number;
+    getFreeQuantity?: number;
+    maxRedeemablePerOrder?: number;
   }): Promise<PromotionDocument> {
     const promotion = new this.promotionModel(data);
     return promotion.save();
@@ -88,6 +94,16 @@ export class PromotionsRepository {
       status: PromotionStatus;
       linkTo: string;
       discountCode?: string;
+      discountType?: string;
+      discountValue?: number;
+      minOrderAmount?: number;
+      maxDiscountAmount?: number;
+      targetCategory?: string;
+      targetFoodItemIds?: import('mongoose').Types.ObjectId[];
+      maxFreeQuantity?: number;
+      buyQuantity?: number;
+      getFreeQuantity?: number;
+      maxRedeemablePerOrder?: number;
     }>,
   ): Promise<PromotionDocument | null> {
     this.validateObjectId(id, 'promotionId');

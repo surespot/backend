@@ -506,10 +506,19 @@ export class CartService {
     // Calculate cart total before discount
     const cartTotalBeforeDiscount = cart.subtotal + cart.extrasTotal;
 
-    // Validate promo code
+    const cartItems = await this.cartRepository.findCartItemsByCartId(
+      cart._id.toString(),
+    );
+    const cartItemsForPromo = cartItems.map((item) => ({
+      foodItemId: item.foodItemId.toString(),
+      quantity: item.quantity,
+      price: item.price,
+      lineTotal: item.lineTotal,
+    }));
+
     const validation = await this.promotionsService.validateDiscountCode(
       code,
-      cartTotalBeforeDiscount,
+      { orderAmount: cartTotalBeforeDiscount, cartItems: cartItemsForPromo },
     );
 
     if (!validation.valid) {
@@ -546,6 +555,7 @@ export class CartService {
           code: code.toUpperCase(),
           discountPercent: validation.promotion?.discountValue,
           discountAmount,
+          waivesDelivery: validation.waivesDelivery,
         },
       },
     };
@@ -613,9 +623,15 @@ export class CartService {
     // Reapply promo if exists
     let discountPercent: number | undefined;
     if (cart?.promoCode && cart.promoCode.length > 0) {
+      const cartItemsForPromo = cartItems.map((item) => ({
+        foodItemId: item.foodItemId.toString(),
+        quantity: item.quantity,
+        price: item.price,
+        lineTotal: item.lineTotal,
+      }));
       const validation = await this.promotionsService.validateDiscountCode(
         cart.promoCode,
-        total,
+        { orderAmount: total, cartItems: cartItemsForPromo },
       );
       if (validation.valid) {
         discountAmount = validation.discountAmount || 0;

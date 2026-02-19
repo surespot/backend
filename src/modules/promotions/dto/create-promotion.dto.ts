@@ -6,11 +6,13 @@ import {
   IsOptional,
   IsString,
   IsNumber,
+  IsArray,
   Min,
   Max,
   ValidateIf,
 } from 'class-validator';
 import type { PromotionStatus, DiscountType } from '../types';
+import { FoodCategory } from '../../food-items/schemas/food-item.schema';
 
 export class CreatePromotionDto {
   @ApiProperty({
@@ -53,12 +55,12 @@ export class CreatePromotionDto {
   discountCode?: string;
 
   @ApiPropertyOptional({
-    enum: ['percentage', 'fixed_amount'],
+    enum: ['percentage', 'fixed_amount', 'free_delivery', 'free_category', 'bogo'],
     example: 'percentage',
-    description: 'Type of discount: percentage or fixed_amount',
+    description: 'Type of discount',
   })
   @IsOptional()
-  @IsEnum(['percentage', 'fixed_amount'])
+  @IsEnum(['percentage', 'fixed_amount', 'free_delivery', 'free_category', 'bogo'])
   discountType?: DiscountType;
 
   @ApiPropertyOptional({
@@ -91,6 +93,59 @@ export class CreatePromotionDto {
   @IsNumber()
   @Min(0)
   maxDiscountAmount?: number;
+
+  @ApiPropertyOptional({
+    enum: Object.values(FoodCategory),
+    description: 'Category for free_category or bogo (qualifying items)',
+  })
+  @IsOptional()
+  @IsEnum(FoodCategory)
+  targetCategory?: FoodCategory;
+
+  @ApiPropertyOptional({
+    example: ['507f1f77bcf86cd799439011'],
+    description: 'Specific food item IDs for bogo (alternative to targetCategory)',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  targetFoodItemIds?: string[];
+
+  @ApiPropertyOptional({
+    example: 2,
+    description: 'Max free items from category (free_category only)',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  maxFreeQuantity?: number;
+
+  @ApiPropertyOptional({
+    example: 2,
+    description: 'Buy quantity to trigger BOGO (bogo only)',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  buyQuantity?: number;
+
+  @ApiPropertyOptional({
+    example: 1,
+    description: 'Free quantity per BOGO trigger (bogo only)',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  getFreeQuantity?: number;
+
+  @ApiPropertyOptional({
+    example: 4,
+    description: 'Cap on free units per order (bogo only)',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  maxRedeemablePerOrder?: number;
 
   @ApiPropertyOptional({
     enum: ['inactive', 'active', 'ended'],

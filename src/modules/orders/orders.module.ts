@@ -40,7 +40,7 @@ import { AdminModule } from '../admin/admin.module';
         secret: configService.get<string>('JWT_SECRET') ?? 'default-secret-key',
       }),
     }),
-    AuthModule,
+    forwardRef(() => AuthModule),
     forwardRef(() => CartModule),
     PickupLocationsModule,
     SavedLocationsModule,

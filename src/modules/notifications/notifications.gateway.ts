@@ -22,6 +22,7 @@ import {
   NotificationType,
   NotificationChannel,
 } from './schemas/notification.schema';
+import { emitToRoomWithRetry } from '../../common/websocket/emit-with-retry.util';
 
 interface AuthenticatedSocket extends Socket {
   userId?: string;
@@ -30,11 +31,10 @@ interface AuthenticatedSocket extends Socket {
 }
 
 @WebSocketGateway({
-  cors: {
-    origin: '*',
-    credentials: true,
-  },
+  cors: { origin: '*', credentials: true },
   namespace: '/notifications',
+  pingTimeout: 20000,
+  pingInterval: 25000,
 })
 export class NotificationsGateway
   implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
@@ -320,13 +320,21 @@ export class NotificationsGateway
         return false;
       }
 
-      // Emit to user's room
-      this.server.to(userId).emit(event, data);
-
+      const sent = await emitToRoomWithRetry(
+        this.server,
+        userId,
+        event,
+        data,
+      );
+      if (!sent) {
+        this.logger.warn(
+          `Emit ${event} to user ${userId} failed (including retry)`,
+        );
+        return false;
+      }
       this.logger.log(
         `Notification sent to user ${userId} via ${activeConnections} connection(s)`,
       );
-
       return true;
     } catch (error) {
       this.logger.error(`Error sending notification to user ${userId}`, {
@@ -386,14 +394,22 @@ export class NotificationsGateway
         return false;
       }
 
-      // Emit to pickup location's room
       const roomName = `pickup-location-${pickupLocationId}`;
-      this.server.to(roomName).emit(event, data);
-
+      const sent = await emitToRoomWithRetry(
+        this.server,
+        roomName,
+        event,
+        data,
+      );
+      if (!sent) {
+        this.logger.warn(
+          `Emit ${event} to pickup location ${pickupLocationId} failed (including retry)`,
+        );
+        return false;
+      }
       this.logger.log(
         `Notification sent to pickup location ${pickupLocationId} via ${activeConnections} connection(s)`,
       );
-
       return true;
     } catch (error) {
       this.logger.error(

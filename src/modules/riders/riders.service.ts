@@ -5,6 +5,7 @@ import {
   BadRequestException,
   Logger,
   InternalServerErrorException,
+  Inject,
 } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { RidersRepository } from './riders.repository';
@@ -12,7 +13,8 @@ import { AuthRepository } from '../auth/auth.repository';
 import { RegionsRepository } from '../regions/regions.repository';
 import { SmsService } from '../sms/sms.service';
 import { MailService } from '../mail/mail.service';
-import { CloudinaryService } from '../../common/cloudinary/cloudinary.service';
+import { STORAGE_SERVICE } from '../../common/storage/storage.constants';
+import { IStorageService } from '../../common/storage/interfaces/storage.interface';
 import {
   CreateRiderProfileDto,
   CreateRiderDocumentationDto,
@@ -26,10 +28,14 @@ import {
   RiderStatus,
   SCHEDULE_TYPE_MAP,
 } from './schemas/rider-profile.schema';
-import { RiderDocumentationDocument } from './schemas/rider-documentation.schema';
+import {
+  RiderDocumentation,
+  RiderDocumentationDocument,
+} from './schemas/rider-documentation.schema';
 import { UserRole } from '../auth/schemas/user.schema';
 import { OrdersRepository } from '../orders/orders.repository';
 import { TransactionsRepository } from '../transactions/transactions.repository';
+import { encryptNin, decryptNin } from '../../common/security/encryption.util';
 
 @Injectable()
 export class RidersService {
@@ -41,7 +47,7 @@ export class RidersService {
     private readonly regionsRepository: RegionsRepository,
     private readonly smsService: SmsService,
     private readonly mailService: MailService,
-    private readonly cloudinaryService: CloudinaryService,
+    @Inject(STORAGE_SERVICE) private readonly storageService: IStorageService,
     private readonly ordersRepository: OrdersRepository,
     private readonly transactionsRepository: TransactionsRepository,
   ) {}
@@ -96,15 +102,15 @@ export class RidersService {
 
     // Create rider profile (no transaction needed for single operation)
     const profile = await this.ridersRepository.createProfile({
-          firstName: dto.firstName,
-          lastName: dto.lastName,
-          phone: dto.phone,
-          email: dto.email,
-          dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : undefined,
-          address: dto.address,
-          nin: dto.nin,
-          regionId: new Types.ObjectId(dto.regionId),
-          registrationCode,
+      firstName: dto.firstName,
+      lastName: dto.lastName,
+      phone: dto.phone,
+      email: dto.email,
+      dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : undefined,
+      address: dto.address,
+      nin: dto.nin ? encryptNin(dto.nin) : undefined,
+      regionId: new Types.ObjectId(dto.regionId),
+      registrationCode,
       schedule: dto.schedule || [...SCHEDULE_TYPE_MAP['full-time']],
     });
 
@@ -173,17 +179,12 @@ export class RidersService {
       for (const [key, file] of fileEntries) {
         if (file) {
           uploadPromises.push(
-            this.cloudinaryService.uploadImage(file).then((result) => {
-              if (
-                'secure_url' in result &&
-                typeof result.secure_url === 'string'
-              ) {
-                documentData[key] = {
-                  name: file.originalname,
-                  url: result.secure_url,
-                  uploadedAt: new Date(),
-                };
-              }
+            this.storageService.uploadImage(file).then((result) => {
+              documentData[key] = {
+                name: file.originalname,
+                url: result.secure_url,
+                uploadedAt: new Date(),
+              };
             }),
           );
         }
@@ -212,15 +213,44 @@ export class RidersService {
       }
     }
 
-    // Add emergency contact
+    // Add emergency contact (may arrive as JSON string from multipart form)
     if (dto.emergencyContact) {
-      documentData.emergencyContact = dto.emergencyContact;
+      const raw = dto.emergencyContact;
+      documentData.emergencyContact =
+        typeof raw === 'string'
+          ? (() => {
+              try {
+                return JSON.parse(raw) as { name: string; phone: string; relationship?: string };
+              } catch {
+                return undefined;
+              }
+            })()
+          : raw;
+      if (!documentData.emergencyContact || typeof documentData.emergencyContact !== 'object') {
+        delete documentData.emergencyContact;
+      }
     }
 
-    // Create or update documentation
+    // Merge with existing documentation so we don't overwrite fields not in this request (e.g. passportPhotograph when only sending emergencyContact)
+    const existing = await this.ridersRepository.findDocumentationByProfileId(
+      dto.riderProfileId,
+    );
+    let updates: Record<string, unknown>;
+    if (existing) {
+      const plain = existing.toObject ? existing.toObject() : (existing as any);
+      updates = { ...plain };
+      for (const k of Object.keys(documentData)) {
+        if (documentData[k] !== undefined) updates[k] = documentData[k];
+      }
+      delete updates._id;
+      delete updates.__v; // don't $set Mongoose internals
+    } else {
+      updates = documentData;
+    }
+
     const documentation = await this.ridersRepository.updateDocumentation(
       dto.riderProfileId,
-      documentData,
+      updates as Partial<RiderDocumentation>,
     );
 
     this.logger.log(
@@ -268,7 +298,7 @@ export class RidersService {
    * Get a single rider profile by ID (Admin only)
    */
   async getProfileById(id: string) {
-    const profile = await this.ridersRepository.findById(id);
+    const profile = await this.ridersRepository.findByIdWithRegion(id);
     if (!profile) {
       throw new NotFoundException({
         success: false,
@@ -279,8 +309,37 @@ export class RidersService {
       });
     }
 
-    const documentation =
-      await this.ridersRepository.findDocumentationByProfileId(id);
+    // Fetch all documentation records (in case legacy duplicates exist) and merge them
+    const docs =
+      await this.ridersRepository.findAllDocumentationByProfileId(id);
+
+    let documentation: RiderDocumentationDocument | null = null;
+    if (docs.length === 1) {
+      documentation = docs[0];
+    } else if (docs.length > 1) {
+      // Merge fields from multiple docs into the first one in memory
+      documentation = docs[0];
+      for (const doc of docs.slice(1)) {
+        if (!documentation.governmentId && doc.governmentId) {
+          documentation.governmentId = doc.governmentId;
+        }
+        if (!documentation.proofOfAddress && doc.proofOfAddress) {
+          documentation.proofOfAddress = doc.proofOfAddress;
+        }
+        if (!documentation.passportPhotograph && doc.passportPhotograph) {
+          documentation.passportPhotograph = doc.passportPhotograph;
+        }
+        if (!documentation.bankAccountDetails && doc.bankAccountDetails) {
+          documentation.bankAccountDetails = doc.bankAccountDetails;
+        }
+        if (!documentation.vehicleDocumentation && doc.vehicleDocumentation) {
+          documentation.vehicleDocumentation = doc.vehicleDocumentation;
+        }
+        if (!documentation.emergencyContact && doc.emergencyContact) {
+          documentation.emergencyContact = doc.emergencyContact;
+        }
+      }
+    }
 
     return {
       success: true,
@@ -319,6 +378,19 @@ export class RidersService {
       success: true,
       message: 'Rider status updated successfully',
       data: this.formatProfile(updated!, false),
+    };
+  }
+
+  /**
+   * Suspend rider (Admin only). Suspended riders cannot log in.
+   */
+  async suspendRider(id: string) {
+    const result = await this.updateRiderStatus(id, {
+      status: RiderStatus.SUSPENDED,
+    });
+    return {
+      ...result,
+      message: 'Rider suspended successfully',
     };
   }
 
@@ -393,6 +465,10 @@ export class RidersService {
       });
     }
 
+    const plainNin = profile.nin
+      ? this.decryptNinSafe(profile.nin)
+      : undefined;
+
     return {
       success: true,
       message: 'Rider profile found',
@@ -404,7 +480,7 @@ export class RidersService {
         phone: this.maskPhone(profile.phone),
         dateOfBirth: profile.dateOfBirth,
         address: profile.address,
-        nin: profile.nin ? this.maskNin(profile.nin) : undefined,
+        nin: plainNin ? this.maskNin(plainNin) : undefined,
         regionId: profile.regionId.toString(),
       },
     };
@@ -454,7 +530,11 @@ export class RidersService {
       });
     }
 
-    // Return profile data for confirmation
+    // Return profile data for confirmation (mask NIN)
+    const plainNin = profile.nin
+      ? this.decryptNinSafe(profile.nin)
+      : undefined;
+
     return {
       success: true,
       message: 'Registration initiated successfully',
@@ -466,7 +546,7 @@ export class RidersService {
         phone: profile.phone,
         dateOfBirth: profile.dateOfBirth,
         address: profile.address,
-        nin: profile.nin,
+        nin: plainNin ? this.maskNin(plainNin) : undefined,
         regionId: profile.regionId.toString(),
         schedule: profile.schedule,
       },
@@ -857,6 +937,26 @@ export class RidersService {
    * Format profile for response
    */
   private formatProfile(profile: RiderProfileDocument, mask = true) {
+    const rid = profile.regionId as
+      | Types.ObjectId
+      | { _id: Types.ObjectId; name?: string }
+      | null
+      | undefined;
+    const regionId =
+      rid && typeof rid === 'object' && '_id' in rid
+        ? (rid as { _id: Types.ObjectId })._id.toString()
+        : rid != null
+          ? (rid as Types.ObjectId).toString()
+          : '';
+    const regionName =
+      rid && typeof rid === 'object' && 'name' in rid
+        ? (rid as { name: string }).name
+        : undefined;
+    // Decrypt NIN (if encrypted) so we can mask it for display.
+    const plainNin = profile.nin
+      ? this.decryptNinSafe(profile.nin)
+      : undefined;
+
     return {
       id: profile._id.toString(),
       userId: profile.userId?.toString() || null,
@@ -866,11 +966,13 @@ export class RidersService {
       email: mask ? this.maskEmail(profile.email) : profile.email,
       dateOfBirth: profile.dateOfBirth,
       address: profile.address,
-      nin: mask ? this.maskNin(profile.nin) : profile.nin,
-      regionId: profile.regionId.toString(),
+      nin: mask && plainNin ? this.maskNin(plainNin) : undefined,
+      regionId: regionId ?? '',
+      ...(regionName !== undefined && { regionName }),
       schedule: profile.schedule,
       rating: profile.rating,
       status: profile.status,
+      ...(!mask && { registrationCode: profile.registrationCode }),
       createdAt: profile.createdAt,
       updatedAt: profile.updatedAt,
     };
@@ -893,6 +995,16 @@ export class RidersService {
   }
 
   // ============ MASKING HELPERS ============
+
+  private decryptNinSafe(stored?: string): string | undefined {
+    if (!stored) return undefined;
+    try {
+      // For backwards compatibility, treat plain NIN as-is if decryption fails.
+      return decryptNin(stored);
+    } catch {
+      return stored;
+    }
+  }
 
   private maskPhone(phone?: string): string | undefined {
     if (!phone) return undefined;

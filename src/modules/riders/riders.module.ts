@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { BullModule } from '@nestjs/bullmq';
 import { RidersController } from './riders.controller';
@@ -25,7 +25,6 @@ import { AuthModule } from '../auth/auth.module';
 import { SmsModule } from '../sms/sms.module';
 import { MailModule } from '../mail/mail.module';
 import { RegionsModule } from '../regions/regions.module';
-import { forwardRef } from '@nestjs/common';
 import { OrdersModule } from '../orders/orders.module';
 import { TransactionsModule } from '../transactions/transactions.module';
 
@@ -39,7 +38,7 @@ import { TransactionsModule } from '../transactions/transactions.module';
     BullModule.registerQueue({
       name: 'riders',
     }),
-    AuthModule,
+    forwardRef(() => AuthModule),
     SmsModule,
     MailModule,
     RegionsModule,

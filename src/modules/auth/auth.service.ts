@@ -5,6 +5,8 @@ import {
   ConflictException,
   NotFoundException,
   Inject,
+  forwardRef,
+  Optional,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -16,7 +18,8 @@ import { Types } from 'mongoose';
 import { AuthRepository } from './auth.repository';
 import { OtpPurpose } from './schemas/otp-code.schema';
 import { UserDocument, UserRole } from './schemas/user.schema';
-import { CloudinaryService } from '../../common/cloudinary/cloudinary.service';
+import { STORAGE_SERVICE } from '../../common/storage/storage.constants';
+import { IStorageService } from '../../common/storage/interfaces/storage.interface';
 import { MailService } from '../mail/mail.service';
 import { SmsService } from '../sms/sms.service';
 import { SendOtpDto } from './dto/send-otp.dto';
@@ -37,6 +40,10 @@ import { EmailPasswordResetSendOtpDto } from './dto/email-password-reset-send-ot
 import { EmailPasswordResetVerifyOtpDto } from './dto/email-password-reset-verify-otp.dto';
 import { AddEmailDto } from './dto/add-email.dto';
 import { VerifyEmailVerificationOtpDto } from './dto/verify-email-verification-otp.dto';
+import { RidersRepository } from '../riders/riders.repository';
+import { RiderStatus } from '../riders/schemas/rider-profile.schema';
+import { GoogleProfile } from './strategies/google.strategy';
+import verifyAppleToken from 'verify-apple-id-token';
 
 export interface TokenPair {
   accessToken: string;
@@ -71,9 +78,12 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     @Inject(WINSTON_MODULE_PROVIDER) private readonly logger: Logger,
-    private readonly cloudinaryService: CloudinaryService,
+    @Inject(STORAGE_SERVICE) private readonly storageService: IStorageService,
     private readonly mailService: MailService,
     private readonly smsService: SmsService,
+    @Optional()
+    @Inject(forwardRef(() => RidersRepository))
+    private readonly ridersRepository: RidersRepository | null,
   ) {
     this.otpExpiryMinutes = Number(
       this.configService.get('OTP_EXPIRY_MINUTES') ?? 5,
@@ -1482,6 +1492,21 @@ export class AuthService {
       });
     }
 
+    // If rider, check rider profile is not suspended (suspended riders cannot log in)
+    if (user.role === UserRole.RIDER && this.ridersRepository) {
+      const riderProfile =
+        await this.ridersRepository.findByUserId(user._id.toString());
+      if (riderProfile?.status === RiderStatus.SUSPENDED) {
+        throw new UnauthorizedException({
+          success: false,
+          error: {
+            code: 'RIDER_ACCOUNT_SUSPENDED',
+            message: 'Your rider account has been suspended',
+          },
+        });
+      }
+    }
+
     // Update last login
     await this.authRepository.updateLastLoginAt(user._id);
 
@@ -1491,6 +1516,208 @@ export class AuthService {
     return {
       success: true,
       message: 'Login successful',
+      data: {
+        user: {
+          id: user._id.toString(),
+          firstName: user.firstName ?? '',
+          lastName: user.lastName ?? '',
+          phone: user.phone,
+          email: user.email,
+          birthday: user.birthday?.toISOString().split('T')[0],
+          avatar: user.avatar,
+          createdAt: user.createdAt!,
+        },
+        tokens,
+      },
+    };
+  }
+
+  /**
+   * Validate Google OAuth profile: find existing user by googleId or create new user,
+   * then return user and tokens (same shape as login).
+   */
+  async validateGoogleUser(profile: GoogleProfile): Promise<AuthResponse> {
+    let user = await this.authRepository.findUserByGoogleId(profile.googleId);
+
+    if (!user) {
+      // Optional: link existing account if email matches
+      if (profile.email) {
+        const existingByEmail =
+          await this.authRepository.findUserByEmail(profile.email);
+        if (existingByEmail) {
+          user = (await this.authRepository.updateUser(existingByEmail._id, {
+            googleId: profile.googleId,
+            avatar: profile.avatar ?? existingByEmail.avatar,
+            isEmailVerified: true,
+            ...(profile.birthday && !existingByEmail.birthday
+              ? { birthday: profile.birthday }
+              : {}),
+          }))!;
+        }
+      }
+
+      if (!user) {
+        user = await this.authRepository.createUser({
+          googleId: profile.googleId,
+          email: profile.email,
+          firstName: profile.firstName,
+          lastName: profile.lastName,
+          avatar: profile.avatar,
+          birthday: profile.birthday,
+          isEmailVerified: !!profile.email,
+          role: UserRole.USER,
+        });
+      }
+    }
+
+    if (!user.isActive) {
+      throw new UnauthorizedException({
+        success: false,
+        error: {
+          code: 'AUTH_ACCOUNT_SUSPENDED',
+          message: 'Account is suspended',
+        },
+      });
+    }
+
+    if (user.role === UserRole.RIDER && this.ridersRepository) {
+      const riderProfile =
+        await this.ridersRepository.findByUserId(user._id.toString());
+      if (riderProfile?.status === RiderStatus.SUSPENDED) {
+        throw new UnauthorizedException({
+          success: false,
+          error: {
+            code: 'RIDER_ACCOUNT_SUSPENDED',
+            message: 'Your rider account has been suspended',
+          },
+        });
+      }
+    }
+
+    await this.authRepository.updateLastLoginAt(user._id);
+
+    const tokens = await this.generateTokenPair(user._id.toString(), user.role);
+
+    return {
+      user: {
+        id: user._id.toString(),
+        firstName: user.firstName ?? '',
+        lastName: user.lastName ?? '',
+        phone: user.phone,
+        email: user.email,
+        birthday: user.birthday?.toISOString().split('T')[0],
+        avatar: user.avatar,
+        createdAt: user.createdAt!,
+      },
+      tokens,
+    };
+  }
+
+  /**
+   * Validate Apple identity token: verify with Apple, find or create user,
+   * return user and tokens (same shape as login).
+   */
+  async validateAppleUser(
+    identityToken: string,
+    fullName?: { givenName?: string; familyName?: string },
+  ): Promise<{
+    success: boolean;
+    message: string;
+    data: AuthResponse;
+  }> {
+    const clientId = this.configService.get<string>('APPLE_CLIENT_ID');
+    if (!clientId) {
+      throw new UnauthorizedException({
+        success: false,
+        error: {
+          code: 'AUTH_APPLE_CONFIG',
+          message: 'Apple Sign In is not configured',
+        },
+      });
+    }
+
+    let claims: { sub: string; email?: string };
+    try {
+      claims = await verifyAppleToken({
+        idToken: identityToken,
+        clientId,
+      });
+    } catch {
+      throw new UnauthorizedException({
+        success: false,
+        error: {
+          code: 'AUTH_APPLE_TOKEN_INVALID',
+          message: 'Invalid or expired Apple identity token',
+        },
+      });
+    }
+
+    const appleId = claims.sub;
+    const email = claims.email;
+
+    let user = await this.authRepository.findUserByAppleId(appleId);
+
+    if (!user) {
+      if (email) {
+        const existingByEmail =
+          await this.authRepository.findUserByEmail(email);
+        if (existingByEmail) {
+          user = (await this.authRepository.updateUser(existingByEmail._id, {
+            appleId,
+            isEmailVerified: true,
+            ...(fullName?.givenName && !existingByEmail.firstName
+              ? { firstName: fullName.givenName }
+              : {}),
+            ...(fullName?.familyName && !existingByEmail.lastName
+              ? { lastName: fullName.familyName }
+              : {}),
+          }))!;
+        }
+      }
+
+      if (!user) {
+        user = await this.authRepository.createUser({
+          appleId,
+          email,
+          firstName: fullName?.givenName ?? 'User',
+          lastName: fullName?.familyName ?? '',
+          isEmailVerified: !!email,
+          role: UserRole.USER,
+        });
+      }
+    }
+
+    if (!user.isActive) {
+      throw new UnauthorizedException({
+        success: false,
+        error: {
+          code: 'AUTH_ACCOUNT_SUSPENDED',
+          message: 'Account is suspended',
+        },
+      });
+    }
+
+    if (user.role === UserRole.RIDER && this.ridersRepository) {
+      const riderProfile =
+        await this.ridersRepository.findByUserId(user._id.toString());
+      if (riderProfile?.status === RiderStatus.SUSPENDED) {
+        throw new UnauthorizedException({
+          success: false,
+          error: {
+            code: 'RIDER_ACCOUNT_SUSPENDED',
+            message: 'Your rider account has been suspended',
+          },
+        });
+      }
+    }
+
+    await this.authRepository.updateLastLoginAt(user._id);
+
+    const tokens = await this.generateTokenPair(user._id.toString(), user.role);
+
+    return {
+      success: true,
+      message: 'Sign in with Apple successful',
       data: {
         user: {
           id: user._id.toString(),
@@ -2619,9 +2846,8 @@ export class AuthService {
     }
 
     try {
-      // Upload to Cloudinary
-      const uploadResult = await this.cloudinaryService.uploadImage(file);
-      const avatarUrl = (uploadResult as { secure_url: string }).secure_url;
+      const uploadResult = await this.storageService.uploadImage(file);
+      const avatarUrl = uploadResult.secure_url;
 
       // Update user's avatar
       const updatedUser = await this.authRepository.updateUser(userId, {

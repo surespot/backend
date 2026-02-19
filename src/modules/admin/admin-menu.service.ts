@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  Inject,
+} from '@nestjs/common';
 import { Types } from 'mongoose';
 import { FoodItemsService } from '../food-items/food-items.service';
 import { FoodItemsRepository } from '../food-items/food-items.repository';
@@ -7,7 +12,8 @@ import { CreateFoodItemDto } from '../food-items/dto/create-food-item.dto';
 import { CreateFoodExtraDto } from '../food-items/dto/create-food-extra.dto';
 import { UpdateFoodExtraDto } from '../food-items/dto/update-food-extra.dto';
 import { AdminMenuRepository } from './admin-menu.repository';
-import { CloudinaryService } from '../../common/cloudinary/cloudinary.service';
+import { STORAGE_SERVICE } from '../../common/storage/storage.constants';
+import { IStorageService } from '../../common/storage/interfaces/storage.interface';
 import { GetMenuItemsDto } from './dto/get-menu-items.dto';
 import { CreateMenuItemDto } from './dto/create-menu-item.dto';
 import { UpdateMenuItemDto } from './dto/update-menu-item.dto';
@@ -22,7 +28,7 @@ export class AdminMenuService {
     private readonly foodItemsService: FoodItemsService,
     private readonly foodItemsRepository: FoodItemsRepository,
     private readonly adminMenuRepository: AdminMenuRepository,
-    private readonly cloudinaryService: CloudinaryService,
+    @Inject(STORAGE_SERVICE) private readonly storageService: IStorageService,
   ) {}
 
   private slugify(name: string): string {
@@ -174,8 +180,8 @@ export class AdminMenuService {
     if (dto.extra) {
       let imageUrl = dto.imageUrl;
       if (file) {
-        const uploadResult = await this.cloudinaryService.uploadImage(file);
-        imageUrl = (uploadResult as { secure_url: string }).secure_url;
+        const uploadResult = await this.storageService.uploadImage(file);
+        imageUrl = uploadResult.secure_url;
       }
       const createExtra: CreateFoodExtraDto = {
         name: dto.name,
@@ -259,8 +265,8 @@ export class AdminMenuService {
       if (dto.price !== undefined) updateExtraDto.price = dto.price;
       if (dto.imageUrl !== undefined) updateExtraDto.imageUrl = dto.imageUrl;
       if (file) {
-        const uploadResult = await this.cloudinaryService.uploadImage(file);
-        updateExtraDto.imageUrl = (uploadResult as { secure_url: string }).secure_url;
+        const uploadResult = await this.storageService.uploadImage(file);
+        updateExtraDto.imageUrl = uploadResult.secure_url;
       }
       if (Object.keys(updateExtraDto).length > 0) {
         await this.foodItemsService.updateExtra(itemId, updateExtraDto);
@@ -382,8 +388,7 @@ export class AdminMenuService {
         },
       });
     }
-    const result = await this.cloudinaryService.uploadImage(file);
-    const url = (result as { secure_url: string }).secure_url;
-    return { success: true, data: { url } };
+    const result = await this.storageService.uploadImage(file);
+    return { success: true, data: { url: result.secure_url } };
   }
 }

@@ -455,4 +455,105 @@ export class WalletsController {
       data: result,
     };
   }
+
+  @Get('admin/banks')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'List supported banks (Admin only)',
+    description:
+      'Fetch the list of supported banks from Paystack for use in admin dashboards and forms.',
+  })
+  @ApiQuery({
+    name: 'country',
+    required: false,
+    type: String,
+    description: 'Country code for banks (default: nigeria)',
+    example: 'nigeria',
+  })
+  @ApiQuery({
+    name: 'currency',
+    required: false,
+    type: String,
+    description: 'Currency code (default: NGN)',
+    example: 'NGN',
+  })
+  @ApiQuery({
+    name: 'type',
+    required: false,
+    type: String,
+    description: 'Account type (default: nuban)',
+    example: 'nuban',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Bank list retrieved successfully',
+  })
+  async listBanks(
+    @Query('country') country?: string,
+    @Query('currency') currency?: string,
+    @Query('type') type?: string,
+  ) {
+    const banks = await this.walletsService.listSupportedBanks({
+      country,
+      currency,
+      type,
+    });
+
+    return {
+      success: true,
+      message: 'Bank list retrieved successfully',
+      data: banks,
+    };
+  }
+
+  @Get('admin/account-name')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Resolve bank account name (Admin only)',
+    description:
+      'Resolve and validate an account number + bank code combination via Paystack and return the account name.',
+  })
+  @ApiQuery({
+    name: 'account_number',
+    required: true,
+    type: String,
+    description: 'Bank account number (10-digit NUBAN)',
+    example: '0123456789',
+  })
+  @ApiQuery({
+    name: 'bank_code',
+    required: true,
+    type: String,
+    description: 'Paystack bank code',
+    example: '058',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Account name resolved successfully',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid account details',
+  })
+  async resolveAccountName(
+    @Query('account_number') accountNumber: string,
+    @Query('bank_code') bankCode: string,
+  ) {
+    const result = await this.walletsService.resolveAccountName({
+      accountNumber,
+      bankCode,
+    });
+
+    return {
+      success: true,
+      message: 'Account name resolved successfully',
+      data: result,
+    };
+  }
 }

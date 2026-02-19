@@ -647,6 +647,179 @@ export class NotificationsService {
   }
 
   /**
+   * Notify the pickup location's admins (users linked to that location) of a new confirmed order (IN_APP).
+   */
+  async notifyPickupLocationAdminsNewOrderConfirmed(
+    pickupLocationId: string,
+    orderNumber: string,
+    orderId: string,
+    total: number,
+  ): Promise<void> {
+    const userIds = await this.authRepository.findUserIdsByPickupLocationId(
+      pickupLocationId,
+    );
+    if (userIds.length === 0) return;
+    const channels = [NotificationChannel.IN_APP];
+    const message = `Order ${orderNumber} has been confirmed. Total: ₦${(total / 100).toLocaleString('en-NG')}`;
+    await Promise.all(
+      userIds.map((userId) =>
+        this.queueNotification(
+          userId,
+          NotificationType.ORDER_CONFIRMED,
+          'New Order Confirmed',
+          message,
+          {
+            orderId,
+            orderNumber,
+            total,
+            pickupLocationId,
+            source: 'pickup_location_new_order',
+          },
+          channels,
+        ),
+      ),
+    );
+    this.logger.log(
+      `New-order notifications sent to ${userIds.length} pickup location admin(s) for order ${orderNumber}`,
+    );
+  }
+
+  /**
+   * Notify the pickup location's admins when a rider is assigned to an order (IN_APP).
+   */
+  async notifyPickupLocationAdminsRiderAssigned(
+    pickupLocationId: string,
+    orderNumber: string,
+    orderId: string,
+    riderName: string,
+  ): Promise<void> {
+    const userIds = await this.authRepository.findUserIdsByPickupLocationId(
+      pickupLocationId,
+    );
+    if (userIds.length === 0) return;
+    const channels = [NotificationChannel.IN_APP];
+    const message = `${riderName} has been assigned to order ${orderNumber}.`;
+    await Promise.all(
+      userIds.map((userId) =>
+        this.queueNotification(
+          userId,
+          NotificationType.GENERAL,
+          'Rider Assigned',
+          message,
+          {
+            orderId,
+            orderNumber,
+            riderName,
+            pickupLocationId,
+            source: 'pickup_location_rider_assigned',
+          },
+          channels,
+        ),
+      ),
+    );
+    this.logger.log(
+      `Rider-assigned notifications sent to ${userIds.length} pickup location admin(s) for order ${orderNumber}`,
+    );
+  }
+
+  /**
+   * Notify the pickup location's admins when an order has been picked up by the rider (IN_APP).
+   */
+  async notifyPickupLocationAdminsOrderPickedUp(
+    pickupLocationId: string,
+    orderNumber: string,
+    orderId: string,
+    riderName?: string,
+  ): Promise<void> {
+    const userIds = await this.authRepository.findUserIdsByPickupLocationId(
+      pickupLocationId,
+    );
+    if (userIds.length === 0) return;
+    const channels = [NotificationChannel.IN_APP];
+    const message = riderName
+      ? `Order ${orderNumber} has been picked up by ${riderName}.`
+      : `Order ${orderNumber} has been picked up.`;
+    await Promise.all(
+      userIds.map((userId) =>
+        this.queueNotification(
+          userId,
+          NotificationType.GENERAL,
+          'Order Picked Up',
+          message,
+          {
+            orderId,
+            orderNumber,
+            riderName,
+            pickupLocationId,
+            source: 'pickup_location_order_picked_up',
+          },
+          channels,
+        ),
+      ),
+    );
+    this.logger.log(
+      `Order-picked-up notifications sent to ${userIds.length} pickup location admin(s) for order ${orderNumber}`,
+    );
+  }
+
+  /**
+   * Notify pickup location admins when a new review is submitted for a meal from an order at their location.
+   * Only sends when the review has an orderId linked to an order with a pickup location.
+   */
+  async notifyPickupLocationAdminsNewReview(
+    orderId: string,
+    foodItemName: string,
+    rating: number,
+    reviewId: string,
+    comment?: string,
+  ): Promise<void> {
+    const order = await this.ordersRepository.findById(orderId);
+    if (!order?.pickupLocationId) return;
+
+    const pl = order.pickupLocationId as { _id?: { toString(): string }; toString?: () => string };
+    const pickupLocationId =
+      pl && typeof pl === 'object' && '_id' in pl
+        ? pl._id!.toString()
+        : (pl as { toString(): string }).toString();
+
+    const userIds = await this.authRepository.findUserIdsByPickupLocationId(
+      pickupLocationId,
+    );
+    if (userIds.length === 0) return;
+
+    const orderNumber = order.orderNumber ?? '';
+    const message = comment
+      ? `New review for "${foodItemName}" (${rating}/5): "${comment.slice(0, 50)}${comment.length > 50 ? '...' : ''}"`
+      : `New ${rating}-star review for "${foodItemName}" from order ${orderNumber}.`;
+
+    const channels = [NotificationChannel.IN_APP];
+    await Promise.all(
+      userIds.map((userId) =>
+        this.queueNotification(
+          userId,
+          NotificationType.NEW_REVIEW,
+          'New Customer Review',
+          message,
+          {
+            reviewId,
+            orderId,
+            orderNumber,
+            foodItemName,
+            rating,
+            comment,
+            pickupLocationId,
+            source: 'pickup_location_new_review',
+          },
+          channels,
+        ),
+      ),
+    );
+    this.logger.log(
+      `New-review notifications sent to ${userIds.length} pickup location admin(s) for "${foodItemName}"`,
+    );
+  }
+
+  /**
    * Register or update push notification token
    */
   async registerPushToken(userId: string, token: string) {

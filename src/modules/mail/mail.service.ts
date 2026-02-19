@@ -32,6 +32,22 @@ export interface SendPaymentFailedEmailOptions {
   currency?: string;
 }
 
+export interface SendBugReportEmailOptions {
+  to: string[];
+  reportId: string;
+  submitterName: string;
+  submitterRole: string;
+  submitterEmail: string;
+  submitterPhone: string;
+  submittedAt: string;
+  title?: string;
+  description: string;
+  issueType?: string;
+  areaAffected?: string;
+  stepsToReproduce?: string;
+  attachmentUrls: string[];
+}
+
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
@@ -187,6 +203,53 @@ export class MailService {
           stack: error instanceof Error ? error.stack : undefined,
         },
       );
+      throw error;
+    }
+  }
+
+  /**
+   * Send bug report to developers (admin-forwarded)
+   */
+  async sendBugReportEmail(
+    options: SendBugReportEmailOptions,
+  ): Promise<void> {
+    if (!options.to || options.to.length === 0) {
+      this.logger.warn('No developer emails configured for bug report forwarding');
+      return;
+    }
+
+    try {
+      const toAddresses = options.to.map((e) => e.trim()).filter(Boolean).join(', ');
+      await this.mailerService.sendMail({
+        to: toAddresses,
+        subject: 'Surespot Bug Report',
+        template: 'bug-report',
+        context: {
+          reportId: options.reportId,
+          submitterName: options.submitterName,
+          submitterRole: options.submitterRole,
+          submitterEmail: options.submitterEmail,
+          submitterPhone: options.submitterPhone,
+          submittedAt: options.submittedAt,
+          title: options.title,
+          description: options.description,
+          issueType: options.issueType ?? options.title ?? 'N/A',
+          areaAffected: options.areaAffected,
+          stepsToReproduce: options.stepsToReproduce,
+          attachmentUrls: options.attachmentUrls ?? [],
+          hasAttachments: options.attachmentUrls?.length > 0,
+          currentYear: new Date().getFullYear(),
+        },
+      });
+
+      this.logger.log(
+        `Bug report email sent to ${options.to.length} developer(s)`,
+      );
+    } catch (error) {
+      this.logger.error('Failed to send bug report email to developers', {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       throw error;
     }
   }

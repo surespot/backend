@@ -25,6 +25,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { PromotionsService } from './promotions.service';
 import { CreatePromotionDto } from './dto/create-promotion.dto';
 import { UpdatePromotionDto } from './dto/update-promotion.dto';
+import { RestartPromotionDto } from './dto/restart-promotion.dto';
 import { GetPromotionsFilterDto } from './dto/get-promotions-filter.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -214,6 +215,31 @@ export class PromotionsController {
   })
   async end(@Param('id') id: string) {
     return this.promotionsService.end(id);
+  }
+
+  @Post(':id/restart')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Restart an ended promotion with new dates',
+    description:
+      'Only ended promotions can be restarted. Sets status to inactive and updates activeFrom/activeTo.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Promotion restarted successfully',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Can only restart ended promotions or invalid dates',
+  })
+  async restart(
+    @Param('id') id: string,
+    @Body() dto: RestartPromotionDto,
+  ) {
+    return this.promotionsService.restart(id, dto);
   }
 
   @Delete(':id')

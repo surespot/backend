@@ -61,6 +61,49 @@ export class WalletsService {
   }
 
   /**
+   * List supported banks via Paystack (for admin dashboard).
+   * Proxies to TransactionsService.listBanks so we keep all Paystack-specific
+   * logic centralized there.
+   */
+  async listSupportedBanks(params?: {
+    country?: string;
+    currency?: string;
+    type?: string;
+  }): Promise<Record<string, unknown>[]> {
+    return this.transactionsService.listBanks(params);
+  }
+
+  /**
+   * Resolve account name via Paystack (/bank/resolve).
+   * Returns the resolved account name or throws if invalid.
+   */
+  async resolveAccountName(params: {
+    accountNumber: string;
+    bankCode: string;
+  }): Promise<{ accountName: string }> {
+    const result = await this.transactionsService.verifyBankAccount({
+      accountNumber: params.accountNumber,
+      bankCode: params.bankCode,
+    });
+
+    if (result.status !== 'valid' || !result.accountName) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'BANK_ACCOUNT_INVALID',
+          message:
+            result.message ||
+            'Bank account could not be verified. Please check the account number and bank code.',
+        },
+      });
+    }
+
+    return {
+      accountName: result.accountName,
+    };
+  }
+
+  /**
    * Get wallet transaction history
    */
   async getWalletTransactions(
@@ -452,6 +495,19 @@ export class WalletsService {
     amount: number;
     status: string;
   }> {
+    // Riders may only withdraw on Mondays (server local day; 0 = Sunday, 1 = Monday)
+    const today = new Date().getDay();
+    if (today !== 1) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'WITHDRAWAL_DAY_RESTRICTED',
+          message:
+            'Withdrawals are only allowed on Mondays. Please try again on Monday.',
+        },
+      });
+    }
+
     const wallet = await this.walletsRepository.findByRiderProfileIdOrThrow(
       riderProfileId,
     );

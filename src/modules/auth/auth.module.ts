@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
@@ -7,6 +7,7 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { AuthRepository } from './auth.repository';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { GoogleStrategy } from './strategies/google.strategy';
 import { User, UserSchema } from './schemas/user.schema';
 import { OtpCode, OtpCodeSchema } from './schemas/otp-code.schema';
 import { RolesGuard } from './guards/roles.guard';
@@ -16,6 +17,7 @@ import {
 } from './schemas/refresh-token.schema';
 import { MailModule } from '../mail/mail.module';
 import { SmsModule } from '../sms/sms.module';
+import { RidersModule } from '../riders/riders.module';
 
 @Module({
   imports: [
@@ -42,9 +44,16 @@ import { SmsModule } from '../sms/sms.module';
 
     // SMS module for sending OTP SMS
     SmsModule,
+    forwardRef(() => RidersModule),
   ],
   controllers: [AuthController],
-  providers: [AuthService, AuthRepository, JwtStrategy, RolesGuard],
+  providers: [
+    AuthService,
+    AuthRepository,
+    JwtStrategy,
+    GoogleStrategy,
+    RolesGuard,
+  ],
   exports: [AuthService, AuthRepository, JwtStrategy, RolesGuard],
 })
 export class AuthModule {}

@@ -83,6 +83,15 @@ export class RidersRepository {
     return this.riderProfileModel.findById(id).exec();
   }
 
+  async findByIdWithRegion(
+    id: string | Types.ObjectId,
+  ): Promise<RiderProfileDocument | null> {
+    return this.riderProfileModel
+      .findById(id)
+      .populate('regionId', 'name')
+      .exec();
+  }
+
   async findByUserId(
     userId: string | Types.ObjectId,
   ): Promise<RiderProfileDocument | null> {
@@ -163,8 +172,23 @@ export class RidersRepository {
   async findDocumentationByProfileId(
     profileId: string | Types.ObjectId,
   ): Promise<RiderDocumentationDocument | null> {
+    const id =
+      typeof profileId === 'string' ? new Types.ObjectId(profileId) : profileId;
+    return this.riderDocumentationModel.findOne({ riderProfileId: id }).exec();
+  }
+
+  /**
+   * Find all documentation records for a rider profile.
+   * Historically, multiple docs could exist for the same profileId; callers
+   * can merge them if needed.
+   */
+  async findAllDocumentationByProfileId(
+    profileId: string | Types.ObjectId,
+  ): Promise<RiderDocumentationDocument[]> {
+    const id =
+      typeof profileId === 'string' ? new Types.ObjectId(profileId) : profileId;
     return this.riderDocumentationModel
-      .findOne({ riderProfileId: profileId })
+      .find({ riderProfileId: id })
       .exec();
   }
 
@@ -173,9 +197,11 @@ export class RidersRepository {
     updates: Partial<RiderDocumentation>,
     session?: ClientSession,
   ): Promise<RiderDocumentationDocument | null> {
+    const id =
+      typeof profileId === 'string' ? new Types.ObjectId(profileId) : profileId;
     return this.riderDocumentationModel
       .findOneAndUpdate(
-        { riderProfileId: profileId },
+        { riderProfileId: id },
         { $set: updates },
         { new: true, upsert: true, session },
       )

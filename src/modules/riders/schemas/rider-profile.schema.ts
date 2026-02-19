@@ -8,6 +8,7 @@ export enum RiderStatus {
   INACTIVE = 'inactive',
   PENDING = 'pending',
   REJECTED = 'rejected',
+  SUSPENDED = 'suspended',
 }
 
 @Schema({ timestamps: true })

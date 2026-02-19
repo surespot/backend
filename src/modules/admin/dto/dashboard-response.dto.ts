@@ -114,6 +114,13 @@ export class CustomerReviewDto {
   @ApiProperty({ example: 'Jollof Rice' })
   food: string;
 
+  @ApiProperty({
+    example: 'https://cdn.surespot.app/images/jollof-rice.jpg',
+    required: false,
+    description: 'Food item image URL',
+  })
+  foodImageUrl?: string;
+
   @ApiProperty({ example: '2026-02-10T12:34:00Z' })
   createdAt: string;
 }

@@ -16,7 +16,6 @@ import { AuthModule } from '../auth/auth.module';
 import { OrdersModule } from '../orders/orders.module';
 import { RidersModule } from '../riders/riders.module';
 import { NotificationsModule } from '../notifications/notifications.module';
-import { CloudinaryModule } from '../../common/cloudinary/cloudinary.module';
 
 @Module({
   imports: [
@@ -31,11 +30,10 @@ import { CloudinaryModule } from '../../common/cloudinary/cloudinary.module';
         secret: configService.get<string>('JWT_SECRET') ?? 'default-secret-key',
       }),
     }),
-    AuthModule,
+    forwardRef(() => AuthModule),
     forwardRef(() => OrdersModule),
-    RidersModule,
-    NotificationsModule,
-    CloudinaryModule,
+    forwardRef(() => RidersModule),
+    forwardRef(() => NotificationsModule),
   ],
   controllers: [ChatController],
   providers: [ChatService, ChatRepository, ChatGateway],

@@ -11,9 +11,10 @@ import {
   FoodInteraction,
   FoodInteractionSchema,
 } from './schemas/food-interaction.schema';
+import { Review, ReviewSchema } from './schemas/review.schema';
 import { AuthModule } from '../auth/auth.module';
-import { CloudinaryModule } from '../../common/cloudinary/cloudinary.module';
 import { OrdersModule } from '../orders/orders.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -21,10 +22,11 @@ import { OrdersModule } from '../orders/orders.module';
       { name: FoodItem.name, schema: FoodItemSchema },
       { name: FoodExtra.name, schema: FoodExtraSchema },
       { name: FoodInteraction.name, schema: FoodInteractionSchema },
+      { name: Review.name, schema: ReviewSchema },
     ]),
-    AuthModule,
-    CloudinaryModule,
+    forwardRef(() => AuthModule),
     forwardRef(() => OrdersModule),
+    forwardRef(() => NotificationsModule),
   ],
   controllers: [
     FoodItemsController,

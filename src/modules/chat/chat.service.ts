@@ -11,7 +11,8 @@ import { ChatRepository } from './chat.repository';
 import { OrdersRepository } from '../orders/orders.repository';
 import { RidersRepository } from '../riders/riders.repository';
 import { NotificationsService } from '../notifications/notifications.service';
-import { CloudinaryService } from '../../common/cloudinary/cloudinary.service';
+import { STORAGE_SERVICE } from '../../common/storage/storage.constants';
+import { IStorageService } from '../../common/storage/interfaces/storage.interface';
 import { OrderStatus } from '../orders/schemas/order.schema';
 import { NotificationType, NotificationChannel } from '../notifications/schemas/notification.schema';
 import { ChatGateway } from './chat.gateway';
@@ -39,7 +40,7 @@ export class ChatService {
     private readonly ordersRepository: OrdersRepository,
     private readonly ridersRepository: RidersRepository,
     private readonly notificationsService: NotificationsService,
-    private readonly cloudinaryService: CloudinaryService,
+    @Inject(STORAGE_SERVICE) private readonly storageService: IStorageService,
     @Inject(forwardRef(() => ChatGateway))
     private readonly chatGateway: ChatGateway,
   ) {}
@@ -238,9 +239,9 @@ export class ChatService {
             continue; // Skip invalid files
           }
 
-          const uploadResult = await this.cloudinaryService.uploadImage(file);
+          const uploadResult = await this.storageService.uploadImage(file);
           attachmentData.push({
-            url: (uploadResult as { secure_url: string }).secure_url,
+            url: uploadResult.secure_url,
             type: file.mimetype.startsWith('image/') ? 'image' : 'file',
             filename: file.originalname,
           });

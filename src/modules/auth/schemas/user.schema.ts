@@ -37,6 +37,9 @@ export class User {
   @Prop({ unique: true, sparse: true, index: true })
   googleId?: string;
 
+  @Prop({ unique: true, sparse: true, index: true })
+  appleId?: string;
+
   @Prop({ default: false })
   isPhoneVerified: boolean;
 

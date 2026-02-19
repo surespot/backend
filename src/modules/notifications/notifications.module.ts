@@ -39,11 +39,11 @@ import { PickupLocationsModule } from '../pickup-locations/pickup-locations.modu
     BullModule.registerQueue({
       name: 'notifications',
     }),
-    AuthModule,
+    forwardRef(() => AuthModule),
     MailModule,
     SmsModule,
     forwardRef(() => OrdersModule),
-    PickupLocationsModule,
+    forwardRef(() => PickupLocationsModule),
   ],
   controllers: [NotificationsController],
   providers: [

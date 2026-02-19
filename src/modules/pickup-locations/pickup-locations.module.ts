@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { PickupLocationsController } from './pickup-locations.controller';
 import { PickupLocationsService } from './pickup-locations.service';
@@ -16,7 +16,7 @@ import { AdminUsersController } from './admin-users.controller';
     MongooseModule.forFeature([
       { name: PickupLocation.name, schema: PickupLocationSchema },
     ]),
-    AuthModule,
+    forwardRef(() => AuthModule),
     MailModule,
   ],
   controllers: [PickupLocationsController, AdminUsersController],

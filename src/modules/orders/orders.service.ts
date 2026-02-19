@@ -428,16 +428,27 @@ export class OrdersService {
         ? this.calculateDeliveryFee(distanceKm, cart.itemCount)
         : 0;
 
-    // Validate promo code if provided
+    // Validate promo code - always re-validate when promo present (needed for free_delivery + deliveryFee context)
+    const codeToValidate = dto.promoCode ?? cart.promoCode;
     let discountAmount = cart.discountAmount;
     let discountPercent = cart.discountPercent;
     let promoCode = cart.promoCode;
 
-    if (dto.promoCode && dto.promoCode !== cart.promoCode) {
+    if (codeToValidate) {
       const cartTotal = cart.subtotal + cart.extrasTotal;
+      const cartItemsForPromo = items.map((item) => ({
+        foodItemId: item.foodItemId.toString(),
+        quantity: item.quantity,
+        price: item.price,
+        lineTotal: item.lineTotal,
+      }));
       const validation = await this.promotionsService.validateDiscountCode(
-        dto.promoCode,
-        cartTotal,
+        codeToValidate,
+        {
+          orderAmount: cartTotal,
+          deliveryFee,
+          cartItems: cartItemsForPromo,
+        },
       );
       if (!validation.valid) {
         errors.push({
@@ -447,7 +458,7 @@ export class OrdersService {
       } else {
         discountAmount = validation.discountAmount || 0;
         discountPercent = validation.promotion?.discountValue;
-        promoCode = dto.promoCode.toUpperCase();
+        promoCode = codeToValidate.toUpperCase();
       }
     }
 
@@ -1400,6 +1411,20 @@ export class OrdersService {
             orderId,
             riderName,
           );
+
+          // Notify pickup location's admins that order was picked up
+          this.notificationsService
+            .notifyPickupLocationAdminsOrderPickedUp(
+              pickupLocationIdStr,
+              order.orderNumber,
+              orderId,
+              riderName,
+            )
+            .catch((err) => {
+              this.logger.warn(
+                `Failed to notify pickup location admins of order picked up for ${order.orderNumber}: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            });
         }
 
         // Notify rider (when pickup location marks as picked up)
@@ -1475,6 +1500,26 @@ export class OrdersService {
         order._id.toString(),
         order.total,
       );
+
+      // Notify pickup location's admins when order is newly confirmed (was PENDING, now CONFIRMED)
+      if (
+        order.status === OrderStatus.PENDING &&
+        order.pickupLocationId
+      ) {
+        const pickupLocationIdStr = order.pickupLocationId.toString();
+        this.notificationsService
+          .notifyPickupLocationAdminsNewOrderConfirmed(
+            pickupLocationIdStr,
+            order.orderNumber,
+            order._id.toString(),
+            order.total,
+          )
+          .catch((err) => {
+            this.logger.warn(
+              `Failed to notify pickup location admins of new confirmed order ${order.orderNumber}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          });
+      }
 
       // Send delivery confirmation code to customer (for door delivery orders)
       if (
@@ -1870,9 +1915,12 @@ export class OrdersService {
         };
 
         // Emit to each nearby rider individually via their personal room
-        const notificationPromises = nearbyRiders.map((riderLocation) => {
+        // Also send notifications module notifications (IN_APP + PUSH)
+        const notificationPromises = nearbyRiders.map(async (riderLocation) => {
           const riderProfileId = riderLocation.riderProfileId.toString();
-          return this.ordersGateway
+          
+          // WebSocket notification (real-time)
+          const wsPromise = this.ordersGateway
             .emitOrderReadyToRider(
               riderProfileId,
               order._id.toString(),
@@ -1884,16 +1932,49 @@ export class OrdersService {
             )
             .catch((err) => {
               this.logger.warn(
-                `Failed to send notification to rider ${riderProfileId}: ${err instanceof Error ? err.message : String(err)}`,
+                `Failed to send WebSocket notification to rider ${riderProfileId}: ${err instanceof Error ? err.message : String(err)}`,
               );
               return false;
             });
+
+          // Notifications module notification (IN_APP + PUSH)
+          const notificationPromise = (async () => {
+            try {
+              const rider = await this.ridersRepository.findById(riderProfileId);
+              if (rider && rider.userId) {
+                await this.notificationsService.queueNotification(
+                  rider.userId.toString(),
+                  NotificationType.ORDER_READY,
+                  'New Delivery Available',
+                  `Order ${order.orderNumber} is ready for pickup. Total: ₦${(order.total / 100).toLocaleString('en-NG')}`,
+                  {
+                    orderId: order._id.toString(),
+                    orderNumber: order.orderNumber,
+                    pickupLocation: pickupLocationData,
+                    deliveryAddress: deliveryAddressData,
+                    total: order.total,
+                    formattedTotal: `₦${(order.total / 100).toLocaleString('en-NG')}`,
+                    itemCount: order.itemCount,
+                    source: 'order_ready',
+                  },
+                  [NotificationChannel.IN_APP, NotificationChannel.PUSH],
+                );
+              }
+            } catch (err) {
+              this.logger.warn(
+                `Failed to send notifications module notification to rider ${riderProfileId}: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+          })();
+
+          // Wait for both to complete (don't fail if one fails)
+          await Promise.allSettled([wsPromise, notificationPromise]);
         });
 
         await Promise.all(notificationPromises);
 
         this.logger.log(
-          `Order ready notifications sent to ${nearbyRiders.length} nearby rider(s) for order ${order.orderNumber}`,
+          `Order ready notifications (WebSocket + Notifications) sent to ${nearbyRiders.length} nearby rider(s) for order ${order.orderNumber}`,
         );
       } else {
         this.logger.debug(
@@ -2220,6 +2301,23 @@ export class OrdersService {
           orderNumber: order.orderNumber,
         },
       );
+    }
+
+    // Notify pickup location's admins that a rider was assigned
+    if (order.pickupLocationId) {
+      const pickupLocationIdStr = order.pickupLocationId.toString();
+      this.notificationsService
+        .notifyPickupLocationAdminsRiderAssigned(
+          pickupLocationIdStr,
+          order.orderNumber,
+          order._id.toString(),
+          riderName,
+        )
+        .catch((err) => {
+          this.logger.warn(
+            `Failed to notify pickup location admins of rider assignment for order ${order.orderNumber}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
     }
 
     return {

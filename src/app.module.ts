@@ -7,7 +7,7 @@ import { WinstonModule } from 'nest-winston';
 import * as winston from 'winston';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { CloudinaryModule } from './common/cloudinary/cloudinary.module';
+import { StorageModule } from './common/storage/storage.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { SavedLocationsModule } from './modules/saved-locations/saved-locations.module';
 import { PromotionsModule } from './modules/promotions/promotions.module';
@@ -22,6 +22,7 @@ import { QueueModule } from './modules/queue/queue.module';
 import { RidersModule } from './modules/riders/riders.module';
 import { WalletsModule } from './modules/wallets/wallets.module';
 import { ChatModule } from './modules/chat/chat.module';
+import { SupportModule } from './modules/support/support.module';
 import { AdminModule } from './modules/admin/admin.module';
 
 @Module({
@@ -93,8 +94,8 @@ import { AdminModule } from './modules/admin/admin.module';
       ],
     }),
 
-    // Cloudinary (global media service)
-    CloudinaryModule,
+    // Storage (Cloudinary or S3 - switchable via STORAGE_PROVIDER)
+    StorageModule.forRoot(),
 
     // Scheduling (cron jobs)
     ScheduleModule.forRoot(),
@@ -140,6 +141,9 @@ import { AdminModule } from './modules/admin/admin.module';
 
     // Chat module
     ChatModule,
+
+    // Support module
+    SupportModule,
 
     // Admin Dashboard module
     AdminModule,

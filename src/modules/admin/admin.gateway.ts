@@ -18,6 +18,7 @@ import {
   WebSocketConnection,
   WebSocketConnectionDocument,
 } from '../notifications/schemas/websocket-connection.schema';
+import { emitToRoomWithRetry } from '../../common/websocket/emit-with-retry.util';
 
 interface AuthenticatedAdminSocket extends Socket {
   userId?: string;
@@ -26,11 +27,10 @@ interface AuthenticatedAdminSocket extends Socket {
 }
 
 @WebSocketGateway({
-  cors: {
-    origin: '*',
-    credentials: true,
-  },
+  cors: { origin: '*', credentials: true },
   namespace: '/admin',
+  pingTimeout: 20000,
+  pingInterval: 25000,
 })
 export class AdminGateway
   implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
@@ -236,10 +236,19 @@ export class AdminGateway
         return false;
       }
 
-      // Emit to pickup location's admin room
       const roomName = `admin-${pickupLocationId}`;
-      this.server.to(roomName).emit(event, data);
-
+      const sent = await emitToRoomWithRetry(
+        this.server,
+        roomName,
+        event,
+        data,
+      );
+      if (!sent) {
+        this.logger.warn(
+          `Emit ${event} to pickup location ${pickupLocationId} failed (including retry)`,
+        );
+        return false;
+      }
       this.logger.debug(
         `Emitted ${event} to ${activeConnections} admin(s) in pickup location ${pickupLocationId}`,
       );

@@ -27,11 +27,10 @@ interface AuthenticatedSocket extends Socket {
 }
 
 @WebSocketGateway({
-  cors: {
-    origin: '*',
-    credentials: true,
-  },
+  cors: { origin: '*', credentials: true },
   namespace: '/chat',
+  pingTimeout: 20000,
+  pingInterval: 25000,
 })
 export class ChatGateway
   implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect

@@ -18,7 +18,7 @@ import { PromotionsModule } from '../promotions/promotions.module';
       { name: CartItem.name, schema: CartItemSchema },
       { name: CartExtra.name, schema: CartExtraSchema },
     ]),
-    AuthModule,
+    forwardRef(() => AuthModule),
     forwardRef(() => FoodItemsModule),
     PromotionsModule,
   ],

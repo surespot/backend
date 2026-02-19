@@ -12,9 +12,12 @@ import { AdminMenuRepository } from './admin-menu.repository';
 import { AdminGateway } from './admin.gateway';
 import { OrdersModule } from '../orders/orders.module';
 import { FoodItemsModule } from '../food-items/food-items.module';
+import { SupportModule } from '../support/support.module';
+import { AdminSupportController } from '../support/admin-support.controller';
+import { AdminSupportService } from '../support/admin-support.service';
 import { AuthModule } from '../auth/auth.module';
 import { RidersModule } from '../riders/riders.module';
-import { CloudinaryModule } from '../../common/cloudinary/cloudinary.module';
+import { MailModule } from '../mail/mail.module';
 import {
   WebSocketConnection,
   WebSocketConnectionSchema,
@@ -27,10 +30,11 @@ import {
 @Module({
   imports: [
     forwardRef(() => OrdersModule),
+    forwardRef(() => SupportModule),
     forwardRef(() => FoodItemsModule),
-    AuthModule,
-    RidersModule,
-    CloudinaryModule,
+    forwardRef(() => AuthModule),
+    MailModule,
+    forwardRef(() => RidersModule),
     JwtModule.registerAsync({
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
@@ -49,10 +53,12 @@ import {
     DashboardController,
     AdminOrdersController,
     AdminMenuController,
+    AdminSupportController,
   ],
   providers: [
     DashboardService,
     AdminOrdersService,
+    AdminSupportService,
     AdminMenuService,
     AdminMenuRepository,
     AdminGateway,

@@ -3,6 +3,7 @@ import { AppModule } from './app.module';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { RedisIoAdapter } from './common/websocket/redis-io.adapter';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const morgan = require('morgan') as typeof import('morgan');
 
@@ -10,6 +11,11 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   const configService = app.get(ConfigService);
+
+  // Use Redis adapter for Socket.io when REDIS_HOST is set (multi-instance deployments)
+  const redisIoAdapter = new RedisIoAdapter(app);
+  await redisIoAdapter.connectToRedis();
+  app.useWebSocketAdapter(redisIoAdapter);
 
   // HTTP request logging with Morgan
   app.use(morgan('combined'));
@@ -31,7 +37,7 @@ async function bootstrap() {
     origin: corsOrigin,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-verification-token'],
   });
 
   // Swagger setup

@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { User, UserDocument } from './schemas/user.schema';
+import { User, UserDocument, UserRole } from './schemas/user.schema';
 import {
   OtpCode,
   OtpCodeDocument,
@@ -45,8 +45,50 @@ export class AuthRepository {
       .exec();
   }
 
+  /**
+   * Find all active user IDs associated with a pickup location (for notifying location admins).
+   */
+  async findUserIdsByPickupLocationId(
+    pickupLocationId: string | Types.ObjectId,
+  ): Promise<string[]> {
+    const id =
+      typeof pickupLocationId === 'string'
+        ? new Types.ObjectId(pickupLocationId)
+        : pickupLocationId;
+    const users = await this.userModel
+      .find({
+        pickupLocationId: id,
+        isActive: true,
+        deletedAt: null,
+      })
+      .select('_id')
+      .lean()
+      .exec();
+    return users.map((u) => (u._id as Types.ObjectId).toString());
+  }
+
   async findUserByGoogleId(googleId: string): Promise<UserDocument | null> {
     return this.userModel.findOne({ googleId, deletedAt: null }).exec();
+  }
+
+  async findUserByAppleId(appleId: string): Promise<UserDocument | null> {
+    return this.userModel.findOne({ appleId, deletedAt: null }).exec();
+  }
+
+  /**
+   * Find all active admin user IDs (for broadcasting admin notifications).
+   */
+  async findAdminUserIds(): Promise<string[]> {
+    const users = await this.userModel
+      .find({
+        role: UserRole.ADMIN,
+        isActive: true,
+        deletedAt: null,
+      })
+      .select('_id')
+      .lean()
+      .exec();
+    return users.map((u) => (u._id as Types.ObjectId).toString());
   }
 
   async findUserByEmailOrPhone(

@@ -1,6 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument } from 'mongoose';
+import { HydratedDocument, Types } from 'mongoose';
 import type { PromotionStatus, DiscountType } from '../types';
+import { FoodCategory } from '../../food-items/schemas/food-item.schema';
 
 export type PromotionDocument = HydratedDocument<Promotion>;
 
@@ -34,7 +35,7 @@ export class Promotion {
 
   @Prop({
     type: String,
-    enum: ['percentage', 'fixed_amount'],
+    enum: ['percentage', 'fixed_amount', 'free_delivery', 'free_category', 'bogo'],
   })
   discountType?: DiscountType;
 
@@ -46,6 +47,24 @@ export class Promotion {
 
   @Prop({ type: Number, min: 0 })
   maxDiscountAmount?: number; // Maximum discount amount in kobo (for percentage discounts)
+
+  @Prop({ type: String, enum: Object.values(FoodCategory) })
+  targetCategory?: string; // For free_category and bogo
+
+  @Prop({ type: [Types.ObjectId], ref: 'FoodItem' })
+  targetFoodItemIds?: Types.ObjectId[]; // For bogo (alternative to targetCategory)
+
+  @Prop({ type: Number, min: 0 })
+  maxFreeQuantity?: number; // For free_category: max free items from category
+
+  @Prop({ type: Number, min: 1 })
+  buyQuantity?: number; // For bogo: required quantity to trigger
+
+  @Prop({ type: Number, min: 1 })
+  getFreeQuantity?: number; // For bogo: free quantity per trigger
+
+  @Prop({ type: Number, min: 0 })
+  maxRedeemablePerOrder?: number; // For bogo: cap on free units per order
 
   @Prop({ type: Number, min: 0, default: 0 })
   usageCount: number; // Number of times this promo code has been used

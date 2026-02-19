@@ -2,19 +2,49 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  Inject,
 } from '@nestjs/common';
+import { Types } from 'mongoose';
 import { PromotionsRepository } from './promotions.repository';
 import { CreatePromotionDto } from './dto/create-promotion.dto';
 import { UpdatePromotionDto } from './dto/update-promotion.dto';
+import { RestartPromotionDto } from './dto/restart-promotion.dto';
 import { GetPromotionsFilterDto } from './dto/get-promotions-filter.dto';
 import { PromotionDocument } from './schemas/promotion.schema';
-import { CloudinaryService } from '../../common/cloudinary/cloudinary.service';
+import { STORAGE_SERVICE } from '../../common/storage/storage.constants';
+import { IStorageService } from '../../common/storage/interfaces/storage.interface';
+import { FoodItemsRepository } from '../food-items/food-items.repository';
+
+export interface ValidateDiscountContext {
+  orderAmount: number;
+  deliveryFee?: number;
+  cartItems?: Array<{
+    foodItemId: string;
+    quantity: number;
+    price: number;
+    lineTotal: number;
+  }>;
+}
+
+export interface ValidateDiscountResult {
+  valid: boolean;
+  discountAmount?: number;
+  message?: string;
+  waivesDelivery?: boolean;
+  promotion?: {
+    id: string;
+    name: string;
+    discountType?: string;
+    discountValue?: number;
+  };
+}
 
 @Injectable()
 export class PromotionsService {
   constructor(
     private readonly promotionsRepository: PromotionsRepository,
-    private readonly cloudinaryService: CloudinaryService,
+    @Inject(STORAGE_SERVICE) private readonly storageService: IStorageService,
+    private readonly foodItemsRepository: FoodItemsRepository,
   ) {}
 
   private ensureValidDateRange(activeFrom: Date, activeTo: Date): void {
@@ -32,18 +62,19 @@ export class PromotionsService {
   private validateDiscountFields(
     dto: CreatePromotionDto | UpdatePromotionDto,
   ): void {
-    // If discountType is provided, discountValue must also be provided
-    if (dto.discountType && dto.discountValue === undefined) {
+    const needsDiscountValue = ['percentage', 'fixed_amount'].includes(
+      dto.discountType ?? '',
+    );
+    if (needsDiscountValue && dto.discountValue === undefined) {
       throw new BadRequestException({
         success: false,
         error: {
           code: 'PROMOTION_DISCOUNT_VALUE_REQUIRED',
-          message: 'discountValue is required when discountType is provided',
+          message: 'discountValue is required for percentage and fixed_amount',
         },
       });
     }
 
-    // If discountValue is provided, discountType must also be provided
     if (dto.discountValue !== undefined && !dto.discountType) {
       throw new BadRequestException({
         success: false,
@@ -54,7 +85,6 @@ export class PromotionsService {
       });
     }
 
-    // Validate percentage discount
     if (dto.discountType === 'percentage') {
       if (
         dto.discountValue === undefined ||
@@ -71,7 +101,6 @@ export class PromotionsService {
       }
     }
 
-    // Validate fixed amount discount
     if (dto.discountType === 'fixed_amount') {
       if (dto.discountValue === undefined || dto.discountValue <= 0) {
         throw new BadRequestException({
@@ -84,7 +113,38 @@ export class PromotionsService {
       }
     }
 
-    // maxDiscountAmount only makes sense for percentage discounts
+    if (dto.discountType === 'free_category') {
+      if (!dto.targetCategory || dto.maxFreeQuantity === undefined) {
+        throw new BadRequestException({
+          success: false,
+          error: {
+            code: 'PROMOTION_FREE_CATEGORY_REQUIRED',
+            message: 'targetCategory and maxFreeQuantity are required for free_category',
+          },
+        });
+      }
+    }
+
+    if (dto.discountType === 'bogo') {
+      const hasTarget =
+        (dto.targetFoodItemIds && dto.targetFoodItemIds.length > 0) ||
+        dto.targetCategory;
+      if (
+        !hasTarget ||
+        dto.buyQuantity === undefined ||
+        dto.getFreeQuantity === undefined
+      ) {
+        throw new BadRequestException({
+          success: false,
+          error: {
+            code: 'PROMOTION_BOGO_REQUIRED',
+            message:
+              'bogo requires buyQuantity, getFreeQuantity, and (targetFoodItemIds or targetCategory)',
+          },
+        });
+      }
+    }
+
     if (
       dto.maxDiscountAmount !== undefined &&
       dto.discountType !== 'percentage'
@@ -114,6 +174,12 @@ export class PromotionsService {
       discountValue: promotion.discountValue,
       minOrderAmount: promotion.minOrderAmount,
       maxDiscountAmount: promotion.maxDiscountAmount,
+      targetCategory: promotion.targetCategory,
+      targetFoodItemIds: promotion.targetFoodItemIds?.map((id) => id.toString()),
+      maxFreeQuantity: promotion.maxFreeQuantity,
+      buyQuantity: promotion.buyQuantity,
+      getFreeQuantity: promotion.getFreeQuantity,
+      maxRedeemablePerOrder: promotion.maxRedeemablePerOrder,
       usageCount: promotion.usageCount ?? 0,
       createdAt: promotion.createdAt,
       updatedAt: promotion.updatedAt,
@@ -162,7 +228,7 @@ export class PromotionsService {
       });
     }
 
-    const uploadResult = await this.cloudinaryService.uploadImage(file);
+    const uploadResult = await this.storageService.uploadImage(file);
 
     const activeFrom = this.parseDate(dto.activeFrom, 'activeFrom') as Date;
     const activeTo = this.parseDate(dto.activeTo, 'activeTo') as Date;
@@ -172,7 +238,7 @@ export class PromotionsService {
     this.validateDiscountFields(dto);
 
     const promotion = await this.promotionsRepository.create({
-      imageUrl: (uploadResult as { secure_url: string }).secure_url,
+      imageUrl: uploadResult.secure_url,
       name: dto.name,
       activeFrom,
       activeTo,
@@ -183,6 +249,16 @@ export class PromotionsService {
       discountValue: dto.discountValue,
       minOrderAmount: dto.minOrderAmount,
       maxDiscountAmount: dto.maxDiscountAmount,
+      targetCategory: dto.targetCategory,
+      targetFoodItemIds: dto.targetFoodItemIds?.length
+        ? dto.targetFoodItemIds
+            .filter((id) => Types.ObjectId.isValid(id))
+            .map((id) => new Types.ObjectId(id))
+        : undefined,
+      maxFreeQuantity: dto.maxFreeQuantity,
+      buyQuantity: dto.buyQuantity,
+      getFreeQuantity: dto.getFreeQuantity,
+      maxRedeemablePerOrder: dto.maxRedeemablePerOrder,
     });
 
     return {
@@ -249,19 +325,7 @@ export class PromotionsService {
       });
     }
 
-    const updateData: {
-      imageUrl?: string;
-      name?: string;
-      activeFrom?: Date;
-      activeTo?: Date;
-      status?: PromotionDocument['status'];
-      linkTo?: string;
-      discountCode?: string;
-      discountType?: string;
-      discountValue?: number;
-      minOrderAmount?: number;
-      maxDiscountAmount?: number;
-    } = {};
+    const updateData: Partial<Record<string, unknown>> = {};
 
     if (dto.name !== undefined) updateData.name = dto.name;
     if (dto.linkTo !== undefined) updateData.linkTo = dto.linkTo;
@@ -270,18 +334,30 @@ export class PromotionsService {
     }
 
     // Validate discount fields if any are being updated
-    if (
+    const discountFieldsUpdated =
       dto.discountType !== undefined ||
       dto.discountValue !== undefined ||
       dto.minOrderAmount !== undefined ||
-      dto.maxDiscountAmount !== undefined
-    ) {
-      // Merge existing discount fields with new ones for validation
+      dto.maxDiscountAmount !== undefined ||
+      dto.targetCategory !== undefined ||
+      dto.targetFoodItemIds !== undefined ||
+      dto.maxFreeQuantity !== undefined ||
+      dto.buyQuantity !== undefined ||
+      dto.getFreeQuantity !== undefined ||
+      dto.maxRedeemablePerOrder !== undefined;
+
+    if (discountFieldsUpdated) {
       const discountDto = {
         discountType: dto.discountType ?? existing.discountType,
         discountValue: dto.discountValue ?? existing.discountValue,
         minOrderAmount: dto.minOrderAmount ?? existing.minOrderAmount,
         maxDiscountAmount: dto.maxDiscountAmount ?? existing.maxDiscountAmount,
+        targetCategory: dto.targetCategory ?? existing.targetCategory,
+        targetFoodItemIds: dto.targetFoodItemIds ?? existing.targetFoodItemIds?.map((id) => id.toString()),
+        maxFreeQuantity: dto.maxFreeQuantity ?? existing.maxFreeQuantity,
+        buyQuantity: dto.buyQuantity ?? existing.buyQuantity,
+        getFreeQuantity: dto.getFreeQuantity ?? existing.getFreeQuantity,
+        maxRedeemablePerOrder: dto.maxRedeemablePerOrder ?? existing.maxRedeemablePerOrder,
       };
       this.validateDiscountFields(discountDto as UpdatePromotionDto);
     }
@@ -294,6 +370,20 @@ export class PromotionsService {
       updateData.minOrderAmount = dto.minOrderAmount;
     if (dto.maxDiscountAmount !== undefined)
       updateData.maxDiscountAmount = dto.maxDiscountAmount;
+    if (dto.targetCategory !== undefined)
+      updateData.targetCategory = dto.targetCategory;
+    if (dto.targetFoodItemIds !== undefined) {
+      updateData.targetFoodItemIds = dto.targetFoodItemIds
+        .filter((id) => Types.ObjectId.isValid(id))
+        .map((id) => new Types.ObjectId(id));
+    }
+    if (dto.maxFreeQuantity !== undefined)
+      updateData.maxFreeQuantity = dto.maxFreeQuantity;
+    if (dto.buyQuantity !== undefined) updateData.buyQuantity = dto.buyQuantity;
+    if (dto.getFreeQuantity !== undefined)
+      updateData.getFreeQuantity = dto.getFreeQuantity;
+    if (dto.maxRedeemablePerOrder !== undefined)
+      updateData.maxRedeemablePerOrder = dto.maxRedeemablePerOrder;
 
     let activeFrom = existing.activeFrom;
     let activeTo = existing.activeTo;
@@ -335,8 +425,8 @@ export class PromotionsService {
           },
         });
       }
-      const uploadResult = await this.cloudinaryService.uploadImage(file);
-      updateData.imageUrl = (uploadResult as { secure_url: string }).secure_url;
+      const uploadResult = await this.storageService.uploadImage(file);
+      updateData.imageUrl = uploadResult.secure_url;
     }
 
     const updated = await this.promotionsRepository.update(id, updateData);
@@ -422,6 +512,45 @@ export class PromotionsService {
     };
   }
 
+  async restart(id: string, dto: RestartPromotionDto) {
+    const existing = await this.promotionsRepository.findById(id);
+    if (!existing) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'PROMOTION_NOT_FOUND',
+          message: 'Promotion not found',
+        },
+      });
+    }
+
+    if (existing.status !== 'ended') {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'PROMOTION_RESTART_ONLY_ENDED',
+          message: 'Can only restart ended promotions',
+        },
+      });
+    }
+
+    const activeFrom = this.parseDate(dto.activeFrom, 'activeFrom') as Date;
+    const activeTo = this.parseDate(dto.activeTo, 'activeTo') as Date;
+    this.ensureValidDateRange(activeFrom, activeTo);
+
+    const updated = await this.promotionsRepository.update(id, {
+      activeFrom,
+      activeTo,
+      status: 'inactive',
+    });
+
+    return {
+      success: true,
+      message: 'Promotion restarted successfully with new dates',
+      data: this.toResponse(updated as PromotionDocument),
+    };
+  }
+
   async delete(id: string) {
     const deleted = await this.promotionsRepository.delete(id);
 
@@ -451,23 +580,18 @@ export class PromotionsService {
   /**
    * Validate a discount code and calculate the discount amount
    * @param discountCode The discount code to validate
-   * @param orderAmount The order amount in kobo
-   * @returns Object with validation result and discount amount
+   * @param contextOrOrderAmount Context object or legacy orderAmount number
    */
   async validateDiscountCode(
     discountCode: string,
-    orderAmount: number,
-  ): Promise<{
-    valid: boolean;
-    discountAmount?: number;
-    message?: string;
-    promotion?: {
-      id: string;
-      name: string;
-      discountType?: string;
-      discountValue?: number;
-    };
-  }> {
+    contextOrOrderAmount: ValidateDiscountContext | number,
+  ): Promise<ValidateDiscountResult> {
+    const context: ValidateDiscountContext =
+      typeof contextOrOrderAmount === 'number'
+        ? { orderAmount: contextOrOrderAmount }
+        : contextOrOrderAmount;
+
+    const { orderAmount, deliveryFee, cartItems } = context;
     const now = new Date();
     const activePromotions = await this.promotionsRepository.findActive(now);
 
@@ -482,15 +606,13 @@ export class PromotionsService {
       };
     }
 
-    // Check if promotion has discount configuration
-    if (!promotion.discountType || promotion.discountValue === undefined) {
+    if (!promotion.discountType) {
       return {
         valid: false,
         message: 'This promotion does not have discount configuration',
       };
     }
 
-    // Check minimum order amount
     if (
       promotion.minOrderAmount !== undefined &&
       orderAmount < promotion.minOrderAmount
@@ -501,29 +623,74 @@ export class PromotionsService {
       };
     }
 
-    // Calculate discount amount
     let discountAmount = 0;
+    let waivesDelivery = false;
 
-    if (promotion.discountType === 'percentage') {
-      discountAmount = (orderAmount * promotion.discountValue) / 100;
-      // Apply max discount cap if set
-      if (
-        promotion.maxDiscountAmount !== undefined &&
-        discountAmount > promotion.maxDiscountAmount
-      ) {
-        discountAmount = promotion.maxDiscountAmount;
-      }
-    } else if (promotion.discountType === 'fixed_amount') {
-      discountAmount = promotion.discountValue;
-      // Ensure discount doesn't exceed order amount
-      if (discountAmount > orderAmount) {
-        discountAmount = orderAmount;
-      }
+    switch (promotion.discountType) {
+      case 'percentage':
+        if (promotion.discountValue === undefined) {
+          return {
+            valid: false,
+            message: 'This promotion does not have discount configuration',
+          };
+        }
+        discountAmount = (orderAmount * promotion.discountValue) / 100;
+        if (
+          promotion.maxDiscountAmount !== undefined &&
+          discountAmount > promotion.maxDiscountAmount
+        ) {
+          discountAmount = promotion.maxDiscountAmount;
+        }
+        break;
+
+      case 'fixed_amount':
+        if (promotion.discountValue === undefined) {
+          return {
+            valid: false,
+            message: 'This promotion does not have discount configuration',
+          };
+        }
+        discountAmount = promotion.discountValue;
+        if (discountAmount > orderAmount) {
+          discountAmount = orderAmount;
+        }
+        break;
+
+      case 'free_delivery':
+        if (deliveryFee !== undefined && deliveryFee > 0) {
+          discountAmount = deliveryFee;
+        } else {
+          waivesDelivery = true;
+        }
+        break;
+
+      case 'free_category':
+        discountAmount = await this.calcFreeCategoryDiscount(
+          promotion,
+          orderAmount,
+          cartItems ?? [],
+        );
+        break;
+
+      case 'bogo':
+        discountAmount = await this.calcBogoDiscount(
+          promotion,
+          orderAmount,
+          cartItems ?? [],
+        );
+        break;
+
+      default:
+        return {
+          valid: false,
+          message: 'Unknown promotion type',
+        };
     }
 
     return {
       valid: true,
       discountAmount: Math.round(discountAmount),
+      waivesDelivery,
       promotion: {
         id: promotion._id.toString(),
         name: promotion.name,
@@ -531,6 +698,95 @@ export class PromotionsService {
         discountValue: promotion.discountValue,
       },
     };
+  }
+
+  private async calcFreeCategoryDiscount(
+    promotion: PromotionDocument,
+    orderAmount: number,
+    cartItems: Array<{ foodItemId: string; quantity: number; price: number; lineTotal: number }>,
+  ): Promise<number> {
+    if (
+      !promotion.targetCategory ||
+      promotion.maxFreeQuantity === undefined ||
+      cartItems.length === 0
+    ) {
+      return 0;
+    }
+
+    const categories = await this.foodItemsRepository.findCategoriesByIds(
+      cartItems.map((i) => i.foodItemId),
+    );
+
+    const qualifying: Array<{ price: number; lineTotal: number; quantity: number }> = [];
+    for (const item of cartItems) {
+      const cat = categories.get(item.foodItemId);
+      if (cat === promotion.targetCategory) {
+        const unitPrice = item.quantity > 0 ? item.lineTotal / item.quantity : 0;
+        for (let q = 0; q < item.quantity; q++) {
+          qualifying.push({
+            price: unitPrice,
+            lineTotal: unitPrice,
+            quantity: 1,
+          });
+        }
+      }
+    }
+
+    qualifying.sort((a, b) => a.price - b.price);
+    const toTake = Math.min(qualifying.length, promotion.maxFreeQuantity);
+    return qualifying.slice(0, toTake).reduce((sum, u) => sum + u.price, 0);
+  }
+
+  private async calcBogoDiscount(
+    promotion: PromotionDocument,
+    orderAmount: number,
+    cartItems: Array<{ foodItemId: string; quantity: number; price: number; lineTotal: number }>,
+  ): Promise<number> {
+    if (
+      promotion.buyQuantity === undefined ||
+      promotion.getFreeQuantity === undefined ||
+      cartItems.length === 0
+    ) {
+      return 0;
+    }
+
+    const categories = await this.foodItemsRepository.findCategoriesByIds(
+      cartItems.map((i) => i.foodItemId),
+    );
+
+    const targetIds = new Set(
+      promotion.targetFoodItemIds?.map((id) => id.toString()) ?? [],
+    );
+    const targetCategory = promotion.targetCategory;
+
+    const qualifies = (
+      foodItemId: string,
+      category: string | undefined,
+    ): boolean => {
+      if (targetIds.size > 0) return targetIds.has(foodItemId);
+      return targetCategory !== undefined && category === targetCategory;
+    };
+
+    const units: Array<{ price: number }> = [];
+    for (const item of cartItems) {
+      const cat = categories.get(item.foodItemId);
+      if (!qualifies(item.foodItemId, cat)) continue;
+      const unitPrice = item.quantity > 0 ? item.lineTotal / item.quantity : 0;
+      for (let q = 0; q < item.quantity; q++) {
+        units.push({ price: unitPrice });
+      }
+    }
+
+    const qualifyingCount = units.length;
+    const cycleSize = promotion.buyQuantity + promotion.getFreeQuantity;
+    let freeUnits =
+      Math.floor(qualifyingCount / cycleSize) * promotion.getFreeQuantity;
+    if (promotion.maxRedeemablePerOrder !== undefined) {
+      freeUnits = Math.min(freeUnits, promotion.maxRedeemablePerOrder);
+    }
+
+    units.sort((a, b) => a.price - b.price);
+    return units.slice(0, freeUnits).reduce((sum, u) => sum + u.price, 0);
   }
 
   /**

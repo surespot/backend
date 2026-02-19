@@ -1,9 +1,11 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   ConflictException,
   BadRequestException,
   UnauthorizedException,
+  Inject,
 } from '@nestjs/common';
 import { FoodItemsRepository } from './food-items.repository';
 import { GetFoodItemsFilterDto } from './dto/get-food-items-filter.dto';
@@ -18,8 +20,11 @@ import { FoodExtraDocument } from './schemas/food-extra.schema';
 import { FoodCategory } from './schemas/food-item.schema';
 import { InteractionType } from './schemas/food-interaction.schema';
 import { CreateFoodInteractionDto } from './dto/create-food-interaction.dto';
-import { CloudinaryService } from '../../common/cloudinary/cloudinary.service';
+import { CreateReviewDto } from './dto/create-review.dto';
+import { STORAGE_SERVICE } from '../../common/storage/storage.constants';
+import { IStorageService } from '../../common/storage/interfaces/storage.interface';
 import { OrdersRepository } from '../orders/orders.repository';
+import { NotificationsService } from '../notifications/notifications.service';
 import { Types } from 'mongoose';
 
 export interface FoodItemResponse {
@@ -79,10 +84,13 @@ export interface CategoryResponse {
 
 @Injectable()
 export class FoodItemsService {
+  private readonly logger = new Logger(FoodItemsService.name);
+
   constructor(
     private readonly foodItemsRepository: FoodItemsRepository,
-    private readonly cloudinaryService: CloudinaryService,
+    @Inject(STORAGE_SERVICE) private readonly storageService: IStorageService,
     private readonly ordersRepository: OrdersRepository,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   private formatPrice(price: number, currency: string = 'NGN'): string {
@@ -426,9 +434,8 @@ export class FoodItemsService {
         });
       }
 
-      // Upload to Cloudinary
-      const uploadResult = await this.cloudinaryService.uploadImage(file);
-      imageUrl = (uploadResult as { secure_url: string }).secure_url;
+      const uploadResult = await this.storageService.uploadImage(file);
+      imageUrl = uploadResult.secure_url;
     } else if (dto.imageUrl) {
       // Use provided imageUrl
       imageUrl = dto.imageUrl;
@@ -870,6 +877,83 @@ export class FoodItemsService {
         },
       };
     }
+  }
+
+  async createReview(foodItemIdOrSlug: string, userId: string, dto: CreateReviewDto) {
+    const foodItem = await this.foodItemsRepository.findById(
+      foodItemIdOrSlug,
+      false,
+    );
+    if (!foodItem) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'FOOD_ITEM_NOT_FOUND',
+          message: 'Food item not found',
+        },
+      });
+    }
+    const foodItemId = foodItem._id.toString();
+
+    const existing = await this.foodItemsRepository.findReviewByFoodItemAndUser(
+      foodItemId,
+      userId,
+    );
+    if (existing) {
+      throw new ConflictException({
+        success: false,
+        error: {
+          code: 'ALREADY_REVIEWED',
+          message: 'You have already reviewed this food item',
+        },
+      });
+    }
+
+    const review = await this.foodItemsRepository.createReview({
+      foodItemId,
+      userId,
+      rating: dto.rating,
+      comment: dto.comment,
+      orderId: dto.orderId,
+    });
+
+    const { averageRating, ratingCount } =
+      await this.foodItemsRepository.aggregateRatingStats(foodItemId);
+    await this.foodItemsRepository.updateFoodItemRatingStats(
+      foodItemId,
+      averageRating,
+      ratingCount,
+    );
+
+    if (review.orderId) {
+      this.notificationsService
+        .notifyPickupLocationAdminsNewReview(
+          review.orderId.toString(),
+          foodItem.name,
+          review.rating,
+          review._id.toString(),
+          review.comment,
+        )
+        .catch((err) => {
+          // Log but don't fail review creation if notification fails
+          this.logger.warn(
+            `Failed to notify admins of new review: ${err?.message ?? err}`,
+          );
+        });
+    }
+
+    return {
+      success: true,
+      message: 'Review created successfully',
+      data: {
+        id: review._id.toString(),
+        foodItemId,
+        userId,
+        rating: review.rating,
+        comment: review.comment,
+        createdAt: review.createdAt?.toISOString(),
+      },
+    };
   }
 
   async getLikedFoodItems(

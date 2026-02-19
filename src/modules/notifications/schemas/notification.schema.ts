@@ -16,6 +16,7 @@ export enum NotificationType {
   PROMOTION = 'promotion',
   GENERAL = 'general',
   CHAT_MESSAGE = 'chat_message',
+  NEW_REVIEW = 'new_review',
 }
 
 export enum NotificationChannel {

@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { SavedLocationsController } from './saved-locations.controller';
 import { SavedLocationsService } from './saved-locations.service';
@@ -14,7 +14,7 @@ import {
     MongooseModule.forFeature([
       { name: SavedLocation.name, schema: SavedLocationSchema },
     ]),
-    AuthModule, // Import AuthModule to access JWT strategy and guard
+    forwardRef(() => AuthModule), // Import AuthModule to access JWT strategy and guard
   ],
   controllers: [SavedLocationsController],
   providers: [SavedLocationsService, SavedLocationsRepository],

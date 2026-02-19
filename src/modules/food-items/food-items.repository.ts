@@ -2,7 +2,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Model, PipelineStage, Types } from 'mongoose';
 import {
   FoodItem,
   FoodItemDocument,
@@ -14,11 +14,22 @@ import {
   FoodInteractionDocument,
   InteractionType,
 } from './schemas/food-interaction.schema';
+import { Review, ReviewDocument } from './schemas/review.schema';
 import {
   GetFoodItemsFilterDto,
   SortBy,
   SortOrder,
 } from './dto/get-food-items-filter.dto';
+
+export interface DashboardReviewItem {
+  name: string;
+  avatarUrl?: string;
+  rating: number;
+  comment: string;
+  food: string;
+  foodImageUrl?: string;
+  createdAt: string;
+}
 
 export interface PaginationResult<T> {
   items: T[];
@@ -41,6 +52,8 @@ export class FoodItemsRepository {
     private readonly foodExtraModel: Model<FoodExtraDocument>,
     @InjectModel(FoodInteraction.name)
     private readonly foodInteractionModel: Model<FoodInteractionDocument>,
+    @InjectModel(Review.name)
+    private readonly reviewModel: Model<ReviewDocument>,
   ) {}
 
   private validateObjectId(id: string, fieldName: string): void {
@@ -194,6 +207,29 @@ export class FoodItemsRepository {
         hasPrev: page > 1,
       },
     };
+  }
+
+  async findCategoriesByIds(
+    foodItemIds: string[],
+  ): Promise<Map<string, string>> {
+    if (foodItemIds.length === 0) return new Map();
+
+    const validIds = foodItemIds.filter((id) => Types.ObjectId.isValid(id));
+    if (validIds.length === 0) return new Map();
+
+    const items = await this.foodItemModel
+      .find({
+        _id: { $in: validIds.map((id) => new Types.ObjectId(id)) },
+      })
+      .select('_id category')
+      .lean()
+      .exec();
+
+    const map = new Map<string, string>();
+    for (const item of items) {
+      map.set(item._id.toString(), item.category);
+    }
+    return map;
   }
 
   async findById(
@@ -792,5 +828,149 @@ export class FoodItemsRepository {
         hasPrev: page > 1,
       },
     };
+  }
+
+  // Review methods
+  async findReviewByFoodItemAndUser(
+    foodItemId: string,
+    userId: string,
+  ): Promise<ReviewDocument | null> {
+    this.validateObjectId(foodItemId, 'foodItemId');
+    this.validateObjectId(userId, 'userId');
+
+    return this.reviewModel
+      .findOne({
+        foodItemId: new Types.ObjectId(foodItemId),
+        userId: new Types.ObjectId(userId),
+      })
+      .exec();
+  }
+
+  async createReview(data: {
+    foodItemId: string;
+    userId: string;
+    rating: number;
+    comment?: string;
+    orderId?: string;
+  }): Promise<ReviewDocument> {
+    this.validateObjectId(data.foodItemId, 'foodItemId');
+    this.validateObjectId(data.userId, 'userId');
+
+    const doc: Record<string, unknown> = {
+      foodItemId: new Types.ObjectId(data.foodItemId),
+      userId: new Types.ObjectId(data.userId),
+      rating: data.rating,
+    };
+    if (data.comment) doc.comment = data.comment;
+    if (data.orderId && Types.ObjectId.isValid(data.orderId)) {
+      doc.orderId = new Types.ObjectId(data.orderId);
+    }
+
+    const review = new this.reviewModel(doc);
+    return review.save();
+  }
+
+  async aggregateRatingStats(
+    foodItemId: string,
+  ): Promise<{ averageRating: number; ratingCount: number }> {
+    this.validateObjectId(foodItemId, 'foodItemId');
+
+    const result = await this.reviewModel
+      .aggregate<{ _id: null; averageRating: number; ratingCount: number }>([
+        { $match: { foodItemId: new Types.ObjectId(foodItemId) } },
+        {
+          $group: {
+            _id: null,
+            averageRating: { $avg: '$rating' },
+            ratingCount: { $sum: 1 },
+          },
+        },
+      ])
+      .exec();
+
+    if (!result.length) {
+      return { averageRating: 0, ratingCount: 0 };
+    }
+
+    const avg = result[0].averageRating;
+    const count = result[0].ratingCount;
+    const roundedAvg = Math.round(avg * 10) / 10; // 1 decimal place
+    return { averageRating: roundedAvg, ratingCount: count };
+  }
+
+  async updateFoodItemRatingStats(
+    foodItemId: string,
+    averageRating: number,
+    ratingCount: number,
+  ): Promise<void> {
+    this.validateObjectId(foodItemId, 'foodItemId');
+
+    await this.foodItemModel
+      .findByIdAndUpdate(foodItemId, {
+        averageRating: Math.min(5, Math.max(0, averageRating)),
+        ratingCount,
+      })
+      .exec();
+  }
+
+  async getRecentReviewsForDashboard(
+    pickupLocationId: Types.ObjectId | undefined,
+    dateRange: { start: Date; end: Date },
+  ): Promise<DashboardReviewItem[]> {
+    const pipeline: PipelineStage[] = [];
+
+    if (pickupLocationId) {
+      pipeline.push({ $match: { orderId: { $exists: true, $ne: null } } });
+      pipeline.push({
+        $lookup: {
+          from: 'orders',
+          localField: 'orderId',
+          foreignField: '_id',
+          as: 'order',
+        },
+      });
+      pipeline.push({ $unwind: '$order' });
+      pipeline.push({
+        $match: { 'order.pickupLocationId': pickupLocationId },
+      });
+    }
+
+    pipeline.push({
+      $match: {
+        createdAt: { $gte: dateRange.start, $lte: dateRange.end },
+      },
+    });
+    pipeline.push({ $sort: { createdAt: -1 } });
+    pipeline.push({ $limit: 20 });
+    pipeline.push({
+      $lookup: {
+        from: 'fooditems',
+        localField: 'foodItemId',
+        foreignField: '_id',
+        as: 'foodItem',
+      },
+    });
+    pipeline.push({ $unwind: '$foodItem' });
+    pipeline.push({
+      $lookup: {
+        from: 'users',
+        localField: 'userId',
+        foreignField: '_id',
+        as: 'user',
+      },
+    });
+    pipeline.push({ $unwind: '$user' });
+
+    const docs = await this.reviewModel.aggregate(pipeline).exec();
+
+    return docs.map((d: Record<string, unknown>) => ({
+      name: `${(d.user as { firstName?: string })?.firstName ?? ''} ${(d.user as { lastName?: string })?.lastName ?? ''}`.trim(),
+      avatarUrl: (d.user as { avatar?: string })?.avatar,
+      rating: d.rating as number,
+      comment: (d.comment as string) ?? '',
+      food: (d.foodItem as { name?: string })?.name ?? '',
+      foodImageUrl: (d.foodItem as { imageUrl?: string })?.imageUrl,
+      createdAt: (d.createdAt as Date)?.toISOString?.() ?? new Date().toISOString(),
+    }));
   }
 }

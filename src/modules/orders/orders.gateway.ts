@@ -8,6 +8,7 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
+import { emitToRoomWithRetry } from '../../common/websocket/emit-with-retry.util';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { AuthRepository } from '../auth/auth.repository';
@@ -21,11 +22,10 @@ interface AuthenticatedRiderSocket extends Socket {
 }
 
 @WebSocketGateway({
-  cors: {
-    origin: '*',
-    credentials: true,
-  },
+  cors: { origin: '*', credentials: true },
   namespace: '/orders',
+  pingTimeout: 20000,
+  pingInterval: 25000,
 })
 export class OrdersGateway
   implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
@@ -215,7 +215,7 @@ export class OrdersGateway
         return false;
       }
 
-      this.server.to(roomName).emit('order:ready', {
+      const payload = {
         orderId,
         orderNumber,
         pickupLocation,
@@ -224,8 +224,19 @@ export class OrdersGateway
         formattedTotal: `₦${(total / 100).toLocaleString('en-NG')}`,
         itemCount,
         timestamp: new Date().toISOString(),
-      });
-
+      };
+      const sent = await emitToRoomWithRetry(
+        this.server,
+        roomName,
+        'order:ready',
+        payload,
+      );
+      if (!sent) {
+        this.logger.warn(
+          `Emit order:ready to rider ${riderProfileId} failed (including retry)`,
+        );
+        return false;
+      }
       this.logger.log(
         `Order ready notification sent to rider ${riderProfileId} for order ${orderNumber}`,
       );
@@ -375,13 +386,24 @@ export class OrdersGateway
         return false;
       }
 
-      this.server.to(roomName).emit('order:picked_up', {
+      const payload = {
         orderId,
         orderNumber,
         message: `Order ${orderNumber} has been picked up from the pickup location.`,
         timestamp: new Date().toISOString(),
-      });
-
+      };
+      const sent = await emitToRoomWithRetry(
+        this.server,
+        roomName,
+        'order:picked_up',
+        payload,
+      );
+      if (!sent) {
+        this.logger.warn(
+          `Emit order:picked_up to rider ${riderProfileId} failed (including retry)`,
+        );
+        return false;
+      }
       this.logger.log(
         `Order picked up notification sent to rider ${riderProfileId} for order ${orderNumber}`,
       );

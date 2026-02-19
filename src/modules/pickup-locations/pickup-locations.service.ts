@@ -15,6 +15,9 @@ import { UserRole } from '../auth/schemas/user.schema';
 import { OtpPurpose } from '../auth/schemas/otp-code.schema';
 import { MailService } from '../mail/mail.service';
 import { ConfigService } from '@nestjs/config';
+import { InjectConnection } from '@nestjs/mongoose';
+import { Connection, Model, Types } from 'mongoose';
+import { OrderStatus, PaymentStatus } from '../orders/schemas/order.schema';
 
 @Injectable()
 export class PickupLocationsService {
@@ -23,6 +26,7 @@ export class PickupLocationsService {
     private readonly authRepository: AuthRepository,
     private readonly mailService: MailService,
     private readonly configService: ConfigService,
+    @InjectConnection() private readonly connection: Connection,
   ) {}
 
   async create(dto: CreatePickupLocationDto) {
@@ -41,17 +45,7 @@ export class PickupLocationsService {
       });
     }
 
-    // Create the pickup location first
-    const pickupLocation = await this.pickupLocationsRepository.create({
-      name: dto.name,
-      address: dto.address,
-      latitude: dto.latitude,
-      longitude: dto.longitude,
-      regionId: dto.regionId,
-      isActive: dto.isActive ?? true,
-    });
-
-    // Create the pickup location admin user linked to this pickup location
+    // Create the pickup location admin user first (without pickupLocationId)
     const pickupAdminUser = await this.authRepository.createUser({
       firstName: dto.adminFirstName,
       lastName: dto.adminLastName,
@@ -60,49 +54,69 @@ export class PickupLocationsService {
       role: UserRole.PICKUP_ADMIN,
       isEmailVerified: true,
       isActive: true,
-      pickupLocationId: pickupLocation._id,
     });
 
-    // Generate a one-time login code for the pickup admin dashboard
-    const otpExpiryMinutes = Number(
-      this.configService.get('OTP_EXPIRY_MINUTES') ?? 30,
-    );
-    const expiresAt = new Date(Date.now() + otpExpiryMinutes * 60 * 1000);
-    const loginCode = this.generateNumericCode(6);
+    try {
+      // Create the pickup location
+      const pickupLocation = await this.pickupLocationsRepository.create({
+        name: dto.name,
+        address: dto.address,
+        latitude: dto.latitude,
+        longitude: dto.longitude,
+        regionId: dto.regionId,
+        isActive: dto.isActive ?? true,
+      });
 
-    await this.authRepository.invalidateOtpCodes(
-      dto.adminEmail,
-      OtpPurpose.ADMIN_LOGIN,
-    );
+      // Link the user to the pickup location
+      await this.authRepository.updateUser(pickupAdminUser._id.toString(), {
+        pickupLocationId: pickupLocation._id,
+      });
 
-    await this.authRepository.createOtpCode(
-      dto.adminEmail,
-      loginCode,
-      OtpPurpose.ADMIN_LOGIN,
-      expiresAt,
-    );
+      // Generate a one-time login code for the pickup admin dashboard
+      const otpExpiryMinutes = Number(
+        this.configService.get('OTP_EXPIRY_MINUTES') ?? 30,
+      );
+      const expiresAt = new Date(Date.now() + otpExpiryMinutes * 60 * 1000);
+      const loginCode = this.generateNumericCode(6);
 
-    // Send login code via email (reuses generic OTP email template)
-    await this.mailService.sendOtpEmail({
-      to: dto.adminEmail,
-      otp: loginCode,
-      purpose: 'admin-login',
-      expiresInMinutes: otpExpiryMinutes,
-    });
+      await this.authRepository.invalidateOtpCodes(
+        dto.adminEmail,
+        OtpPurpose.ADMIN_LOGIN,
+      );
 
-    return {
-      success: true,
-      message: 'Pickup location created successfully',
-      data: {
-        pickupLocation: this.formatPickupLocation(pickupLocation),
-        adminUser: {
-          id: pickupAdminUser._id.toString(),
-          firstName: pickupAdminUser.firstName,
-          lastName: pickupAdminUser.lastName,
-          email: pickupAdminUser.email,
+      await this.authRepository.createOtpCode(
+        dto.adminEmail,
+        loginCode,
+        OtpPurpose.ADMIN_LOGIN,
+        expiresAt,
+      );
+
+      // Send login code via email (reuses generic OTP email template)
+      await this.mailService.sendOtpEmail({
+        to: dto.adminEmail,
+        otp: loginCode,
+        purpose: 'admin-login',
+        expiresInMinutes: otpExpiryMinutes,
+      });
+
+      return {
+        success: true,
+        message: 'Pickup location created successfully',
+        data: {
+          pickupLocation: this.formatPickupLocation(pickupLocation),
+          adminUser: {
+            id: pickupAdminUser._id.toString(),
+            firstName: pickupAdminUser.firstName,
+            lastName: pickupAdminUser.lastName,
+            email: pickupAdminUser.email,
+          },
         },
-      },
-    };
+      };
+    } catch (error) {
+      // Rollback: soft-delete the user so we don't leave an orphan PICKUP_ADMIN
+      await this.authRepository.softDeleteUser(pickupAdminUser._id.toString());
+      throw error;
+    }
   }
 
   /**
@@ -200,9 +214,8 @@ export class PickupLocationsService {
     userId: string,
   ) {
     // Verify pickup location exists
-    const pickupLocation = await this.pickupLocationsRepository.findById(
-      pickupLocationId,
-    );
+    const pickupLocation =
+      await this.pickupLocationsRepository.findById(pickupLocationId);
     if (!pickupLocation) {
       throw new NotFoundException({
         success: false,
@@ -304,10 +317,28 @@ export class PickupLocationsService {
       });
     }
 
+    const stats = await this.getPickupLocationStats(
+      pickupLocation._id.toString(),
+    );
+
+    const region = pickupLocation.regionId as
+      | { _id?: unknown; name?: string }
+      | null
+      | undefined;
+    const regionName =
+      region && typeof region === 'object' && 'name' in region
+        ? region.name
+        : undefined;
+
     return {
       success: true,
       message: 'Pickup location retrieved successfully',
-      data: this.formatPickupLocation(pickupLocation),
+      data: {
+        ...this.formatPickupLocation(pickupLocation),
+        regionName,
+        totalOrders: stats.totalOrders,
+        totalIncome: stats.totalIncome,
+      },
     };
   }
 
@@ -432,6 +463,44 @@ export class PickupLocationsService {
       isActive: pickupLocation.isActive,
       createdAt: pickupLocation.createdAt,
       updatedAt: pickupLocation.updatedAt,
+    };
+  }
+
+  private async getPickupLocationStats(pickupLocationId: string): Promise<{
+    totalOrders: number;
+    totalIncome: number;
+  }> {
+    const orderModel = this.connection.models.Order as Model<{ total: number }>;
+
+    if (!orderModel || !Types.ObjectId.isValid(pickupLocationId)) {
+      return { totalOrders: 0, totalIncome: 0 };
+    }
+
+    const results = (await orderModel
+      .aggregate([
+        {
+          $match: {
+            pickupLocationId: new Types.ObjectId(pickupLocationId),
+            status: OrderStatus.DELIVERED,
+            paymentStatus: PaymentStatus.PAID,
+            paymentIntentId: { $exists: true, $ne: null },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            totalOrders: { $sum: 1 },
+            totalIncome: { $sum: '$total' },
+          },
+        },
+      ])
+      .exec()) as Array<{ totalOrders: number; totalIncome: number }>;
+
+    const [result] = results;
+
+    return {
+      totalOrders: result?.totalOrders ?? 0,
+      totalIncome: result?.totalIncome ?? 0,
     };
   }
 }

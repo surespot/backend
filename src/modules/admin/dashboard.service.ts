@@ -32,9 +32,7 @@ export class DashboardService {
   private resolvePickupLocationFilter(
     pickupLocationId?: string,
   ): Types.ObjectId | undefined {
-    return pickupLocationId
-      ? new Types.ObjectId(pickupLocationId)
-      : undefined;
+    return pickupLocationId ? new Types.ObjectId(pickupLocationId) : undefined;
   }
 
   /**
@@ -283,16 +281,18 @@ export class DashboardService {
   }
 
   /**
-   * CustomerRatings: recent reviews/ratings
-   * Currently returns empty array - to be implemented when reviews collection is added
+   * CustomerRatings: recent reviews/ratings from the reviews collection
    */
   async getCustomerRatings(
     pickupLocationId: Types.ObjectId | undefined,
     dateRange: DateRange,
   ): Promise<CustomerRatingsDto> {
-    // TODO: Implement when reviews collection is added
-    // For now, return empty array
-    return { reviews: [] };
+    const reviews =
+      await this.foodItemsRepository.getRecentReviewsForDashboard(
+        pickupLocationId,
+        dateRange,
+      );
+    return { reviews };
   }
 
   /**

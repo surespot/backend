@@ -10,6 +10,8 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  Req,
+  Res,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
@@ -21,6 +23,9 @@ import {
   ApiConsumes,
   ApiBody,
 } from '@nestjs/swagger';
+import { AuthGuard } from '@nestjs/passport';
+import type { Request, Response } from 'express';
+import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
@@ -43,11 +48,60 @@ import { EmailPasswordResetVerifyOtpDto } from './dto/email-password-reset-verif
 import { AddEmailDto } from './dto/add-email.dto';
 import { VerifyEmailVerificationOtpDto } from './dto/verify-email-verification-otp.dto';
 import { VerifyAdminLoginCodeDto } from './dto/verify-admin-login-code.dto';
+import { AppleSignInDto } from './dto/apple-sign-in.dto';
 
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly configService: ConfigService,
+  ) {}
+
+  @Get('google')
+  @UseGuards(AuthGuard('google'))
+  @ApiOperation({ summary: 'Initiate Google OAuth – redirects to Google sign-in' })
+  @ApiResponse({
+    status: 302,
+    description: 'Redirects to Google OAuth consent screen',
+  })
+  async googleAuth() {
+    // Guard redirects to Google – no body executed
+  }
+
+  @Get('google/callback')
+  @UseGuards(AuthGuard('google'))
+  @ApiOperation({
+    summary: 'Google OAuth callback – receives user from Google and issues tokens',
+  })
+  @ApiResponse({
+    status: 302,
+    description: 'Redirects to frontend with tokens in query params',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Google OAuth failed or user suspended',
+  })
+  async googleAuthCallback(
+    @Req() req: Request & { user?: { googleId: string; email?: string; firstName: string; lastName: string; avatar?: string } },
+    @Res() res: Response,
+  ) {
+    const profile = req.user;
+    const redirectBase =
+      this.configService.get<string>('GOOGLE_OAUTH_REDIRECT_URL') ||
+      'http://localhost:3000';
+    if (!profile) {
+      return res.redirect(`${redirectBase}/auth/error?code=GOOGLE_AUTH_FAILED`);
+    }
+    const { tokens } = await this.authService.validateGoogleUser(profile);
+    const redirectUrl = redirectBase;
+    const params = new URLSearchParams({
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      expiresIn: String(tokens.expiresIn),
+    });
+    return res.redirect(`${redirectUrl}/auth/google/callback?${params}`);
+  }
 
   @Post('phone/send-otp')
   @HttpCode(HttpStatus.OK)
@@ -319,6 +373,40 @@ export class AuthController {
     @Body() dto: CompleteProfileDto,
   ) {
     return this.authService.completeProfile(verificationToken, dto);
+  }
+
+  @Post('apple')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Sign in with Apple (token-based)' })
+  @ApiResponse({
+    status: 200,
+    description: 'User and tokens returned',
+    schema: {
+      example: {
+        success: true,
+        message: 'Sign in with Apple successful',
+        data: {
+          user: {
+            id: '507f1f77bcf86cd799439011',
+            firstName: 'John',
+            lastName: 'Doe',
+            email: 'user@example.com',
+          },
+          tokens: {
+            accessToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+            refreshToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+            expiresIn: 900,
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Invalid Apple identity token',
+  })
+  async appleSignIn(@Body() dto: AppleSignInDto) {
+    return this.authService.validateAppleUser(dto.identityToken, dto.fullName);
   }
 
   @Post('login')
