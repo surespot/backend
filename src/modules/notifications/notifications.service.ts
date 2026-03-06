@@ -655,9 +655,8 @@ export class NotificationsService {
     orderId: string,
     total: number,
   ): Promise<void> {
-    const userIds = await this.authRepository.findUserIdsByPickupLocationId(
-      pickupLocationId,
-    );
+    const userIds =
+      await this.authRepository.findUserIdsByPickupLocationId(pickupLocationId);
     if (userIds.length === 0) return;
     const channels = [NotificationChannel.IN_APP];
     const message = `Order ${orderNumber} has been confirmed. Total: ₦${(total / 100).toLocaleString('en-NG')}`;
@@ -693,9 +692,8 @@ export class NotificationsService {
     orderId: string,
     riderName: string,
   ): Promise<void> {
-    const userIds = await this.authRepository.findUserIdsByPickupLocationId(
-      pickupLocationId,
-    );
+    const userIds =
+      await this.authRepository.findUserIdsByPickupLocationId(pickupLocationId);
     if (userIds.length === 0) return;
     const channels = [NotificationChannel.IN_APP];
     const message = `${riderName} has been assigned to order ${orderNumber}.`;
@@ -731,9 +729,8 @@ export class NotificationsService {
     orderId: string,
     riderName?: string,
   ): Promise<void> {
-    const userIds = await this.authRepository.findUserIdsByPickupLocationId(
-      pickupLocationId,
-    );
+    const userIds =
+      await this.authRepository.findUserIdsByPickupLocationId(pickupLocationId);
     if (userIds.length === 0) return;
     const channels = [NotificationChannel.IN_APP];
     const message = riderName
@@ -776,15 +773,17 @@ export class NotificationsService {
     const order = await this.ordersRepository.findById(orderId);
     if (!order?.pickupLocationId) return;
 
-    const pl = order.pickupLocationId as { _id?: { toString(): string }; toString?: () => string };
+    const pl = order.pickupLocationId as {
+      _id?: { toString(): string };
+      toString?: () => string;
+    };
     const pickupLocationId =
       pl && typeof pl === 'object' && '_id' in pl
         ? pl._id!.toString()
         : (pl as { toString(): string }).toString();
 
-    const userIds = await this.authRepository.findUserIdsByPickupLocationId(
-      pickupLocationId,
-    );
+    const userIds =
+      await this.authRepository.findUserIdsByPickupLocationId(pickupLocationId);
     if (userIds.length === 0) return;
 
     const orderNumber = order.orderNumber ?? '';
@@ -816,6 +815,60 @@ export class NotificationsService {
     );
     this.logger.log(
       `New-review notifications sent to ${userIds.length} pickup location admin(s) for "${foodItemName}"`,
+    );
+  }
+
+  /**
+   * Notify all admins when a refund needs attention (Paystack webhook).
+   * Channels: IN_APP, EMAIL
+   */
+  async notifyAdminsRefundNeedsAttention(refundDetails: {
+    refundId?: number;
+    reference: string;
+    domain: string;
+    status: string;
+    amount: number;
+    formattedAmount: string;
+    rawData?: Record<string, unknown>;
+  }): Promise<void> {
+    const adminIds = await this.authRepository.findAdminUserIds();
+    if (adminIds.length === 0) {
+      this.logger.warn(
+        'No admin users found to notify about refund needing attention',
+      );
+      return;
+    }
+
+    const message = `Refund for transaction ${refundDetails.reference} (${refundDetails.formattedAmount}) needs attention. Status: ${refundDetails.status}. Domain: ${refundDetails.domain}. Please check the Paystack dashboard.`;
+
+    const channels = [NotificationChannel.IN_APP, NotificationChannel.EMAIL];
+
+    const notificationData = {
+      refundId: refundDetails.refundId,
+      reference: refundDetails.reference,
+      domain: refundDetails.domain,
+      status: refundDetails.status,
+      amount: refundDetails.amount,
+      formattedAmount: refundDetails.formattedAmount,
+      message,
+      source: 'refund_needs_attention',
+    };
+
+    await Promise.all(
+      adminIds.map((userId) =>
+        this.queueNotification(
+          userId,
+          NotificationType.REFUND_NEEDS_ATTENTION,
+          'Refund Needs Attention',
+          message,
+          notificationData,
+          channels,
+        ),
+      ),
+    );
+
+    this.logger.log(
+      `Refund-needs-attention notifications sent to ${adminIds.length} admin(s)`,
     );
   }
 

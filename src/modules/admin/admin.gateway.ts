@@ -111,10 +111,7 @@ export class AdminGateway
       }
 
       // Verify user is admin or pickup admin
-      if (
-        user.role !== UserRole.ADMIN &&
-        user.role !== UserRole.PICKUP_ADMIN
-      ) {
+      if (user.role !== UserRole.ADMIN && user.role !== UserRole.PICKUP_ADMIN) {
         this.logger.warn(
           `Admin connection rejected: User ${userId} is not an admin (role: ${user.role})`,
         );
@@ -209,34 +206,44 @@ export class AdminGateway
    * Send event to all admins for a specific pickup location
    */
   async emitToPickupLocation(
-    pickupLocationId: string,
+    pickupLocationId:
+      | string
+      | { _id?: { toString(): string }; toString?(): string },
     event: string,
     data: Record<string, unknown>,
   ): Promise<boolean> {
+    // Normalize: extract ID if populated document was passed
+    const id =
+      typeof pickupLocationId === 'object' &&
+      pickupLocationId &&
+      '_id' in pickupLocationId
+        ? pickupLocationId._id?.toString()
+        : String(pickupLocationId);
+
     try {
       // Validate pickupLocationId format
-      if (!Types.ObjectId.isValid(pickupLocationId)) {
+      if (!id || !Types.ObjectId.isValid(id)) {
         this.logger.warn(
-          `Invalid pickupLocationId format when emitting to admins: ${pickupLocationId}`,
+          `Invalid pickupLocationId format when emitting to admins: ${typeof pickupLocationId === 'object' ? JSON.stringify(pickupLocationId) : pickupLocationId}`,
         );
         return false;
       }
 
       // Check if there are active admin connections for this pickup location
       const activeConnections = await this.connectionModel.countDocuments({
-        pickupLocationId: new Types.ObjectId(pickupLocationId),
+        pickupLocationId: new Types.ObjectId(id),
         connectionType: 'admin',
         isActive: true,
       });
 
       if (activeConnections === 0) {
         this.logger.debug(
-          `No active admin connections for pickup location ${pickupLocationId}, event not sent`,
+          `No active admin connections for pickup location ${id}, event not sent`,
         );
         return false;
       }
 
-      const roomName = `admin-${pickupLocationId}`;
+      const roomName = `admin-${id}`;
       const sent = await emitToRoomWithRetry(
         this.server,
         roomName,
@@ -245,21 +252,18 @@ export class AdminGateway
       );
       if (!sent) {
         this.logger.warn(
-          `Emit ${event} to pickup location ${pickupLocationId} failed (including retry)`,
+          `Emit ${event} to pickup location ${id} failed (including retry)`,
         );
         return false;
       }
       this.logger.debug(
-        `Emitted ${event} to ${activeConnections} admin(s) in pickup location ${pickupLocationId}`,
+        `Emitted ${event} to ${activeConnections} admin(s) in pickup location ${id}`,
       );
       return true;
     } catch (error) {
-      this.logger.error(
-        `Error emitting ${event} to pickup location ${pickupLocationId}`,
-        {
-          error: error instanceof Error ? error.message : String(error),
-        },
-      );
+      this.logger.error(`Error emitting ${event} to pickup location ${id}`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }
@@ -323,14 +327,10 @@ export class AdminGateway
       newStatus: string;
     },
   ): Promise<boolean> {
-    return this.emitToPickupLocation(
-      pickupLocationId,
-      'order_status_changed',
-      {
-        ...orderData,
-        timestamp: new Date().toISOString(),
-      },
-    );
+    return this.emitToPickupLocation(pickupLocationId, 'order_status_changed', {
+      ...orderData,
+      timestamp: new Date().toISOString(),
+    });
   }
 
   /**

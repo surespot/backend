@@ -19,4 +19,3 @@ export class VerifyAdminLoginCodeDto {
   @Matches(/^\d{6}$/, { message: 'Code must contain only digits' })
   code: string;
 }
-

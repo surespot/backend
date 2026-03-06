@@ -9,7 +9,12 @@ import {
   MessageBody,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Logger, UnauthorizedException, Inject, forwardRef } from '@nestjs/common';
+import {
+  Logger,
+  UnauthorizedException,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
@@ -261,7 +266,8 @@ export class ChatGateway
       });
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to send message',
+        error:
+          error instanceof Error ? error.message : 'Failed to send message',
       };
     }
   }
@@ -329,7 +335,8 @@ export class ChatGateway
       });
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to mark as read',
+        error:
+          error instanceof Error ? error.message : 'Failed to mark as read',
       };
     }
   }

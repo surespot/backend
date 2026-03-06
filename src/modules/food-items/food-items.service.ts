@@ -22,7 +22,7 @@ import { InteractionType } from './schemas/food-interaction.schema';
 import { CreateFoodInteractionDto } from './dto/create-food-interaction.dto';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { STORAGE_SERVICE } from '../../common/storage/storage.constants';
-import { IStorageService } from '../../common/storage/interfaces/storage.interface';
+import type { IStorageService } from '../../common/storage/interfaces/storage.interface';
 import { OrdersRepository } from '../orders/orders.repository';
 import { NotificationsService } from '../notifications/notifications.service';
 import { Types } from 'mongoose';
@@ -879,7 +879,11 @@ export class FoodItemsService {
     }
   }
 
-  async createReview(foodItemIdOrSlug: string, userId: string, dto: CreateReviewDto) {
+  async createReview(
+    foodItemIdOrSlug: string,
+    userId: string,
+    dto: CreateReviewDto,
+  ) {
     const foodItem = await this.foodItemsRepository.findById(
       foodItemIdOrSlug,
       false,

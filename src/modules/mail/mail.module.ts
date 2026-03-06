@@ -9,32 +9,47 @@ import { join } from 'path';
   imports: [
     MailerModule.forRootAsync({
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        transport: {
-          host: 'smtp.gmail.com',
-          port: 587,
-          secure: false, // true for 465, false for other ports
-          auth: {
-            user: config.get<string>('GMAIL_USER'),
-            pass: config.get<string>('GMAIL_APP_PASSWORD'),
-          },
-        },
-        defaults: {
-          from: `"${config.get<string>('MAIL_FROM_NAME') || 'SureSpot'}" <${config.get<string>('GMAIL_USER')}>`,
-        },
-        template: {
-          dir: join(__dirname, 'templates'),
-          adapter: new HandlebarsAdapter({
-            helpers: {
-              eq: (a: any, b: any) => a === b,
-              currentYear: () => new Date().getFullYear(),
+      useFactory: (config: ConfigService) => {
+        const host = config.get<string>('SMTP_HOST') ?? 'smtp.gmail.com';
+        const port = Number(config.get<string>('SMTP_PORT')) || 587;
+        const user =
+          config.get<string>('SMTP_USER') ?? config.get<string>('GMAIL_USER');
+        const pass =
+          config.get<string>('SMTP_PASSWORD') ??
+          config.get<string>('GMAIL_APP_PASSWORD');
+        const fromName =
+          config.get<string>('SMTP_FROM_NAME') ??
+          config.get<string>('MAIL_FROM_NAME') ??
+          'SureSpot';
+
+        return {
+          transport: {
+            host,
+            port,
+            // requireTLS: true,
+            secure: port === 465,
+            auth: {
+              user,
+              pass,
             },
-          } as any),
-          options: {
-            strict: true,
           },
-        },
-      }),
+          defaults: {
+            from: `"${fromName}" <${user}>`,
+          },
+          template: {
+            dir: join(__dirname, 'templates'),
+            adapter: new HandlebarsAdapter({
+              helpers: {
+                eq: (a: any, b: any) => a === b,
+                currentYear: () => new Date().getFullYear(),
+              },
+            } as any),
+            options: {
+              strict: true,
+            },
+          },
+        };
+      },
     }),
   ],
   providers: [MailService],

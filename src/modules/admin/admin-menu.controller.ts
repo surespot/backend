@@ -67,7 +67,10 @@ export class AdminMenuController {
 
   @Get('items')
   @ApiOperation({ summary: 'List menu items (food + extras) for the location' })
-  @ApiResponse({ status: 200, description: 'Menu items retrieved successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Menu items retrieved successfully',
+  })
   @ApiResponse({ status: 403, description: 'Forbidden - no pickup location' })
   async getMenuItems(
     @CurrentUser() user: CurrentUserType,
@@ -96,7 +99,8 @@ export class AdminMenuController {
   @UseInterceptors(FileInterceptor('image'))
   @ApiConsumes('multipart/form-data', 'application/json')
   @ApiBody({
-    description: 'Create food or extra; use multipart with image file or JSON with imageUrl',
+    description:
+      'Create food or extra; use multipart with image file or JSON with imageUrl',
     schema: {
       type: 'object',
       properties: {
@@ -166,8 +170,13 @@ export class AdminMenuController {
 
   @Patch('items/:id/stock')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Toggle in-stock status (pickup admin or super admin)' })
-  @ApiResponse({ status: 200, description: 'Stock status updated successfully' })
+  @ApiOperation({
+    summary: 'Toggle in-stock status (pickup admin or super admin)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Stock status updated successfully',
+  })
   @ApiResponse({ status: 403, description: 'Forbidden' })
   @ApiResponse({ status: 404, description: 'Menu item not found' })
   async toggleStock(
@@ -186,7 +195,10 @@ export class AdminMenuController {
 
   @Get('categories')
   @ApiOperation({ summary: 'List categories for menu (id, label, image)' })
-  @ApiResponse({ status: 200, description: 'Categories retrieved successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Categories retrieved successfully',
+  })
   async getCategories() {
     return this.adminMenuService.getCategories();
   }
@@ -205,7 +217,8 @@ export class AdminMenuController {
   @UseInterceptors(FileInterceptor('image'))
   @ApiConsumes('multipart/form-data')
   @ApiBody({
-    description: 'Upload image for menu item; returns URL to use in create/update',
+    description:
+      'Upload image for menu item; returns URL to use in create/update',
     schema: {
       type: 'object',
       properties: {

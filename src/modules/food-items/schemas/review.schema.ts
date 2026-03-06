@@ -27,7 +27,4 @@ export class Review {
 export const ReviewSchema = SchemaFactory.createForClass(Review);
 
 // Compound unique index: one review per user per food item
-ReviewSchema.index(
-  { foodItemId: 1, userId: 1 },
-  { unique: true },
-);
+ReviewSchema.index({ foodItemId: 1, userId: 1 }, { unique: true });

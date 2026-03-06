@@ -970,7 +970,8 @@ export class FoodItemsRepository {
       comment: (d.comment as string) ?? '',
       food: (d.foodItem as { name?: string })?.name ?? '',
       foodImageUrl: (d.foodItem as { imageUrl?: string })?.imageUrl,
-      createdAt: (d.createdAt as Date)?.toISOString?.() ?? new Date().toISOString(),
+      createdAt:
+        (d.createdAt as Date)?.toISOString?.() ?? new Date().toISOString(),
     }));
   }
 }

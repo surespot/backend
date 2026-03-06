@@ -28,7 +28,8 @@ export class StorageModule {
             s3: S3StorageProvider,
           ): IStorageService => {
             const provider =
-              config.get<'cloudinary' | 's3'>('STORAGE_PROVIDER') ?? 'cloudinary';
+              config.get<'cloudinary' | 's3'>('STORAGE_PROVIDER') ??
+              'cloudinary';
             return provider === 's3' ? s3 : cloudinary;
           },
           inject: [ConfigService, CloudinaryStorageProvider, S3StorageProvider],

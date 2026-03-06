@@ -102,9 +102,7 @@ export class ChatRepository {
   /**
    * Find conversation by order ID
    */
-  async findByOrderId(
-    orderId: string,
-  ): Promise<ConversationDocument | null> {
+  async findByOrderId(orderId: string): Promise<ConversationDocument | null> {
     this.validateObjectId(orderId, 'orderId');
     return this.conversationModel
       .findOne({
@@ -248,7 +246,9 @@ export class ChatRepository {
 
     // Get cursor from last message
     const newCursor =
-      items.length > 0 ? items[items.length - 1].createdAt?.toISOString() : undefined;
+      items.length > 0
+        ? items[items.length - 1].createdAt?.toISOString()
+        : undefined;
 
     return {
       items,
@@ -296,11 +296,7 @@ export class ChatRepository {
     this.validateObjectId(conversationId, 'conversationId');
 
     return this.conversationModel
-      .findByIdAndUpdate(
-        conversationId,
-        { $set: { isActive } },
-        { new: true },
-      )
+      .findByIdAndUpdate(conversationId, { $set: { isActive } }, { new: true })
       .exec();
   }
 
@@ -326,9 +322,7 @@ export class ChatRepository {
   /**
    * Get message by ID with populated sender
    */
-  async findMessageById(
-    messageId: string,
-  ): Promise<MessageDocument | null> {
+  async findMessageById(messageId: string): Promise<MessageDocument | null> {
     this.validateObjectId(messageId, 'messageId');
     return this.messageModel
       .findById(messageId)

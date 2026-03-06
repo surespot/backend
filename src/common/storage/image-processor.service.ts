@@ -2,12 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import sharp from 'sharp';
 
-const IMAGE_MIMETYPES = [
-  'image/jpeg',
-  'image/jpg',
-  'image/png',
-  'image/webp',
-];
+const IMAGE_MIMETYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
 
 export interface ProcessedImage {
   buffer: Buffer;
@@ -38,15 +33,21 @@ export class ImageProcessorService {
   async process(file: Express.Multer.File): Promise<ProcessedImage> {
     const mimetype = (file.mimetype ?? '').toLowerCase();
     if (!IMAGE_MIMETYPES.includes(mimetype)) {
-      return { buffer: file.buffer, mimetype: file.mimetype ?? 'application/octet-stream' };
+      return {
+        buffer: file.buffer,
+        mimetype: file.mimetype ?? 'application/octet-stream',
+      };
     }
 
     try {
-      const pipeline = sharp(file.buffer)
-        .resize(this.maxWidth, this.maxHeight, {
+      const pipeline = sharp(file.buffer).resize(
+        this.maxWidth,
+        this.maxHeight,
+        {
           fit: 'inside',
           withoutEnlargement: true,
-        });
+        },
+      );
 
       let outputBuffer: Buffer;
       let outputMimetype: string;
@@ -55,7 +56,9 @@ export class ImageProcessorService {
         outputBuffer = await pipeline.png({ compressionLevel: 9 }).toBuffer();
         outputMimetype = 'image/png';
       } else if (mimetype === 'image/webp') {
-        outputBuffer = await pipeline.webp({ quality: this.quality }).toBuffer();
+        outputBuffer = await pipeline
+          .webp({ quality: this.quality })
+          .toBuffer();
         outputMimetype = 'image/webp';
       } else {
         outputBuffer = await pipeline

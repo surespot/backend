@@ -35,7 +35,13 @@ export class Promotion {
 
   @Prop({
     type: String,
-    enum: ['percentage', 'fixed_amount', 'free_delivery', 'free_category', 'bogo'],
+    enum: [
+      'percentage',
+      'fixed_amount',
+      'free_delivery',
+      'free_category',
+      'bogo',
+    ],
   })
   discountType?: DiscountType;
 

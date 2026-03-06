@@ -3,6 +3,7 @@ import {
   BadRequestException,
   UnauthorizedException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
   Inject,
   forwardRef,
@@ -19,7 +20,7 @@ import { AuthRepository } from './auth.repository';
 import { OtpPurpose } from './schemas/otp-code.schema';
 import { UserDocument, UserRole } from './schemas/user.schema';
 import { STORAGE_SERVICE } from '../../common/storage/storage.constants';
-import { IStorageService } from '../../common/storage/interfaces/storage.interface';
+import type { IStorageService } from '../../common/storage/interfaces/storage.interface';
 import { MailService } from '../mail/mail.service';
 import { SmsService } from '../sms/sms.service';
 import { SendOtpDto } from './dto/send-otp.dto';
@@ -40,6 +41,8 @@ import { EmailPasswordResetSendOtpDto } from './dto/email-password-reset-send-ot
 import { EmailPasswordResetVerifyOtpDto } from './dto/email-password-reset-verify-otp.dto';
 import { AddEmailDto } from './dto/add-email.dto';
 import { VerifyEmailVerificationOtpDto } from './dto/verify-email-verification-otp.dto';
+import { VerifyBootstrapCodeDto } from './dto/verify-bootstrap-code.dto';
+import { CreateAdminBootstrapDto } from './dto/create-admin-bootstrap.dto';
 import { RidersRepository } from '../riders/riders.repository';
 import { RiderStatus } from '../riders/schemas/rider-profile.schema';
 import { GoogleProfile } from './strategies/google.strategy';
@@ -239,7 +242,8 @@ export class AuthService {
           context: 'AuthService',
           method: 'sendOtp',
           phone: maskedPhone,
-          error: smsError instanceof Error ? smsError.message : String(smsError),
+          error:
+            smsError instanceof Error ? smsError.message : String(smsError),
         });
         // Fallback: log OTP for development (REMOVE IN PRODUCTION)
         if (process.env.NODE_ENV === 'development') {
@@ -856,10 +860,7 @@ export class AuthService {
    * and return a short-lived verification token that can be used to set
    * their password.
    */
-  async verifyAdminLoginCode(dto: {
-    email: string;
-    code: string;
-  }): Promise<{
+  async verifyAdminLoginCode(dto: { email: string; code: string }): Promise<{
     success: boolean;
     message: string;
     data: { verificationToken: string; expiresIn: number };
@@ -1494,8 +1495,9 @@ export class AuthService {
 
     // If rider, check rider profile is not suspended (suspended riders cannot log in)
     if (user.role === UserRole.RIDER && this.ridersRepository) {
-      const riderProfile =
-        await this.ridersRepository.findByUserId(user._id.toString());
+      const riderProfile = await this.ridersRepository.findByUserId(
+        user._id.toString(),
+      );
       if (riderProfile?.status === RiderStatus.SUSPENDED) {
         throw new UnauthorizedException({
           success: false,
@@ -1542,8 +1544,9 @@ export class AuthService {
     if (!user) {
       // Optional: link existing account if email matches
       if (profile.email) {
-        const existingByEmail =
-          await this.authRepository.findUserByEmail(profile.email);
+        const existingByEmail = await this.authRepository.findUserByEmail(
+          profile.email,
+        );
         if (existingByEmail) {
           user = (await this.authRepository.updateUser(existingByEmail._id, {
             googleId: profile.googleId,
@@ -1581,8 +1584,9 @@ export class AuthService {
     }
 
     if (user.role === UserRole.RIDER && this.ridersRepository) {
-      const riderProfile =
-        await this.ridersRepository.findByUserId(user._id.toString());
+      const riderProfile = await this.ridersRepository.findByUserId(
+        user._id.toString(),
+      );
       if (riderProfile?.status === RiderStatus.SUSPENDED) {
         throw new UnauthorizedException({
           success: false,
@@ -1698,8 +1702,9 @@ export class AuthService {
     }
 
     if (user.role === UserRole.RIDER && this.ridersRepository) {
-      const riderProfile =
-        await this.ridersRepository.findByUserId(user._id.toString());
+      const riderProfile = await this.ridersRepository.findByUserId(
+        user._id.toString(),
+      );
       if (riderProfile?.status === RiderStatus.SUSPENDED) {
         throw new UnauthorizedException({
           success: false,
@@ -2334,6 +2339,180 @@ export class AuthService {
       default:
         return 900000;
     }
+  }
+
+  /**
+   * Verify bootstrap master code and issue one-time token for admin creation.
+   * Max 3 admins can be created via bootstrap.
+   */
+  async verifyBootstrapCode(dto: VerifyBootstrapCodeDto): Promise<{
+    success: boolean;
+    message: string;
+    data: { bootstrapToken: string; expiresIn: number };
+  }> {
+    const adminCount = await this.authRepository.countAdmins();
+    if (adminCount >= 3) {
+      throw new ForbiddenException({
+        success: false,
+        error: {
+          code: 'MAX_ADMINS_REACHED',
+          message: 'Maximum number of admin accounts (3) already created',
+        },
+      });
+    }
+
+    const masterCode = this.configService.get<string>(
+      'ADMIN_BOOTSTRAP_MASTER_CODE',
+    );
+    if (!masterCode || dto.code !== masterCode) {
+      throw new UnauthorizedException({
+        success: false,
+        error: {
+          code: 'INVALID_BOOTSTRAP_CODE',
+          message: 'Invalid bootstrap code',
+        },
+      });
+    }
+
+    const fourDigitCode = Math.floor(1000 + Math.random() * 9000).toString();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+    await this.authRepository.createBootstrapCode(fourDigitCode, expiresAt);
+
+    const bootstrapToken = this.jwtService.sign(
+      { purpose: 'admin_bootstrap', code: fourDigitCode },
+      { expiresIn: '15m' },
+    );
+
+    return {
+      success: true,
+      message: 'Bootstrap code verified successfully',
+      data: { bootstrapToken, expiresIn: 900 },
+    };
+  }
+
+  /**
+   * Create admin account using one-time bootstrap token.
+   * Token can only be used once.
+   */
+  async createAdminBootstrap(
+    bootstrapToken: string,
+    dto: CreateAdminBootstrapDto,
+  ): Promise<{
+    success: boolean;
+    message: string;
+    data: AuthResponse;
+  }> {
+    if (dto.password !== dto.confirmPassword) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Passwords do not match',
+        },
+      });
+    }
+
+    let payload: { purpose: string; code: string };
+    try {
+      payload = this.jwtService.verify<{ purpose: string; code: string }>(
+        bootstrapToken,
+      );
+      if (payload.purpose !== 'admin_bootstrap') {
+        throw new Error('Invalid token purpose');
+      }
+    } catch {
+      throw new UnauthorizedException({
+        success: false,
+        error: {
+          code: 'INVALID_BOOTSTRAP_TOKEN',
+          message: 'Invalid or expired bootstrap token',
+        },
+      });
+    }
+
+    const adminCount = await this.authRepository.countAdmins();
+    if (adminCount >= 3) {
+      throw new ForbiddenException({
+        success: false,
+        error: {
+          code: 'MAX_ADMINS_REACHED',
+          message: 'Maximum number of admin accounts (3) already created',
+        },
+      });
+    }
+
+    const codeRecord = await this.authRepository.findBootstrapCode(
+      payload.code,
+    );
+    if (!codeRecord || codeRecord.used) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'BOOTSTRAP_TOKEN_ALREADY_USED',
+          message: 'Bootstrap token has already been used',
+        },
+      });
+    }
+
+    if (codeRecord.expiresAt < new Date()) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'BOOTSTRAP_TOKEN_EXPIRED',
+          message: 'Bootstrap token has expired',
+        },
+      });
+    }
+
+    const existingUser = await this.authRepository.findUserByEmail(dto.email);
+    if (existingUser) {
+      throw new ConflictException({
+        success: false,
+        error: {
+          code: 'EMAIL_ALREADY_IN_USE',
+          message: 'Email already in use',
+        },
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(dto.password, 12);
+
+    const adminUser = await this.authRepository.createUser({
+      firstName: dto.firstName,
+      lastName: dto.lastName,
+      email: dto.email,
+      phone: dto.phone,
+      password: hashedPassword,
+      role: UserRole.ADMIN,
+      isEmailVerified: true,
+      isActive: true,
+    });
+
+    await this.authRepository.markBootstrapCodeAsUsed(codeRecord._id);
+
+    const tokens = await this.generateTokenPair(
+      adminUser._id.toString(),
+      adminUser.role,
+    );
+
+    return {
+      success: true,
+      message: 'Admin account created successfully',
+      data: {
+        user: {
+          id: adminUser._id.toString(),
+          firstName: adminUser.firstName ?? '',
+          lastName: adminUser.lastName ?? '',
+          phone: adminUser.phone,
+          email: adminUser.email,
+          birthday: adminUser.birthday?.toISOString().split('T')[0],
+          avatar: adminUser.avatar,
+          createdAt: adminUser.createdAt!,
+        },
+        tokens,
+      },
+    };
   }
 
   // Secret endpoint to promote user to admin (temporary - remove later)

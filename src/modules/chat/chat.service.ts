@@ -12,11 +12,14 @@ import { OrdersRepository } from '../orders/orders.repository';
 import { RidersRepository } from '../riders/riders.repository';
 import { NotificationsService } from '../notifications/notifications.service';
 import { STORAGE_SERVICE } from '../../common/storage/storage.constants';
-import { IStorageService } from '../../common/storage/interfaces/storage.interface';
+import type { IStorageService } from '../../common/storage/interfaces/storage.interface';
 import { OrderStatus } from '../orders/schemas/order.schema';
-import { NotificationType, NotificationChannel } from '../notifications/schemas/notification.schema';
+import {
+  NotificationType,
+  NotificationChannel,
+} from '../notifications/schemas/notification.schema';
 import { ChatGateway } from './chat.gateway';
-import {  UserDocument } from '../auth/schemas/user.schema';
+import { UserDocument } from '../auth/schemas/user.schema';
 import { Types } from 'mongoose';
 
 @Injectable()
@@ -27,7 +30,9 @@ export class ChatService {
    * Helper to extract userId from participant
    * Handles both populated (object with _id) and unpopulated (ObjectId) cases
    */
-  private getUserIdFromParticipant(userId: Types.ObjectId | UserDocument): string {
+  private getUserIdFromParticipant(
+    userId: Types.ObjectId | UserDocument,
+  ): string {
     // Handle populated (object with _id) or unpopulated (ObjectId) cases
     if (userId && typeof userId === 'object' && userId._id) {
       return userId._id.toString();
@@ -49,10 +54,7 @@ export class ChatService {
    * Find or create order conversation
    * Validates order access and status before creating
    */
-  async findOrCreateOrderConversation(
-    orderId: string,
-    userId: string,
-  ) {
+  async findOrCreateOrderConversation(orderId: string, userId: string) {
     // Get order
     const order = await this.ordersRepository.findById(orderId);
     if (!order) {
@@ -109,11 +111,12 @@ export class ChatService {
     const riderUserId = riderUser.userId.toString();
 
     // Find or create conversation
-    const conversation = await this.chatRepository.findOrCreateOrderConversation(
-      orderId,
-      customerId,
-      riderUserId,
-    );
+    const conversation =
+      await this.chatRepository.findOrCreateOrderConversation(
+        orderId,
+        customerId,
+        riderUserId,
+      );
 
     // Populate participants
     const populated = await this.chatRepository.findById(

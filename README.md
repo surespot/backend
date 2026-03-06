@@ -89,6 +89,87 @@ docker compose restart
 docker compose down -v
 ```
 
+## Docker Deployment
+
+The project includes Docker configuration for development and production environments.
+
+### Compose Files
+
+| File | Use Case |
+|------|----------|
+| `compose.yml` | Local dev services only (MongoDB, Redis) |
+| `compose-dev.yml` | Full dev stack with app (builds from source, hot-reload) |
+| `compose-dev-deploy.yml` | CI deployment for dev (uses pre-built image) |
+| `compose-prod.yml` | Production (MongoDB Atlas, Redis container) |
+
+### Local Development with Docker
+
+Run the full dev stack (app + MongoDB + Redis) with hot-reload:
+
+```bash
+docker compose -f compose-dev.yml up -d --build
+```
+
+App: `http://localhost:4000` | Swagger: `http://localhost:4000/docs`
+
+### Production Build (Local Test)
+
+```bash
+docker build -t surespot-backend:prod .
+docker run -p 3000:3000 --env-file .env.production surespot-backend:prod
+```
+
+### GitHub Actions Deployment
+
+Automated deployment to a VPS on push:
+
+- **Dev:** Push to `develop` → deploys to port 4000
+- **Prod:** Push to `main` → deploys to port 3000
+
+#### Required GitHub Secrets
+
+In **Settings → Secrets and variables → Actions**:
+
+| Secret | Description |
+|--------|-------------|
+| `VPS_HOST` | Server IP address |
+| `VPS_USER` | SSH username (e.g. `root`, `ubuntu`) |
+| `VPS_SSH_KEY` | Private SSH key (full PEM content) |
+| `VPS_SSH_PORT` | SSH port (optional, default: 22) |
+
+#### Server Setup
+
+See [docs/server-setup-guide.md](docs/server-setup-guide.md) for the full step-by-step guide. Summary:
+
+1. Install Docker and Docker Compose on the VPS
+2. Create deploy directory: `mkdir -p /opt/surespot-backend && cd /opt/surespot-backend`
+3. Clone the repo or copy `compose-dev-deploy.yml`, `compose-prod.yml` to the server (e.g. `git clone` or `scp`)
+4. Create `.env.development` and `.env.production` with required variables
+5. For production: set `MONGODB_URI` to your MongoDB Atlas connection string
+6. For production: set `REDIS_PASSWORD=surespot_redis_prod_password` in `.env.production`
+7. Whitelist VPS IP in MongoDB Atlas network access
+8. Grant package read permissions: Settings → Actions → General → Workflow permissions → Read and write
+9. For private repos: on the VPS, run `docker login ghcr.io` with a GitHub PAT for pulling images
+
+#### First-Time Production Seed
+
+After deploying production, run the seed script:
+
+```bash
+cd /opt/surespot-backend
+docker compose -f compose-prod.yml exec app npm run seed
+```
+
+#### Viewing Logs
+
+```bash
+# Dev
+docker compose -f compose-dev-deploy.yml logs -f app
+
+# Prod
+docker compose -f compose-prod.yml logs -f app
+```
+
 ## Available Scripts
 
 ```bash
@@ -187,9 +268,11 @@ See `.env.development` or `env.example` for all available configuration options.
 ### Notifications
 
 - `EXPO_ACCESS_TOKEN` - Expo push notification access token (optional, for higher rate limits)
-- `GMAIL_USER` - Gmail account for sending emails
-- `GMAIL_APP_PASSWORD` - Gmail app-specific password
-- `MAIL_FROM_NAME` - Email sender name
+- `SMTP_HOST` - SMTP server host (e.g. smtppro.zoho.com)
+- `SMTP_PORT` - SMTP port (465 for SSL, 587 for TLS)
+- `SMTP_USER` - SMTP auth username
+- `SMTP_PASSWORD` - SMTP auth password
+- `SMTP_FROM_NAME` - Email sender display name
 - `SMS_API_URL` - SMS provider API endpoint
 - `SMS_API_KEY` - SMS provider API key
 - `SMS_SENDER_ID` - SMS sender identifier

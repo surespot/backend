@@ -21,7 +21,8 @@ export class AdminUpdateOrderStatusDto {
   status: AdminOrderStatus;
 
   @ApiPropertyOptional({
-    description: 'Optional reason for status change (required for cancellations)',
+    description:
+      'Optional reason for status change (required for cancellations)',
     example: 'Customer requested cancellation',
   })
   @IsOptional()

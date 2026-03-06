@@ -10,6 +10,7 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  ForbiddenException,
   Req,
   Res,
 } from '@nestjs/common';
@@ -22,6 +23,7 @@ import {
   ApiBearerAuth,
   ApiConsumes,
   ApiBody,
+  ApiExcludeEndpoint,
 } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import type { Request, Response } from 'express';
@@ -48,6 +50,8 @@ import { EmailPasswordResetVerifyOtpDto } from './dto/email-password-reset-verif
 import { AddEmailDto } from './dto/add-email.dto';
 import { VerifyEmailVerificationOtpDto } from './dto/verify-email-verification-otp.dto';
 import { VerifyAdminLoginCodeDto } from './dto/verify-admin-login-code.dto';
+import { VerifyBootstrapCodeDto } from './dto/verify-bootstrap-code.dto';
+import { CreateAdminBootstrapDto } from './dto/create-admin-bootstrap.dto';
 import { AppleSignInDto } from './dto/apple-sign-in.dto';
 
 @ApiTags('auth')
@@ -60,7 +64,9 @@ export class AuthController {
 
   @Get('google')
   @UseGuards(AuthGuard('google'))
-  @ApiOperation({ summary: 'Initiate Google OAuth – redirects to Google sign-in' })
+  @ApiOperation({
+    summary: 'Initiate Google OAuth – redirects to Google sign-in',
+  })
   @ApiResponse({
     status: 302,
     description: 'Redirects to Google OAuth consent screen',
@@ -72,7 +78,8 @@ export class AuthController {
   @Get('google/callback')
   @UseGuards(AuthGuard('google'))
   @ApiOperation({
-    summary: 'Google OAuth callback – receives user from Google and issues tokens',
+    summary:
+      'Google OAuth callback – receives user from Google and issues tokens',
   })
   @ApiResponse({
     status: 302,
@@ -83,7 +90,16 @@ export class AuthController {
     description: 'Google OAuth failed or user suspended',
   })
   async googleAuthCallback(
-    @Req() req: Request & { user?: { googleId: string; email?: string; firstName: string; lastName: string; avatar?: string } },
+    @Req()
+    req: Request & {
+      user?: {
+        googleId: string;
+        email?: string;
+        firstName: string;
+        lastName: string;
+        avatar?: string;
+      };
+    },
     @Res() res: Response,
   ) {
     const profile = req.user;
@@ -241,6 +257,58 @@ export class AuthController {
       email: dto.email,
       code: dto.code,
     });
+  }
+
+  @Post('admin/bootstrap/verify-code')
+  @HttpCode(HttpStatus.OK)
+  @ApiTags('admin-bootstrap')
+  @ApiOperation({
+    summary:
+      'Verify bootstrap master code and receive one-time token (Max 3 admins total)',
+    description:
+      'Step 1: Validates the master code and returns a short-lived token for creating an admin account',
+  })
+  @ApiResponse({ status: 200, description: 'Bootstrap token issued' })
+  @ApiResponse({ status: 401, description: 'Invalid master code' })
+  @ApiResponse({ status: 403, description: 'Maximum 3 admins already exist' })
+  async verifyBootstrapCode(@Body() dto: VerifyBootstrapCodeDto) {
+    return this.authService.verifyBootstrapCode(dto);
+  }
+
+  @Post('admin/bootstrap/create')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiTags('admin-bootstrap')
+  @ApiOperation({
+    summary: 'Create admin account using one-time bootstrap token',
+    description:
+      'Step 2: Creates a super admin account. Token can only be used once.',
+  })
+  @ApiHeader({
+    name: 'X-Bootstrap-Token',
+    description: 'One-time bootstrap token from verify-code endpoint',
+    required: true,
+  })
+  @ApiResponse({ status: 201, description: 'Admin created successfully' })
+  @ApiResponse({
+    status: 400,
+    description: 'Token already used or validation error',
+  })
+  @ApiResponse({ status: 401, description: 'Invalid or expired token' })
+  @ApiResponse({ status: 403, description: 'Maximum 3 admins already exist' })
+  async createAdminBootstrap(
+    @Headers('x-bootstrap-token') bootstrapToken: string,
+    @Body() dto: CreateAdminBootstrapDto,
+  ) {
+    if (!bootstrapToken) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'BOOTSTRAP_TOKEN_REQUIRED',
+          message: 'Bootstrap token required',
+        },
+      });
+    }
+    return this.authService.createAdminBootstrap(bootstrapToken, dto);
   }
 
   @Post('email/resend-otp')
@@ -625,6 +693,7 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
+  @ApiExcludeEndpoint()
   @ApiOperation({
     summary: 'Secret endpoint to promote user to admin (temporary)',
   })
@@ -647,6 +716,15 @@ export class AuthController {
     description: 'Unauthorized',
   })
   async promoteToAdmin(@CurrentUser() user: { id: string }) {
+    if (this.configService.get('NODE_ENV') === 'production') {
+      throw new ForbiddenException({
+        success: false,
+        error: {
+          code: 'ENDPOINT_DISABLED',
+          message: 'Endpoint disabled in production',
+        },
+      });
+    }
     return this.authService.promoteToAdmin(user.id);
   }
 
@@ -744,7 +822,8 @@ export class AuthController {
           phone: '+2349014226320',
           email: 'demo@surespot.app',
           birthday: '1995-05-17',
-          avatar: 'https://res.cloudinary.com/your-cloud/image/upload/v1234567890/surespot/avatar.jpg',
+          avatar:
+            'https://res.cloudinary.com/your-cloud/image/upload/v1234567890/surespot/avatar.jpg',
           role: 'user',
           isRider: false,
           isPhoneVerified: true,

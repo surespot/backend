@@ -8,7 +8,7 @@ import {
 import { SupportRepository } from './support.repository';
 import { OrdersRepository } from '../orders/orders.repository';
 import { STORAGE_SERVICE } from '../../common/storage/storage.constants';
-import { IStorageService } from '../../common/storage/interfaces/storage.interface';
+import type { IStorageService } from '../../common/storage/interfaces/storage.interface';
 import { CreateSupportRequestDto } from './dto/create-support-request.dto';
 import { GetSupportRequestsFilterDto } from './dto/get-support-requests-filter.dto';
 import { SubmitterRole } from './schemas/support-request.schema';
@@ -59,7 +59,9 @@ export class SupportService {
         });
       }
       const orderUserId =
-        typeof order.userId === 'object' && order.userId !== null && '_id' in order.userId
+        typeof order.userId === 'object' &&
+        order.userId !== null &&
+        '_id' in order.userId
           ? (order.userId as { _id: { toString(): string } })._id.toString()
           : String(order.userId);
       if (orderUserId !== userId) {
@@ -98,10 +100,7 @@ export class SupportService {
     });
   }
 
-  async listOwn(
-    userId: string,
-    filter: GetSupportRequestsFilterDto,
-  ) {
+  async listOwn(userId: string, filter: GetSupportRequestsFilterDto) {
     return this.supportRepository.findByUserId(userId, {
       page: filter.page,
       limit: filter.limit,
@@ -109,7 +108,10 @@ export class SupportService {
     });
   }
 
-  async getOwnById(id: string, userId: string): Promise<SupportRequestDocument> {
+  async getOwnById(
+    id: string,
+    userId: string,
+  ): Promise<SupportRequestDocument> {
     const request = await this.supportRepository.findByIdForUser(id, userId);
     if (!request) {
       throw new NotFoundException({

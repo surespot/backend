@@ -38,7 +38,7 @@ export class AdminOrdersController {
   @ApiOperation({
     summary: 'Get orders list for admin',
     description:
-      'Returns paginated list of orders for the admin\'s assigned pickup location with optional filters',
+      "Returns paginated list of orders for the admin's assigned pickup location with optional filters",
   })
   @ApiResponse({
     status: 200,
@@ -71,7 +71,7 @@ export class AdminOrdersController {
   @ApiOperation({
     summary: 'Get order details for admin',
     description:
-      'Returns detailed order information if the order belongs to the admin\'s pickup location',
+      "Returns detailed order information if the order belongs to the admin's pickup location",
   })
   @ApiResponse({
     status: 200,
@@ -111,8 +111,7 @@ export class AdminOrdersController {
         success: false,
         error: {
           code: 'ORDER_NOT_FOUND',
-          message:
-            'Order not found or does not belong to your pickup location',
+          message: 'Order not found or does not belong to your pickup location',
         },
       });
     }
@@ -124,7 +123,7 @@ export class AdminOrdersController {
   @ApiOperation({
     summary: 'Update order status',
     description:
-      'Updates the order status for orders belonging to the admin\'s pickup location',
+      "Updates the order status for orders belonging to the admin's pickup location",
   })
   @ApiResponse({
     status: 200,
@@ -171,7 +170,7 @@ export class AdminOrdersController {
   @ApiOperation({
     summary: 'Get order statistics',
     description:
-      'Returns real-time order statistics for the admin\'s pickup location',
+      "Returns real-time order statistics for the admin's pickup location",
   })
   @ApiResponse({
     status: 200,

@@ -15,6 +15,12 @@ export class OrderExtra {
   @Prop({ required: true })
   name: string;
 
+  @Prop()
+  description?: string;
+
+  @Prop()
+  imageUrl?: string;
+
   @Prop({ required: true, min: 0 })
   price: number; // Price in kobo at time of order
 

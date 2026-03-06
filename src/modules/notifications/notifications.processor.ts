@@ -238,6 +238,19 @@ export class NotificationsProcessor extends WorkerHost {
         );
         break;
 
+      case NotificationType.REFUND_NEEDS_ATTENTION:
+        success = await this.gateway.sendToUser(user.userId, 'notification', {
+          id: notificationId,
+          type,
+          title: 'Refund Needs Attention',
+          message:
+            (data?.message as string) || 'A refund needs your attention.',
+          data,
+          isRead: false,
+          createdAt: new Date().toISOString(),
+        });
+        break;
+
       case NotificationType.GENERAL:
         // Check if it's a rate reminder or welcome notification
         if (data?.isRateReminder && orderId) {
@@ -393,6 +406,16 @@ export class NotificationsProcessor extends WorkerHost {
             orderId,
             amount,
             reason,
+          });
+          break;
+
+        case NotificationType.REFUND_NEEDS_ATTENTION:
+          await this.mailService.sendRefundNeedsAttentionEmail({
+            to: user.email,
+            reference: (data?.reference as string) || 'Unknown',
+            domain: (data?.domain as string) || 'Unknown',
+            status: (data?.status as string) || 'needs-attention',
+            amount: (data?.formattedAmount as string) || 'N/A',
           });
           break;
 

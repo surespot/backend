@@ -16,6 +16,7 @@ export interface CartExtraResponse {
   foodExtraId: string;
   name: string;
   description?: string;
+  imageUrl?: string;
   price: number;
   formattedPrice: string;
   currency: string;
@@ -137,6 +138,7 @@ export class CartService {
       foodExtraId: extra.foodExtraId.toString(),
       name: extra.name,
       description: extra.description,
+      imageUrl: extra.imageUrl,
       price: extra.price,
       formattedPrice: this.formatPrice(extra.price, extra.currency),
       currency: extra.currency,
@@ -203,6 +205,7 @@ export class CartService {
       foodExtraId: string;
       name: string;
       description?: string;
+      imageUrl?: string;
       price: number;
       currency: string;
       quantity: number;
@@ -248,6 +251,7 @@ export class CartService {
           foodExtraId: extra._id.toString(),
           name: extra.name,
           description: extra.description,
+          imageUrl: extra.imageUrl,
           price: extra.price,
           currency: extra.currency,
           quantity: extraDto.quantity || 1,
@@ -306,6 +310,7 @@ export class CartService {
           foodExtraId: extraData.foodExtraId,
           name: extraData.name,
           description: extraData.description,
+          imageUrl: extraData.imageUrl,
           price: extraData.price,
           currency: extraData.currency,
           quantity: extraData.quantity,
@@ -516,10 +521,10 @@ export class CartService {
       lineTotal: item.lineTotal,
     }));
 
-    const validation = await this.promotionsService.validateDiscountCode(
-      code,
-      { orderAmount: cartTotalBeforeDiscount, cartItems: cartItemsForPromo },
-    );
+    const validation = await this.promotionsService.validateDiscountCode(code, {
+      orderAmount: cartTotalBeforeDiscount,
+      cartItems: cartItemsForPromo,
+    });
 
     if (!validation.valid) {
       throw new BadRequestException({

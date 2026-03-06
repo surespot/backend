@@ -13,14 +13,18 @@ import { CreateFoodExtraDto } from '../food-items/dto/create-food-extra.dto';
 import { UpdateFoodExtraDto } from '../food-items/dto/update-food-extra.dto';
 import { AdminMenuRepository } from './admin-menu.repository';
 import { STORAGE_SERVICE } from '../../common/storage/storage.constants';
-import { IStorageService } from '../../common/storage/interfaces/storage.interface';
+import type { IStorageService } from '../../common/storage/interfaces/storage.interface';
 import { GetMenuItemsDto } from './dto/get-menu-items.dto';
 import { CreateMenuItemDto } from './dto/create-menu-item.dto';
 import { UpdateMenuItemDto } from './dto/update-menu-item.dto';
 import type { MenuItemResponseDto } from './dto/menu-item-response.dto';
 import type { FoodItemDocument } from '../food-items/schemas/food-item.schema';
 import type { FoodExtraDocument } from '../food-items/schemas/food-extra.schema';
-import { GetFoodItemsFilterDto, SortBy, SortOrder } from '../food-items/dto/get-food-items-filter.dto';
+import {
+  GetFoodItemsFilterDto,
+  SortBy,
+  SortOrder,
+} from '../food-items/dto/get-food-items-filter.dto';
 
 @Injectable()
 export class AdminMenuService {
@@ -113,17 +117,25 @@ export class AdminMenuService {
         ? await this.foodItemsRepository.findAll(foodFilter)
         : { items: [], pagination: { total: 0 } };
     const extras =
-      type !== 'food'
-        ? await this.foodItemsRepository.findAllExtras()
-        : [];
+      type !== 'food' ? await this.foodItemsRepository.findAllExtras() : [];
 
     const stockItems: Array<{ itemId: string; itemType: 'food' | 'extra' }> = [
-      ...foodResult.items.map((f) => ({ itemId: f._id.toString(), itemType: 'food' as const })),
-      ...extras.map((e) => ({ itemId: e._id.toString(), itemType: 'extra' as const })),
+      ...foodResult.items.map((f) => ({
+        itemId: f._id.toString(),
+        itemType: 'food' as const,
+      })),
+      ...extras.map((e) => ({
+        itemId: e._id.toString(),
+        itemType: 'extra' as const,
+      })),
     ];
     const stockMap = await this.adminMenuRepository.getStockStatusBatch(
       pickupLocationId,
-      stockItems.map((s) => ({ itemId: s.itemId, itemType: s.itemType, name: '' })),
+      stockItems.map((s) => ({
+        itemId: s.itemId,
+        itemType: s.itemType,
+        name: '',
+      })),
     );
 
     const list: MenuItemResponseDto[] = [];
@@ -132,14 +144,24 @@ export class AdminMenuService {
       const id = f._id.toString();
       const inStock = stockMap.get(id) ?? true;
       if (inStockFilter !== undefined && inStock !== inStockFilter) continue;
-      if (search && !f.name.toLowerCase().includes(search) && !f.description?.toLowerCase().includes(search)) continue;
+      if (
+        search &&
+        !f.name.toLowerCase().includes(search) &&
+        !f.description?.toLowerCase().includes(search)
+      )
+        continue;
       list.push(this.toMenuItemResponse(f, false, inStock));
     }
     for (const e of extras) {
       const id = e._id.toString();
       const inStock = stockMap.get(id) ?? true;
       if (inStockFilter !== undefined && inStock !== inStockFilter) continue;
-      if (search && !e.name.toLowerCase().includes(search) && !(e.description ?? '').toLowerCase().includes(search)) continue;
+      if (
+        search &&
+        !e.name.toLowerCase().includes(search) &&
+        !(e.description ?? '').toLowerCase().includes(search)
+      )
+        continue;
       list.push(this.toMenuItemResponse(e, true, inStock));
     }
 
@@ -224,7 +246,8 @@ export class AdminMenuService {
     if (food) {
       const updateData: any = {};
       if (dto.name !== undefined) updateData.name = dto.name;
-      if (dto.description !== undefined) updateData.description = dto.description;
+      if (dto.description !== undefined)
+        updateData.description = dto.description;
       if (dto.price !== undefined) updateData.price = dto.price;
       if (dto.category !== undefined) updateData.category = dto.category;
       if (dto.tags !== undefined) updateData.tags = dto.tags;
@@ -260,7 +283,8 @@ export class AdminMenuService {
     if (extra) {
       const updateExtraDto: UpdateFoodExtraDto = {};
       if (dto.name !== undefined) updateExtraDto.name = dto.name;
-      if (dto.description !== undefined) updateExtraDto.description = dto.description;
+      if (dto.description !== undefined)
+        updateExtraDto.description = dto.description;
       if (dto.quantity !== undefined) updateExtraDto.description = dto.quantity;
       if (dto.price !== undefined) updateExtraDto.price = dto.price;
       if (dto.imageUrl !== undefined) updateExtraDto.imageUrl = dto.imageUrl;
@@ -296,13 +320,21 @@ export class AdminMenuService {
     const food = await this.foodItemsRepository.findById(itemId, false);
     if (food) {
       await this.foodItemsRepository.delete(itemId);
-      await this.adminMenuRepository.deleteStockStatus(pickupLocationId, itemId, 'food');
+      await this.adminMenuRepository.deleteStockStatus(
+        pickupLocationId,
+        itemId,
+        'food',
+      );
       return { success: true, message: 'Food item deleted successfully' };
     }
     const extra = await this.foodItemsRepository.findExtraById(itemId);
     if (extra) {
       await this.foodItemsRepository.deleteExtra(itemId);
-      await this.adminMenuRepository.deleteStockStatus(pickupLocationId, itemId, 'extra');
+      await this.adminMenuRepository.deleteStockStatus(
+        pickupLocationId,
+        itemId,
+        'extra',
+      );
       return { success: true, message: 'Food extra deleted successfully' };
     }
     throw new NotFoundException({
@@ -336,7 +368,16 @@ export class AdminMenuService {
     data: { categories: Array<{ id: string; label: string; image?: string }> };
   }> {
     const result = await this.foodItemsService.getCategories(true, true);
-    const categories = (result.data as { categories: Array<{ name: string; slug: string; displayName: string; imageUrl?: string }> }).categories;
+    const categories = (
+      result.data as {
+        categories: Array<{
+          name: string;
+          slug: string;
+          displayName: string;
+          imageUrl?: string;
+        }>;
+      }
+    ).categories;
     return {
       success: true,
       data: {
@@ -349,9 +390,7 @@ export class AdminMenuService {
     };
   }
 
-  async getExtrasForAssignment(
-    _pickupLocationId: string,
-  ): Promise<{
+  async getExtrasForAssignment(_pickupLocationId: string): Promise<{
     success: true;
     data: Array<{ id: string; name: string; price: number }>;
   }> {
@@ -373,12 +412,7 @@ export class AdminMenuService {
   async uploadMenuImage(
     file: Express.Multer.File,
   ): Promise<{ success: true; data: { url: string } }> {
-    const allowedTypes = [
-      'image/jpeg',
-      'image/jpg',
-      'image/png',
-      'image/webp',
-    ];
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
     if (!file || !allowedTypes.includes(file.mimetype)) {
       throw new BadRequestException({
         success: false,

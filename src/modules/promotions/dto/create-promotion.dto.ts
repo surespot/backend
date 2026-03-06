@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
   IsDateString,
   IsEnum,
@@ -55,12 +56,24 @@ export class CreatePromotionDto {
   discountCode?: string;
 
   @ApiPropertyOptional({
-    enum: ['percentage', 'fixed_amount', 'free_delivery', 'free_category', 'bogo'],
+    enum: [
+      'percentage',
+      'fixed_amount',
+      'free_delivery',
+      'free_category',
+      'bogo',
+    ],
     example: 'percentage',
     description: 'Type of discount',
   })
   @IsOptional()
-  @IsEnum(['percentage', 'fixed_amount', 'free_delivery', 'free_category', 'bogo'])
+  @IsEnum([
+    'percentage',
+    'fixed_amount',
+    'free_delivery',
+    'free_category',
+    'bogo',
+  ])
   discountType?: DiscountType;
 
   @ApiPropertyOptional({
@@ -69,6 +82,7 @@ export class CreatePromotionDto {
       'Discount value: percentage (0-100) for percentage type, or fixed amount in kobo for fixed_amount type',
   })
   @ValidateIf((o) => o.discountType !== undefined)
+  @Type(() => Number)
   @IsNumber()
   @Min(0)
   @ValidateIf((o) => o.discountType === 'percentage')
@@ -80,6 +94,7 @@ export class CreatePromotionDto {
     description: 'Minimum order amount in kobo to qualify for the discount',
   })
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   @Min(0)
   minOrderAmount?: number;
@@ -90,6 +105,7 @@ export class CreatePromotionDto {
       'Maximum discount amount in kobo (only applicable for percentage discounts)',
   })
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   @Min(0)
   maxDiscountAmount?: number;
@@ -104,7 +120,8 @@ export class CreatePromotionDto {
 
   @ApiPropertyOptional({
     example: ['507f1f77bcf86cd799439011'],
-    description: 'Specific food item IDs for bogo (alternative to targetCategory)',
+    description:
+      'Specific food item IDs for bogo (alternative to targetCategory)',
   })
   @IsOptional()
   @IsArray()
@@ -116,6 +133,7 @@ export class CreatePromotionDto {
     description: 'Max free items from category (free_category only)',
   })
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   @Min(1)
   maxFreeQuantity?: number;
@@ -125,6 +143,7 @@ export class CreatePromotionDto {
     description: 'Buy quantity to trigger BOGO (bogo only)',
   })
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   @Min(1)
   buyQuantity?: number;
@@ -134,6 +153,7 @@ export class CreatePromotionDto {
     description: 'Free quantity per BOGO trigger (bogo only)',
   })
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   @Min(1)
   getFreeQuantity?: number;
@@ -143,6 +163,7 @@ export class CreatePromotionDto {
     description: 'Cap on free units per order (bogo only)',
   })
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   @Min(0)
   maxRedeemablePerOrder?: number;

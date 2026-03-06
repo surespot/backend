@@ -187,9 +187,7 @@ export class RidersRepository {
   ): Promise<RiderDocumentationDocument[]> {
     const id =
       typeof profileId === 'string' ? new Types.ObjectId(profileId) : profileId;
-    return this.riderDocumentationModel
-      .find({ riderProfileId: id })
-      .exec();
+    return this.riderDocumentationModel.find({ riderProfileId: id }).exec();
   }
 
   async updateDocumentation(

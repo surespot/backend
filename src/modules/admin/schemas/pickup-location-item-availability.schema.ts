@@ -24,9 +24,8 @@ export class PickupLocationItemAvailability {
   inStock: boolean;
 }
 
-export const PickupLocationItemAvailabilitySchema = SchemaFactory.createForClass(
-  PickupLocationItemAvailability,
-);
+export const PickupLocationItemAvailabilitySchema =
+  SchemaFactory.createForClass(PickupLocationItemAvailability);
 
 PickupLocationItemAvailabilitySchema.index(
   { pickupLocationId: 1, itemId: 1, itemType: 1 },

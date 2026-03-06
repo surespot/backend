@@ -15,7 +15,9 @@ import { FoodItemsModule } from '../food-items/food-items.module';
 import { SupportModule } from '../support/support.module';
 import { AdminSupportController } from '../support/admin-support.controller';
 import { AdminSupportService } from '../support/admin-support.service';
+import { AdminRefundsController } from './admin-refunds.controller';
 import { AuthModule } from '../auth/auth.module';
+import { TransactionsModule } from '../transactions/transactions.module';
 import { RidersModule } from '../riders/riders.module';
 import { MailModule } from '../mail/mail.module';
 import {
@@ -29,6 +31,7 @@ import {
 
 @Module({
   imports: [
+    TransactionsModule,
     forwardRef(() => OrdersModule),
     forwardRef(() => SupportModule),
     forwardRef(() => FoodItemsModule),
@@ -54,6 +57,7 @@ import {
     AdminOrdersController,
     AdminMenuController,
     AdminSupportController,
+    AdminRefundsController,
   ],
   providers: [
     DashboardService,

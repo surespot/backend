@@ -76,4 +76,3 @@ export class CreatePickupLocationForAdminDto {
   @IsOptional()
   isActive?: boolean;
 }
-

@@ -1,0 +1,45 @@
+services:
+  redis-prod:
+    image: redis:latest
+    container_name: surespot-redis-prod
+    restart: unless-stopped
+    ports:
+      - '6380:6379'
+    command: redis-server --appendonly yes --requirepass surespot_redis_prod_password
+    volumes:
+      - redis_prod_data:/data
+    networks:
+      - surespot-prod-network
+    healthcheck:
+      test: ['CMD', 'redis-cli', '-a', 'surespot_redis_prod_password', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    image: ${APP_IMAGE:-ghcr.io/surespot/backend:prod}
+    container_name: surespot-app-prod
+    restart: unless-stopped
+    ports:
+      - '3000:3000'
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      REDIS_HOST: redis-prod
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: surespot_redis_prod_password
+    depends_on:
+      redis-prod:
+        condition: service_healthy
+    networks:
+      - surespot-prod-network
+
+volumes:
+  redis_prod_data:
+    driver: local
+
+networks:
+  surespot-prod-network:
+    driver: bridge

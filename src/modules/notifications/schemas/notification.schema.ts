@@ -13,6 +13,7 @@ export enum NotificationType {
   ORDER_CANCELLED = 'order_cancelled',
   PAYMENT_SUCCESS = 'payment_success',
   PAYMENT_FAILED = 'payment_failed',
+  REFUND_NEEDS_ATTENTION = 'refund_needs_attention',
   PROMOTION = 'promotion',
   GENERAL = 'general',
   CHAT_MESSAGE = 'chat_message',

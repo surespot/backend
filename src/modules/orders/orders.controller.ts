@@ -130,14 +130,18 @@ export class OrdersController {
 
   @Post(':orderId/cancel')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Cancel an order (only before payment)' })
+  @ApiOperation({
+    summary:
+      'Cancel an order (refunds card payments; cannot cancel after picked up)',
+  })
   @ApiResponse({
     status: 200,
     description: 'Order cancelled successfully',
   })
   @ApiResponse({
     status: 400,
-    description: 'Order cannot be cancelled',
+    description:
+      'Order cannot be cancelled (e.g. after picked up) or refund failed',
   })
   @ApiResponse({
     status: 404,

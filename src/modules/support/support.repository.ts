@@ -55,7 +55,9 @@ export class SupportRepository {
     }
   }
 
-  async create(data: CreateSupportRequestData): Promise<SupportRequestDocument> {
+  async create(
+    data: CreateSupportRequestData,
+  ): Promise<SupportRequestDocument> {
     this.validateObjectId(data.userId, 'userId');
     const doc: Record<string, unknown> = {
       submitterRole: data.submitterRole,
@@ -146,14 +148,12 @@ export class SupportRepository {
       .exec();
   }
 
-  async findAll(
-    filter: {
-      page?: number;
-      limit?: number;
-      submitterRole?: SubmitterRole;
-      status?: SupportRequestStatus | SupportRequestStatus[];
-    },
-  ): Promise<PaginationResult<SupportRequestDocument>> {
+  async findAll(filter: {
+    page?: number;
+    limit?: number;
+    submitterRole?: SubmitterRole;
+    status?: SupportRequestStatus | SupportRequestStatus[];
+  }): Promise<PaginationResult<SupportRequestDocument>> {
     const page = filter.page ?? 1;
     const limit = filter.limit ?? 20;
     const skip = (page - 1) * limit;
@@ -198,16 +198,14 @@ export class SupportRepository {
   ): Promise<SupportRequestDocument | null> {
     this.validateObjectId(id, 'id');
     return this.supportRequestModel
-      .findByIdAndUpdate(
-        id,
-        { $set: { status } },
-        { new: true },
-      )
+      .findByIdAndUpdate(id, { $set: { status } }, { new: true })
       .populate('userId', 'firstName lastName email phone')
       .exec();
   }
 
-  async findByIdWithPopulatedUser(id: string): Promise<SupportRequestDocument | null> {
+  async findByIdWithPopulatedUser(
+    id: string,
+  ): Promise<SupportRequestDocument | null> {
     this.validateObjectId(id, 'id');
     return this.supportRequestModel
       .findById(id)

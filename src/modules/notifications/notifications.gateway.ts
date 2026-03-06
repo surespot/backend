@@ -320,12 +320,7 @@ export class NotificationsGateway
         return false;
       }
 
-      const sent = await emitToRoomWithRetry(
-        this.server,
-        userId,
-        event,
-        data,
-      );
+      const sent = await emitToRoomWithRetry(this.server, userId, event, data);
       if (!sent) {
         this.logger.warn(
           `Emit ${event} to user ${userId} failed (including retry)`,
@@ -368,33 +363,43 @@ export class NotificationsGateway
    * Send notification to a specific pickup location
    */
   async sendToPickupLocation(
-    pickupLocationId: string,
+    pickupLocationId:
+      | string
+      | { _id?: { toString(): string }; toString?(): string },
     event: string,
     data: Record<string, unknown>,
   ): Promise<boolean> {
+    // Normalize: extract ID if populated document was passed
+    const id =
+      typeof pickupLocationId === 'object' &&
+      pickupLocationId &&
+      '_id' in pickupLocationId
+        ? pickupLocationId._id?.toString()
+        : String(pickupLocationId);
+
     try {
       // Validate pickupLocationId format before using it
-      if (!Types.ObjectId.isValid(pickupLocationId)) {
+      if (!id || !Types.ObjectId.isValid(id)) {
         this.logger.warn(
-          `Invalid pickupLocationId format when sending notification: ${pickupLocationId}`,
+          `Invalid pickupLocationId format when sending notification: ${typeof pickupLocationId === 'object' ? JSON.stringify(pickupLocationId) : pickupLocationId}`,
         );
         return false;
       }
 
       // Check if pickup location has active connections
       const activeConnections = await this.connectionModel.countDocuments({
-        pickupLocationId: new Types.ObjectId(pickupLocationId),
+        pickupLocationId: new Types.ObjectId(id),
         isActive: true,
       });
 
       if (activeConnections === 0) {
         this.logger.debug(
-          `No active connections for pickup location ${pickupLocationId}, notification not sent`,
+          `No active connections for pickup location ${id}, notification not sent`,
         );
         return false;
       }
 
-      const roomName = `pickup-location-${pickupLocationId}`;
+      const roomName = `pickup-location-${id}`;
       const sent = await emitToRoomWithRetry(
         this.server,
         roomName,
@@ -403,21 +408,18 @@ export class NotificationsGateway
       );
       if (!sent) {
         this.logger.warn(
-          `Emit ${event} to pickup location ${pickupLocationId} failed (including retry)`,
+          `Emit ${event} to pickup location ${id} failed (including retry)`,
         );
         return false;
       }
       this.logger.log(
-        `Notification sent to pickup location ${pickupLocationId} via ${activeConnections} connection(s)`,
+        `Notification sent to pickup location ${id} via ${activeConnections} connection(s)`,
       );
       return true;
     } catch (error) {
-      this.logger.error(
-        `Error sending notification to pickup location ${pickupLocationId}`,
-        {
-          error: error instanceof Error ? error.message : String(error),
-        },
-      );
+      this.logger.error(`Error sending notification to pickup location ${id}`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }

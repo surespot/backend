@@ -16,6 +16,7 @@ import {
 } from './schemas/transaction.schema';
 import { OrdersService } from '../orders/orders.service';
 import { PaymentStatus } from '../orders/schemas/order.schema';
+import { NotificationsService } from '../notifications/notifications.service';
 import * as crypto from 'crypto';
 
 export interface InitializePaymentResult {
@@ -53,6 +54,8 @@ export class TransactionsService {
   constructor(
     private readonly transactionsRepository: TransactionsRepository,
     private readonly configService: ConfigService,
+    @Inject(forwardRef(() => NotificationsService))
+    private readonly notificationsService: NotificationsService,
     @Inject(forwardRef(() => OrdersService))
     private readonly ordersService: OrdersService,
   ) {
@@ -414,8 +417,7 @@ export class TransactionsService {
         raw: data.data,
       };
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : String(error);
+      const message = error instanceof Error ? error.message : String(error);
       this.logger.error(
         `Error verifying bank account ${accountNumber}/${bankCode}`,
         message,
@@ -442,9 +444,8 @@ export class TransactionsService {
     this.logger.log(`Requesting refund for transaction ${reference}`);
 
     // Find existing transaction
-    const transaction = await this.transactionsRepository.findByReference(
-      reference,
-    );
+    const transaction =
+      await this.transactionsRepository.findByReference(reference);
 
     if (!transaction) {
       this.logger.warn(
@@ -506,26 +507,36 @@ export class TransactionsService {
       }
 
       // Mark transaction as refunded (idempotent with webhook handler)
-      await this.transactionsRepository.updateByReference(reference, TransactionStatus.REFUNDED, {
-        providerResponse: data.data,
-        refundedAt: new Date(),
-      });
+      await this.transactionsRepository.updateByReference(
+        reference,
+        TransactionStatus.REFUNDED,
+        {
+          providerResponse: data.data,
+          refundedAt: new Date(),
+        },
+      );
 
-      // Update linked order payment status if any (idempotent)
-      try {
-        await this.ordersService.updatePaymentStatusByReference(
-          reference,
-          PaymentStatus.REFUNDED,
-        );
-      } catch (err) {
-        this.logger.warn(
-          `Requested refund for ${reference} but could not update order status: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
+      // Store refundId on order for retry; paymentStatus stays PAID until refund.processed webhook
+      const refundId =
+        typeof data.data?.id === 'number' ? data.data.id : undefined;
+      if (refundId) {
+        try {
+          await this.ordersService.updateOrderRefundIdByReference(
+            reference,
+            refundId,
+          );
+        } catch (err) {
+          this.logger.warn(
+            `Requested refund for ${reference} but could not update order refundId: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
       }
 
-      this.logger.log(`Refund requested successfully for transaction ${reference}`);
+      this.logger.log(
+        `Refund requested successfully for transaction ${reference}`,
+      );
 
       return {
         success: true,
@@ -546,6 +557,78 @@ export class TransactionsService {
         error: {
           code: 'REFUND_FAILED',
           message: 'Failed to request refund',
+        },
+      });
+    }
+  }
+
+  /**
+   * Retry a refund with needs-attention status by providing the customer's bank account details.
+   * Calls Paystack's POST /refund/retry_with_customer_details/{id}
+   */
+  async retryRefundWithBankDetails(
+    refundId: number,
+    refundAccountDetails: {
+      currency: string;
+      account_number: string;
+      bank_id: string;
+    },
+  ): Promise<{ success: boolean; data?: Record<string, unknown> }> {
+    this.logger.log(`Retrying refund ${refundId} with bank details`);
+
+    try {
+      const response = await fetch(
+        `${this.paystackBaseUrl}/refund/retry_with_customer_details/${refundId}`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.paystackSecretKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            refund_account_details: refundAccountDetails,
+          }),
+        },
+      );
+
+      const data = (await response.json()) as {
+        status: boolean;
+        message?: string;
+        data?: Record<string, unknown>;
+      };
+
+      if (!data.status) {
+        this.logger.error(
+          `Failed to retry refund ${refundId}: ${data.message || 'Unknown error'}`,
+        );
+        throw new BadRequestException({
+          success: false,
+          error: {
+            code: 'REFUND_RETRY_FAILED',
+            message: data.message || 'Failed to retry refund',
+          },
+        });
+      }
+
+      this.logger.log(`Refund ${refundId} retried successfully`);
+
+      return {
+        success: true,
+        data: data.data,
+      };
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      this.logger.error(
+        `Error while retrying refund ${refundId}`,
+        error instanceof Error ? error.message : String(error),
+      );
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'REFUND_RETRY_FAILED',
+          message: 'Failed to retry refund',
         },
       });
     }
@@ -588,6 +671,9 @@ export class TransactionsService {
         break;
       case 'refund.processed':
         await this.handleRefundProcessed(data);
+        break;
+      case 'refund.needs-attention':
+        await this.handleRefundNeedsAttention(data);
         break;
       default:
         this.logger.warn(`Unhandled webhook event: ${event}`);
@@ -662,8 +748,10 @@ export class TransactionsService {
   private async handleRefundProcessed(
     data: Record<string, unknown>,
   ): Promise<void> {
-    const reference = (data.transaction as Record<string, unknown>)
-      ?.reference as string;
+    // transaction_reference is the paymentIntentId on orders (Paystack format)
+    const reference =
+      (data.transaction_reference as string) ??
+      ((data.transaction as Record<string, unknown>)?.reference as string);
 
     if (reference) {
       const transaction = await this.transactionsRepository.updateByReference(
@@ -678,20 +766,74 @@ export class TransactionsService {
       if (transaction) {
         this.logger.log(`Transaction ${reference} marked as refunded`);
 
-        // Update order payment status if order exists
+        // Update order payment status and hasBeenRefunded if order exists
         try {
           await this.ordersService.updatePaymentStatusByReference(
             reference,
             PaymentStatus.REFUNDED,
           );
+          await this.ordersService.updateOrderHasBeenRefundedByReference(
+            reference,
+          );
         } catch (error) {
           // Order might not exist yet, that's okay
           this.logger.warn(
-            `Could not update order payment status for reference ${reference}: ${error}`,
+            `Could not update order for reference ${reference}: ${error}`,
           );
         }
       }
     }
+  }
+
+  private async handleRefundNeedsAttention(
+    data: Record<string, unknown>,
+  ): Promise<void> {
+    const refundId = data.id as number | undefined;
+    const transactionData = data.transaction as
+      | Record<string, unknown>
+      | undefined;
+    const reference = transactionData?.transaction_reference as
+      | string
+      | undefined;
+    const domain = data.domain as string | undefined;
+    const status = data.status as string | undefined;
+    const amount =
+      (transactionData?.amount as number) ?? (data.amount as number) ?? 0;
+    const formattedAmount = amount ? this.formatPrice(amount) : 'N/A';
+
+    const refundDetails = {
+      refundId,
+      reference: reference ?? 'Unknown',
+      domain: domain ?? 'Unknown',
+      status: status ?? 'needs-attention',
+      amount,
+      formattedAmount,
+      rawData: data,
+    };
+
+    this.logger.warn(
+      `Refund needs attention: reference=${reference}, domain=${domain}, amount=${formattedAmount}`,
+    );
+
+    // Store refundId on order for retry with bank details
+    if (refundId != null && reference) {
+      try {
+        await this.ordersService.updateOrderRefundIdByReference(
+          reference,
+          refundId,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Could not update order refundId for reference ${reference}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+
+    await this.notificationsService.notifyAdminsRefundNeedsAttention(
+      refundDetails,
+    );
   }
 
   /**

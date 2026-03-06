@@ -28,7 +28,12 @@ export class Transaction {
   @Prop({ type: Types.ObjectId, ref: 'User', required: false, index: true })
   userId?: Types.ObjectId; // For customer payments
 
-  @Prop({ type: Types.ObjectId, ref: 'RiderProfile', required: false, index: true })
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'RiderProfile',
+    required: false,
+    index: true,
+  })
   riderProfileId?: Types.ObjectId; // For rider transactions
 
   @Prop({

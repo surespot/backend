@@ -51,6 +51,8 @@ export interface OrderExtraResponse {
   id: string;
   foodExtraId: string;
   name: string;
+  description?: string;
+  imageUrl?: string;
   price: number;
   formattedPrice: string;
   quantity: number;
@@ -119,6 +121,8 @@ export interface OrderResponse {
   assignedAt?: string;
   assignedBy?: string;
   deliveryConfirmationCode?: string; // 4-digit code for door-delivery orders
+  refundId?: number; // Paystack refund ID (for retry when needs-attention)
+  hasBeenRefunded?: boolean; // True when refund.processed webhook received (refund completed)
 }
 
 @Injectable()
@@ -676,6 +680,8 @@ export class OrdersService {
             orderItemId: orderItem._id.toString(),
             foodExtraId: extra.foodExtraId.toString(),
             name: extra.name,
+            description: extra.description,
+            imageUrl: extra.imageUrl,
             price: extra.price,
             currency: extra.currency,
             quantity: extra.quantity,
@@ -759,9 +765,8 @@ export class OrdersService {
                   this.logger.warn(
                     `Failed to send confirmation code SMS for order ${orderNumber}`,
                     {
-                      error: error instanceof Error
-                        ? error.message
-                        : String(error),
+                      error:
+                        error instanceof Error ? error.message : String(error),
                     },
                   );
                 }
@@ -795,8 +800,8 @@ export class OrdersService {
         data: formattedOrder,
       };
     } catch (error) {
-      // If payment was taken (card) but order was not created, attempt a refund
-      if (!order && dto.paymentMethod === 'card' && dto.paymentIntentId) {
+      // If payment was taken (Paystack) but order was not created, attempt a refund
+      if (!order && dto.paymentIntentId) {
         try {
           await this.transactionsService.requestRefund(dto.paymentIntentId);
         } catch (refundError) {
@@ -916,7 +921,8 @@ export class OrdersService {
   }
 
   /**
-   * Cancel an order (only before payment)
+   * Cancel an order. If paid via card, requests a refund before cancelling.
+   * Cannot cancel after order has been picked up by rider.
    */
   async cancelOrder(userId: string, orderId: string, reason?: string) {
     const order = await this.ordersRepository.findById(orderId);
@@ -942,15 +948,46 @@ export class OrdersService {
       });
     }
 
-    // Can only cancel before payment
-    if (order.paymentStatus !== PaymentStatus.PENDING) {
+    // Cannot cancel after order has been picked up
+    if (
+      order.status === OrderStatus.OUT_FOR_DELIVERY ||
+      order.status === OrderStatus.DELIVERED
+    ) {
       throw new BadRequestException({
         success: false,
         error: {
           code: 'ORDER_CANNOT_BE_CANCELLED',
-          message: 'Order cannot be cancelled after payment',
+          message: 'Order cannot be cancelled after it has been picked up',
         },
       });
+    }
+
+    // If paid via Paystack, request refund before cancelling
+    if (order.paymentStatus === PaymentStatus.PAID) {
+      const paymentReference =
+        order.paymentIntentId ??
+        (await this.transactionsService.getTransactionByOrderId(orderId))
+          ?.reference;
+
+      if (paymentReference) {
+        const refundResult =
+          await this.transactionsService.requestRefund(paymentReference);
+        if (!refundResult.success) {
+          throw new BadRequestException({
+            success: false,
+            error: {
+              code: 'REFUND_FAILED',
+              message:
+                (refundResult.data?.error as string) ??
+                'Could not process refund. Please contact support.',
+            },
+          });
+        }
+      } else {
+        this.logger.warn(
+          `Cannot refund order ${orderId}: no payment reference (paymentIntentId or linked transaction)`,
+        );
+      }
     }
 
     // Update order status
@@ -1125,16 +1162,18 @@ export class OrdersService {
     }
 
     // Get rider information if assigned
-    let riderInfo: {
-      riderProfileId: string;
-      userId: string;
-      firstName: string;
-      lastName: string;
-      phone?: string;
-      avatar?: string;
-      rating?: number;
-      assignedAt?: string;
-    } | undefined;
+    let riderInfo:
+      | {
+          riderProfileId: string;
+          userId: string;
+          firstName: string;
+          lastName: string;
+          phone?: string;
+          avatar?: string;
+          rating?: number;
+          assignedAt?: string;
+        }
+      | undefined;
 
     if (order.assignedRiderId) {
       const riderProfile = await this.ridersRepository.findById(
@@ -1233,23 +1272,56 @@ export class OrdersService {
     const allowedTransitions: Record<OrderStatus, OrderStatus[]> = {
       [OrderStatus.PENDING]: [OrderStatus.PREPARING, OrderStatus.CANCELLED],
       [OrderStatus.CONFIRMED]: [OrderStatus.PREPARING], // If CONFIRMED is used, allow transition to PREPARING
-      [OrderStatus.PREPARING]: [OrderStatus.READY],
-      [OrderStatus.READY]: [OrderStatus.OUT_FOR_DELIVERY],
+      [OrderStatus.PREPARING]: [OrderStatus.READY, OrderStatus.CANCELLED],
+      [OrderStatus.READY]: [
+        OrderStatus.OUT_FOR_DELIVERY,
+        OrderStatus.CANCELLED,
+      ],
       [OrderStatus.OUT_FOR_DELIVERY]: [OrderStatus.DELIVERED],
       [OrderStatus.DELIVERED]: [], // No transitions from DELIVERED
       [OrderStatus.CANCELLED]: [], // No transitions from CANCELLED
     };
 
-    // Check if cancellation is allowed (only from PENDING)
+    // Check if cancellation is allowed (cannot cancel after picked up)
     if (dto.status === DeliveryStatus.CANCELLED) {
-      if (order.status !== OrderStatus.PENDING) {
+      if (
+        order.status === OrderStatus.OUT_FOR_DELIVERY ||
+        order.status === OrderStatus.DELIVERED
+      ) {
         throw new BadRequestException({
           success: false,
           error: {
             code: 'ORDER_CANNOT_BE_CANCELLED',
-            message: 'Only pending orders can be cancelled',
+            message: 'Order cannot be cancelled after it has been picked up',
           },
         });
+      }
+      // If paid via Paystack, request refund before cancelling
+      if (order.paymentStatus === PaymentStatus.PAID) {
+        const paymentReference =
+          order.paymentIntentId ??
+          (await this.transactionsService.getTransactionByOrderId(orderId))
+            ?.reference;
+
+        if (paymentReference) {
+          const refundResult =
+            await this.transactionsService.requestRefund(paymentReference);
+          if (!refundResult.success) {
+            throw new BadRequestException({
+              success: false,
+              error: {
+                code: 'REFUND_FAILED',
+                message:
+                  (refundResult.data?.error as string) ??
+                  'Could not process refund. Please contact support.',
+              },
+            });
+          }
+        } else {
+          this.logger.warn(
+            `Cannot refund order ${orderId}: no payment reference (paymentIntentId or linked transaction)`,
+          );
+        }
       }
     } else {
       // Check if the transition is allowed
@@ -1274,7 +1346,8 @@ export class OrdersService {
           success: false,
           error: {
             code: 'ORDER_NOT_PAID',
-            message: 'Order must be paid before status can be changed. Please ensure payment is completed first.',
+            message:
+              'Order must be paid before status can be changed. Please ensure payment is completed first.',
           },
         });
       }
@@ -1284,12 +1357,18 @@ export class OrdersService {
     const updateData: {
       status?: OrderStatus;
       deliveredAt?: Date;
+      cancelledAt?: Date;
+      cancellationReason?: string;
     } = {};
 
     if (newOrderStatus !== order.status) {
       updateData.status = newOrderStatus;
       if (newOrderStatus === OrderStatus.DELIVERED) {
         updateData.deliveredAt = new Date();
+      }
+      if (newOrderStatus === OrderStatus.CANCELLED) {
+        updateData.cancelledAt = new Date();
+        updateData.cancellationReason = dto.message;
       }
     }
 
@@ -1355,9 +1434,10 @@ export class OrdersService {
         );
 
         // Notify pickup location (for cross-device sync)
-        if (order.pickupLocationId) {
-          const pickupLocationIdStr = order.pickupLocationId.toString();
-
+        const pickupLocationIdStr = this.getPickupLocationIdString(
+          order.pickupLocationId,
+        );
+        if (pickupLocationIdStr) {
           // Emit to admin dashboard via /admin namespace
           if (this.adminGateway && this.adminGateway.emitOrderPickedUp) {
             await this.adminGateway.emitOrderPickedUp(pickupLocationIdStr, {
@@ -1378,12 +1458,15 @@ export class OrdersService {
             );
 
             // Emit updated stats
-            const stats = await this.ordersRepository.getOrderCountsByStatus(
+            const pickupLocationObjId = this.getPickupLocationObjectId(
               order.pickupLocationId,
             );
-            const todayRevenue = await this.ordersRepository.getTodayRevenue(
-              order.pickupLocationId,
-            );
+            const stats =
+              await this.ordersRepository.getOrderCountsByStatus(
+                pickupLocationObjId,
+              );
+            const todayRevenue =
+              await this.ordersRepository.getTodayRevenue(pickupLocationObjId);
             await this.adminGateway.emitOrderStatsUpdate(pickupLocationIdStr, {
               totalOrders:
                 stats.pending +
@@ -1445,6 +1528,14 @@ export class OrdersService {
           orderId,
         );
         break;
+      case DeliveryStatus.CANCELLED:
+        await this.notificationsService.sendOrderCancelledNotification(
+          userId,
+          order.orderNumber,
+          orderId,
+          dto.message,
+        );
+        break;
     }
 
     // Get updated order
@@ -1459,12 +1550,40 @@ export class OrdersService {
   }
 
   /**
+   * Set hasBeenRefunded on order by payment reference.
+   * Used when refund.processed webhook is received (refund completed).
+   */
+  async updateOrderHasBeenRefundedByReference(
+    reference: string,
+  ): Promise<void> {
+    const order = await this.ordersRepository.findByPaymentIntentId(reference);
+    if (!order) return;
+    await this.ordersRepository.updateOrder(order._id.toString(), {
+      hasBeenRefunded: true,
+    });
+  }
+
+  /**
+   * Update order refundId by payment reference.
+   * Used when refund.needs-attention webhook is received to store refundId for retry.
+   */
+  async updateOrderRefundIdByReference(
+    reference: string,
+    refundId: number,
+  ): Promise<void> {
+    const order = await this.ordersRepository.findByPaymentIntentId(reference);
+    if (!order) return;
+    await this.ordersRepository.updateOrder(order._id.toString(), { refundId });
+  }
+
+  /**
    * Update order payment status by payment reference
    * Used by webhook handlers to update payment status
    */
   async updatePaymentStatusByReference(
     reference: string,
     paymentStatus: PaymentStatus,
+    refundId?: number,
   ): Promise<void> {
     const order = await this.ordersRepository.findByPaymentIntentId(reference);
 
@@ -1474,9 +1593,14 @@ export class OrdersService {
     }
 
     // Update payment status and order status if payment is successful
-    const updateData: { paymentStatus: PaymentStatus; status?: OrderStatus } = {
+    const updateData: {
+      paymentStatus: PaymentStatus;
+      status?: OrderStatus;
+      refundId?: number;
+    } = {
       paymentStatus,
     };
+    if (refundId !== undefined) updateData.refundId = refundId;
 
     // When payment is successful, set order status to CONFIRMED if it's currently PENDING
     // Pickup location will manually set it to PREPARING when they start preparing
@@ -1490,7 +1614,9 @@ export class OrdersService {
     await this.ordersRepository.updateOrder(order._id.toString(), updateData);
 
     // Reload order to get updated fields (like confirmation code)
-    const updatedOrder = await this.ordersRepository.findById(order._id.toString());
+    const updatedOrder = await this.ordersRepository.findById(
+      order._id.toString(),
+    );
 
     // Send notification based on payment status
     if (paymentStatus === PaymentStatus.PAID) {
@@ -1502,14 +1628,16 @@ export class OrdersService {
       );
 
       // Notify pickup location's admins when order is newly confirmed (was PENDING, now CONFIRMED)
+      const pickupLocationIdStrForConfirm = this.getPickupLocationIdString(
+        order.pickupLocationId,
+      );
       if (
         order.status === OrderStatus.PENDING &&
-        order.pickupLocationId
+        pickupLocationIdStrForConfirm
       ) {
-        const pickupLocationIdStr = order.pickupLocationId.toString();
         this.notificationsService
           .notifyPickupLocationAdminsNewOrderConfirmed(
-            pickupLocationIdStr,
+            pickupLocationIdStrForConfirm,
             order.orderNumber,
             order._id.toString(),
             order.total,
@@ -1528,7 +1656,7 @@ export class OrdersService {
         updatedOrder.deliveryConfirmationCode
       ) {
         const confirmationCode = updatedOrder.deliveryConfirmationCode;
-        
+
         // Send SMS with confirmation code
         try {
           const user = await this.authRepository.findUserById(
@@ -1573,9 +1701,10 @@ export class OrdersService {
       }
 
       // Notify pickup location about the paid order
-      if (order.pickupLocationId) {
-        const pickupLocationIdStr = order.pickupLocationId.toString();
-
+      const pickupLocationIdStr = this.getPickupLocationIdString(
+        order.pickupLocationId,
+      );
+      if (pickupLocationIdStr) {
         // Emit to admin dashboard via /admin namespace with full order details
         if (this.adminGateway && this.adminGateway.emitOrderCreated) {
           // Get formatted order for admin
@@ -1592,12 +1721,15 @@ export class OrdersService {
           });
 
           // Emit updated stats
-          const stats = await this.ordersRepository.getOrderCountsByStatus(
+          const pickupLocationObjId = this.getPickupLocationObjectId(
             order.pickupLocationId,
           );
-          const todayRevenue = await this.ordersRepository.getTodayRevenue(
-            order.pickupLocationId,
-          );
+          const stats =
+            await this.ordersRepository.getOrderCountsByStatus(
+              pickupLocationObjId,
+            );
+          const todayRevenue =
+            await this.ordersRepository.getTodayRevenue(pickupLocationObjId);
           await this.adminGateway.emitOrderStatsUpdate(pickupLocationIdStr, {
             totalOrders:
               stats.pending +
@@ -1641,6 +1773,35 @@ export class OrdersService {
   }
 
   // ============ Helper Methods ============
+
+  /**
+   * Extract pickup location ID string from order.
+   * Handles both ObjectId (unpopulated) and populated document.
+   */
+  private getPickupLocationIdString(
+    pickupLocationId: OrderDocument['pickupLocationId'],
+  ): string | null {
+    if (!pickupLocationId) return null;
+    const pl = pickupLocationId as
+      | Types.ObjectId
+      | (PickupLocationDocument & { _id: Types.ObjectId });
+    if (typeof pl === 'object' && '_id' in pl && pl._id) {
+      return pl._id.toString();
+    }
+    return (pl as Types.ObjectId).toString();
+  }
+
+  /**
+   * Extract pickup location ObjectId from order for repository queries.
+   * Handles both ObjectId (unpopulated) and populated document.
+   */
+  private getPickupLocationObjectId(
+    pickupLocationId: OrderDocument['pickupLocationId'],
+  ): Types.ObjectId | undefined {
+    const str = this.getPickupLocationIdString(pickupLocationId);
+    if (!str || !Types.ObjectId.isValid(str)) return undefined;
+    return new Types.ObjectId(str);
+  }
 
   private async formatOrder(order: OrderDocument): Promise<OrderResponse> {
     const orderItems = await this.ordersRepository.findOrderItemsByOrderId(
@@ -1717,6 +1878,8 @@ export class OrdersService {
       assignedAt: order.assignedAt?.toISOString(),
       assignedBy: order.assignedBy?.toString(),
       deliveryConfirmationCode: order.deliveryConfirmationCode,
+      refundId: order.refundId,
+      hasBeenRefunded: order.hasBeenRefunded ?? false,
     };
   }
 
@@ -1761,6 +1924,8 @@ export class OrdersService {
       deliveredAt: order.deliveredAt?.toISOString(),
       cancelledAt: order.cancelledAt?.toISOString(),
       cancellationReason: order.cancellationReason,
+      refundId: order.refundId,
+      hasBeenRefunded: order.hasBeenRefunded ?? false,
     } as any;
   }
 
@@ -1783,6 +1948,8 @@ export class OrdersService {
         id: e._id.toString(),
         foodExtraId: e.foodExtraId.toString(),
         name: e.name,
+        description: e.description,
+        imageUrl: e.imageUrl,
         price: e.price,
         formattedPrice: this.formatPrice(e.price, e.currency),
         quantity: e.quantity,
@@ -1918,7 +2085,7 @@ export class OrdersService {
         // Also send notifications module notifications (IN_APP + PUSH)
         const notificationPromises = nearbyRiders.map(async (riderLocation) => {
           const riderProfileId = riderLocation.riderProfileId.toString();
-          
+
           // WebSocket notification (real-time)
           const wsPromise = this.ordersGateway
             .emitOrderReadyToRider(
@@ -1940,7 +2107,8 @@ export class OrdersService {
           // Notifications module notification (IN_APP + PUSH)
           const notificationPromise = (async () => {
             try {
-              const rider = await this.ridersRepository.findById(riderProfileId);
+              const rider =
+                await this.ridersRepository.findById(riderProfileId);
               if (rider && rider.userId) {
                 await this.notificationsService.queueNotification(
                   rider.userId.toString(),
@@ -2277,12 +2445,13 @@ export class OrdersService {
     );
 
     // Notify pickup location that rider is on the way
-    if (order.pickupLocationId) {
-      const pickupLocationIdStr = order.pickupLocationId.toString();
-
+    const pickupLocationIdStrForRider = this.getPickupLocationIdString(
+      order.pickupLocationId,
+    );
+    if (pickupLocationIdStrForRider) {
       // Emit to admin dashboard via /admin namespace
       if (this.adminGateway && this.adminGateway.emitRiderAssigned) {
-        await this.adminGateway.emitRiderAssigned(pickupLocationIdStr, {
+        await this.adminGateway.emitRiderAssigned(pickupLocationIdStrForRider, {
           orderId: order._id.toString(),
           orderNumber: order.orderNumber,
           riderName,
@@ -2291,7 +2460,7 @@ export class OrdersService {
 
       // Keep backward compatibility for old notification system
       await this.notificationsGateway.emitRiderAssignedToPickupLocation(
-        pickupLocationIdStr,
+        pickupLocationIdStrForRider,
         order.orderNumber,
         order._id.toString(),
         {
@@ -2304,11 +2473,10 @@ export class OrdersService {
     }
 
     // Notify pickup location's admins that a rider was assigned
-    if (order.pickupLocationId) {
-      const pickupLocationIdStr = order.pickupLocationId.toString();
+    if (pickupLocationIdStrForRider) {
       this.notificationsService
         .notifyPickupLocationAdminsRiderAssigned(
-          pickupLocationIdStr,
+          pickupLocationIdStrForRider,
           order.orderNumber,
           order._id.toString(),
           riderName,

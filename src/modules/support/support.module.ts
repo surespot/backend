@@ -1,6 +1,9 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { SupportRequest, SupportRequestSchema } from './schemas/support-request.schema';
+import {
+  SupportRequest,
+  SupportRequestSchema,
+} from './schemas/support-request.schema';
 import { SupportController } from './support.controller';
 import { SupportService } from './support.service';
 import { SupportRepository } from './support.repository';

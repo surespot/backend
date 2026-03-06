@@ -4,7 +4,11 @@ import { MailerService } from '@nestjs-modules/mailer';
 export interface SendOtpEmailOptions {
   to: string;
   otp: string;
-  purpose: 'registration' | 'password-reset' | 'email-verification' | 'admin-login';
+  purpose:
+    | 'registration'
+    | 'password-reset'
+    | 'email-verification'
+    | 'admin-login';
   expiresInMinutes?: number;
 }
 
@@ -30,6 +34,14 @@ export interface SendPaymentFailedEmailOptions {
   amount: number;
   reason?: string;
   currency?: string;
+}
+
+export interface SendRefundNeedsAttentionEmailOptions {
+  to: string;
+  reference: string;
+  domain: string;
+  status: string;
+  amount: string;
 }
 
 export interface SendBugReportEmailOptions {
@@ -208,18 +220,56 @@ export class MailService {
   }
 
   /**
+   * Send refund needs attention notification to admin
+   */
+  async sendRefundNeedsAttentionEmail(
+    options: SendRefundNeedsAttentionEmailOptions,
+  ): Promise<void> {
+    try {
+      await this.mailerService.sendMail({
+        to: options.to,
+        subject: `[Action Required] Refund Needs Attention - ${options.reference}`,
+        template: 'refund-needs-attention',
+        context: {
+          reference: options.reference,
+          domain: options.domain,
+          status: options.status,
+          amount: options.amount,
+          currentYear: new Date().getFullYear(),
+        },
+      });
+
+      this.logger.log(
+        `Refund needs attention email sent to ${this.maskEmail(options.to)} for reference ${options.reference}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to send refund needs attention email to ${this.maskEmail(options.to)}`,
+        {
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        },
+      );
+      throw error;
+    }
+  }
+
+  /**
    * Send bug report to developers (admin-forwarded)
    */
-  async sendBugReportEmail(
-    options: SendBugReportEmailOptions,
-  ): Promise<void> {
+  async sendBugReportEmail(options: SendBugReportEmailOptions): Promise<void> {
     if (!options.to || options.to.length === 0) {
-      this.logger.warn('No developer emails configured for bug report forwarding');
+      this.logger.warn(
+        'No developer emails configured for bug report forwarding',
+      );
       return;
     }
 
     try {
-      const toAddresses = options.to.map((e) => e.trim()).filter(Boolean).join(', ');
+      const toAddresses = options.to
+        .map((e) => e.trim())
+        .filter(Boolean)
+        .join(', ');
       await this.mailerService.sendMail({
         to: toAddresses,
         subject: 'Surespot Bug Report',

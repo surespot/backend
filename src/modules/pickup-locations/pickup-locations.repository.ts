@@ -55,6 +55,22 @@ export class PickupLocationsRepository {
       .exec();
   }
 
+  /**
+   * Find pickup locations that have no user assigned.
+   */
+  async findUnlinked(
+    assignedIds: Types.ObjectId[],
+  ): Promise<PickupLocationDocument[]> {
+    return this.pickupLocationModel
+      .find({
+        _id: { $nin: assignedIds },
+        isActive: true,
+      })
+      .populate('regionId', 'name')
+      .sort({ name: 1 })
+      .exec();
+  }
+
   async findById(id: string): Promise<PickupLocationDocument | null> {
     this.validateObjectId(id, 'pickupLocationId');
     return this.pickupLocationModel

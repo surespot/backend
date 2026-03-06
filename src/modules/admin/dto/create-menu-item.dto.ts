@@ -6,6 +6,7 @@ import {
   IsArray,
   IsOptional,
   IsNotEmpty,
+  IsMongoId,
   Min,
   Max,
 } from 'class-validator';
@@ -23,7 +24,9 @@ export class CreateMenuItemDto {
   description: string;
 
   @ApiProperty({ description: 'Price in kobo' })
-  @Transform(({ value }) => (typeof value === 'string' ? parseFloat(value) : value))
+  @Transform(({ value }) =>
+    typeof value === 'string' ? parseFloat(value) : value,
+  )
   @IsNumber()
   @Min(0)
   price: number;
@@ -34,9 +37,15 @@ export class CreateMenuItemDto {
   @IsBoolean()
   extra?: boolean;
 
-  @ApiPropertyOptional({ description: 'Prep time in minutes (5-45)', minimum: 5, maximum: 45 })
+  @ApiPropertyOptional({
+    description: 'Prep time in minutes (5-45)',
+    minimum: 5,
+    maximum: 45,
+  })
   @IsOptional()
-  @Transform(({ value }) => (typeof value === 'string' ? parseInt(value, 10) : value))
+  @Transform(({ value }) =>
+    typeof value === 'string' ? parseInt(value, 10) : value,
+  )
   @IsNumber()
   @Min(5)
   @Max(45)
@@ -56,7 +65,7 @@ export class CreateMenuItemDto {
   @ApiPropertyOptional({ description: 'Extra IDs to attach (food only)' })
   @IsOptional()
   @IsArray()
-  @IsString({ each: true })
+  @IsMongoId({ each: true })
   assignedExtras?: string[];
 
   @ApiPropertyOptional({ description: 'e.g. "1 piece" (extra only)' })
@@ -64,7 +73,9 @@ export class CreateMenuItemDto {
   @IsString()
   quantity?: string;
 
-  @ApiPropertyOptional({ description: 'Use when image not uploaded via multipart' })
+  @ApiPropertyOptional({
+    description: 'Use when image not uploaded via multipart',
+  })
   @IsOptional()
   @IsString()
   imageUrl?: string;

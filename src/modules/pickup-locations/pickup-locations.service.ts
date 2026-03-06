@@ -290,6 +290,27 @@ export class PickupLocationsService {
     };
   }
 
+  /**
+   * Find pickup locations that have no admin assigned (unlinked).
+   * Used during admin onboarding to let new admins choose an existing location.
+   */
+  async findUnlinkedPickupLocations() {
+    const assignedIds =
+      await this.authRepository.findAssignedPickupLocationIds();
+    const pickupLocations =
+      await this.pickupLocationsRepository.findUnlinked(assignedIds);
+
+    return {
+      success: true,
+      message: 'Unlinked pickup locations retrieved successfully',
+      data: {
+        pickupLocations: pickupLocations.map((location) =>
+          this.formatPickupLocation(location),
+        ),
+      },
+    };
+  }
+
   async findAll() {
     const pickupLocations = await this.pickupLocationsRepository.findAll();
 

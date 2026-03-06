@@ -58,7 +58,11 @@ export class DashboardService {
       this.getProfit(pickupLocationFilter, dateRange),
       this.getOrderTraffic(pickupLocationFilter, dateRange),
       this.getOrderBreakdown(pickupLocationFilter, dateRange),
-      this.getMenuPerformance(pickupLocationFilter, dateRange, previousDateRange),
+      this.getMenuPerformance(
+        pickupLocationFilter,
+        dateRange,
+        previousDateRange,
+      ),
       this.getCustomerRatings(pickupLocationFilter, dateRange),
     ]);
 
@@ -131,10 +135,7 @@ export class DashboardService {
       dateRange.end,
     );
 
-    const totalProfit = dailyProfits.reduce(
-      (sum, day) => sum + day.revenue,
-      0,
-    );
+    const totalProfit = dailyProfits.reduce((sum, day) => sum + day.revenue, 0);
 
     const series = dailyProfits.map((day) => ({
       label: this.formatDateLabel(day.date),
@@ -271,11 +272,14 @@ export class DashboardService {
       deltaPct: Math.round(item.deltaPct * 10) / 10,
     }));
 
-    const worstPerformers = sorted.slice(-3).reverse().map((item) => ({
-      name: item.name,
-      imageUrl: item.imageUrl,
-      deltaPct: Math.round(item.deltaPct * 10) / 10,
-    }));
+    const worstPerformers = sorted
+      .slice(-3)
+      .reverse()
+      .map((item) => ({
+        name: item.name,
+        imageUrl: item.imageUrl,
+        deltaPct: Math.round(item.deltaPct * 10) / 10,
+      }));
 
     return { bestPerformers, worstPerformers };
   }
@@ -287,11 +291,10 @@ export class DashboardService {
     pickupLocationId: Types.ObjectId | undefined,
     dateRange: DateRange,
   ): Promise<CustomerRatingsDto> {
-    const reviews =
-      await this.foodItemsRepository.getRecentReviewsForDashboard(
-        pickupLocationId,
-        dateRange,
-      );
+    const reviews = await this.foodItemsRepository.getRecentReviewsForDashboard(
+      pickupLocationId,
+      dateRange,
+    );
     return { reviews };
   }
 

@@ -43,6 +43,13 @@ export class AdminOrderRowDto {
 
   @ApiPropertyOptional({ example: '507f1f77bcf86cd799439011' })
   assignedRiderId?: string | null;
+
+  @ApiPropertyOptional({
+    example: true,
+    description:
+      'True when refund.processed webhook received (refund completed)',
+  })
+  hasBeenRefunded?: boolean;
 }
 
 export class AdminOrderItemDto {
@@ -141,7 +148,18 @@ export class AdminOrderDetailsDto {
 
   @ApiPropertyOptional({
     example: '1234',
-    description: '4-digit delivery confirmation code (only for door-delivery orders)',
+    description:
+      '4-digit delivery confirmation code (only for door-delivery orders)',
   })
   deliveryConfirmationCode?: string;
+
+  @ApiPropertyOptional({ example: 1234567 })
+  refundId?: number;
+
+  @ApiPropertyOptional({
+    example: true,
+    description:
+      'True when refund.processed webhook received (refund completed)',
+  })
+  hasBeenRefunded?: boolean;
 }

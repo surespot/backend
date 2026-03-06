@@ -59,14 +59,23 @@ export class SupportController {
       type: 'object',
       required: ['source', 'category', 'type', 'description', 'contactPhone'],
       properties: {
-        source: { type: 'string', enum: ['service_issue', 'bug_report', 'contact_support'] },
+        source: {
+          type: 'string',
+          enum: ['service_issue', 'bug_report', 'contact_support'],
+        },
         category: { type: 'string', example: 'order_disputes' },
         type: { type: 'string', example: 'order_cancelled' },
         orderId: { type: 'string', example: '507f1f77bcf86cd799439011' },
         title: { type: 'string', example: 'Order cancelled without refund' },
-        description: { type: 'string', example: 'I ordered the economy pack...' },
+        description: {
+          type: 'string',
+          example: 'I ordered the economy pack...',
+        },
         contactPhone: { type: 'string', example: '09123478220' },
-        stepsToReproduce: { type: 'string', example: '1. Open app\n2. Go to checkout' },
+        stepsToReproduce: {
+          type: 'string',
+          example: '1. Open app\n2. Go to checkout',
+        },
         areaAffected: { type: 'string', example: 'Checkout' },
         issueType: { type: 'string', example: 'app_crash' },
         attachments: {
@@ -116,7 +125,8 @@ export class SupportController {
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiBody({
-    description: 'Upload supporting document; returns URL to include in support request',
+    description:
+      'Upload supporting document; returns URL to include in support request',
     schema: {
       type: 'object',
       properties: {
@@ -184,10 +194,7 @@ export class SupportController {
     description: 'Support request retrieved successfully',
   })
   @ApiResponse({ status: 404, description: 'Support request not found' })
-  async getById(
-    @CurrentUser() user: CurrentUserType,
-    @Param('id') id: string,
-  ) {
+  async getById(@CurrentUser() user: CurrentUserType, @Param('id') id: string) {
     const request = await this.supportService.getOwnById(id, user.id);
     return {
       success: true,

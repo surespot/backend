@@ -14,7 +14,7 @@ import { RegionsRepository } from '../regions/regions.repository';
 import { SmsService } from '../sms/sms.service';
 import { MailService } from '../mail/mail.service';
 import { STORAGE_SERVICE } from '../../common/storage/storage.constants';
-import { IStorageService } from '../../common/storage/interfaces/storage.interface';
+import type { IStorageService } from '../../common/storage/interfaces/storage.interface';
 import {
   CreateRiderProfileDto,
   CreateRiderDocumentationDto,
@@ -114,28 +114,28 @@ export class RidersService {
       schedule: dto.schedule || [...SCHEDULE_TYPE_MAP['full-time']],
     });
 
-      // Send registration code (don't fail if delivery fails)
-      await this.sendRegistrationCode(profile);
+    // Send registration code (don't fail if delivery fails)
+    await this.sendRegistrationCode(profile);
 
-      this.logger.log(
+    this.logger.log(
       `Rider profile created: ${profile._id.toString()}, code: ${this.maskCode(registrationCode)}`,
-      );
+    );
 
-      return {
-        success: true,
-        message: 'Rider profile created successfully',
-        data: {
-          id: profile._id.toString(),
-          firstName: profile.firstName,
-          lastName: profile.lastName,
-          phone: this.maskPhone(profile.phone),
-          email: this.maskEmail(profile.email),
-          regionId: profile.regionId.toString(),
-          registrationCode: registrationCode, // Return full code for admin
-          status: profile.status,
-          createdAt: profile.createdAt,
-        },
-      };
+    return {
+      success: true,
+      message: 'Rider profile created successfully',
+      data: {
+        id: profile._id.toString(),
+        firstName: profile.firstName,
+        lastName: profile.lastName,
+        phone: this.maskPhone(profile.phone),
+        email: this.maskEmail(profile.email),
+        regionId: profile.regionId.toString(),
+        registrationCode: registrationCode, // Return full code for admin
+        status: profile.status,
+        createdAt: profile.createdAt,
+      },
+    };
   }
 
   /**
@@ -220,13 +220,20 @@ export class RidersService {
         typeof raw === 'string'
           ? (() => {
               try {
-                return JSON.parse(raw) as { name: string; phone: string; relationship?: string };
+                return JSON.parse(raw) as {
+                  name: string;
+                  phone: string;
+                  relationship?: string;
+                };
               } catch {
                 return undefined;
               }
             })()
           : raw;
-      if (!documentData.emergencyContact || typeof documentData.emergencyContact !== 'object') {
+      if (
+        !documentData.emergencyContact ||
+        typeof documentData.emergencyContact !== 'object'
+      ) {
         delete documentData.emergencyContact;
       }
     }
@@ -465,9 +472,7 @@ export class RidersService {
       });
     }
 
-    const plainNin = profile.nin
-      ? this.decryptNinSafe(profile.nin)
-      : undefined;
+    const plainNin = profile.nin ? this.decryptNinSafe(profile.nin) : undefined;
 
     return {
       success: true,
@@ -531,9 +536,7 @@ export class RidersService {
     }
 
     // Return profile data for confirmation (mask NIN)
-    const plainNin = profile.nin
-      ? this.decryptNinSafe(profile.nin)
-      : undefined;
+    const plainNin = profile.nin ? this.decryptNinSafe(profile.nin) : undefined;
 
     return {
       success: true,
@@ -880,11 +883,11 @@ export class RidersService {
           profile.email,
           profile.registrationCode,
         ).catch((error) => {
-            this.logger.error('Failed to send registration code email', {
-              email: this.maskEmail(profile.email),
-              error: error instanceof Error ? error.message : String(error),
-            });
-          }),
+          this.logger.error('Failed to send registration code email', {
+            email: this.maskEmail(profile.email),
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }),
       );
     }
 
@@ -953,9 +956,7 @@ export class RidersService {
         ? (rid as { name: string }).name
         : undefined;
     // Decrypt NIN (if encrypted) so we can mask it for display.
-    const plainNin = profile.nin
-      ? this.decryptNinSafe(profile.nin)
-      : undefined;
+    const plainNin = profile.nin ? this.decryptNinSafe(profile.nin) : undefined;
 
     return {
       id: profile._id.toString(),

@@ -4,7 +4,8 @@ import { Type } from 'class-transformer';
 
 export class GetMessagesDto {
   @ApiPropertyOptional({
-    description: 'Cursor for pagination (ISO date string of last message createdAt)',
+    description:
+      'Cursor for pagination (ISO date string of last message createdAt)',
     example: '2024-01-15T12:30:00.000Z',
   })
   @IsOptional()

@@ -62,10 +62,9 @@ export class AdminSupportService {
           : String(request.orderId);
       const order = await this.ordersRepository.findById(orderIdStr);
       if (order) {
-        const orderItems =
-          await this.ordersRepository.findOrderItemsByOrderId(
-            order._id.toString(),
-          );
+        const orderItems = await this.ordersRepository.findOrderItemsByOrderId(
+          order._id.toString(),
+        );
         const itemsWithExtras = await Promise.all(
           orderItems.map(async (item) => {
             const extras =

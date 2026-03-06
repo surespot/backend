@@ -1,8 +1,16 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { Types } from 'mongoose';
 import { OrdersRepository } from '../orders/orders.repository';
 import { OrdersService } from '../orders/orders.service';
-import { OrderDocument, OrderStatus, DeliveryType } from '../orders/schemas/order.schema';
+import {
+  OrderDocument,
+  OrderStatus,
+  DeliveryType,
+} from '../orders/schemas/order.schema';
 import { DeliveryStatus } from '../orders/schemas/order-delivery-status.schema';
 import { AuthRepository } from '../auth/auth.repository';
 import { RidersRepository } from '../riders/riders.repository';
@@ -12,7 +20,10 @@ import {
   AdminOrderItemDto,
 } from './dto/admin-order-response.dto';
 import { AdminGetOrdersDto } from './dto/admin-get-orders.dto';
-import { AdminUpdateOrderStatusDto, AdminOrderStatus } from './dto/admin-update-order-status.dto';
+import {
+  AdminUpdateOrderStatusDto,
+  AdminOrderStatus,
+} from './dto/admin-update-order-status.dto';
 
 @Injectable()
 export class AdminOrdersService {
@@ -75,7 +86,9 @@ export class AdminOrdersService {
   /**
    * Calculate time remaining until estimated delivery
    */
-  private calculateTimeRemaining(estimatedDeliveryTime?: Date): string | undefined {
+  private calculateTimeRemaining(
+    estimatedDeliveryTime?: Date,
+  ): string | undefined {
     if (!estimatedDeliveryTime) {
       return undefined;
     }
@@ -94,7 +107,9 @@ export class AdminOrdersService {
 
     const hours = Math.floor(minutes / 60);
     const remainingMinutes = minutes % 60;
-    return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+    return remainingMinutes > 0
+      ? `${hours}h ${remainingMinutes}m`
+      : `${hours}h`;
   }
 
   /**
@@ -121,6 +136,7 @@ export class AdminOrdersService {
       assignedRiderId: order.assignedRiderId
         ? order.assignedRiderId.toString()
         : null,
+      hasBeenRefunded: order.hasBeenRefunded ?? false,
     };
   }
 
@@ -162,10 +178,10 @@ export class AdminOrdersService {
         items.push({
           id: extra._id.toString(),
           name: extra.name,
-          description: '',
+          description: extra.description || '',
           price: extra.price,
           qty: extra.quantity,
-          imageUrl: '',
+          imageUrl: extra.imageUrl || '',
           category: 'extra',
         });
       }
@@ -202,8 +218,7 @@ export class AdminOrdersService {
       deliveryAddress: order.deliveryAddress?.address,
       createdAt: order.createdAt?.toISOString() || new Date().toISOString(),
       expectedDelivery:
-        order.estimatedDeliveryTime?.toISOString() ||
-        new Date().toISOString(),
+        order.estimatedDeliveryTime?.toISOString() || new Date().toISOString(),
       items,
       subtotal: order.subtotal,
       extras: order.extrasTotal,
@@ -213,6 +228,8 @@ export class AdminOrdersService {
       riderName,
       riderPhone,
       deliveryConfirmationCode: order.deliveryConfirmationCode,
+      refundId: order.refundId,
+      hasBeenRefunded: order.hasBeenRefunded ?? false,
     };
   }
 
@@ -397,8 +414,7 @@ export class AdminOrdersService {
         success: false,
         error: {
           code: 'ORDER_NOT_FOUND',
-          message:
-            'Order not found or does not belong to your pickup location',
+          message: 'Order not found or does not belong to your pickup location',
         },
       });
     }

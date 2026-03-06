@@ -6,7 +6,10 @@ import { ChatController } from './chat.controller';
 import { ChatService } from './chat.service';
 import { ChatRepository } from './chat.repository';
 import { ChatGateway } from './chat.gateway';
-import { Conversation, ConversationSchema } from './schemas/conversation.schema';
+import {
+  Conversation,
+  ConversationSchema,
+} from './schemas/conversation.schema';
 import { Message, MessageSchema } from './schemas/message.schema';
 import {
   WebSocketConnection,

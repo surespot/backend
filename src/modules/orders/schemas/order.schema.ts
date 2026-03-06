@@ -158,6 +158,12 @@ export class Order {
   @Prop()
   cancellationReason?: string;
 
+  @Prop()
+  refundId?: number; // Paystack refund ID (for retry with bank details when needs-attention)
+
+  @Prop({ default: false })
+  hasBeenRefunded?: boolean; // True when refund.processed webhook received (refund completed)
+
   @Prop({
     type: Types.ObjectId,
     ref: 'RiderProfile',

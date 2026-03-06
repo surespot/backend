@@ -110,11 +110,10 @@ export class WalletsService {
     riderProfileId: string,
     limit: number = 50,
   ): Promise<any[]> {
-    const transactions =
-      await this.transactionsRepository.findByRiderProfileId(
-        riderProfileId,
-        limit,
-      );
+    const transactions = await this.transactionsRepository.findByRiderProfileId(
+      riderProfileId,
+      limit,
+    );
 
     return transactions.map((t) => ({
       id: t._id.toString(),
@@ -185,17 +184,18 @@ export class WalletsService {
       endDate = new Date(now.getFullYear(), 11, 31, 23, 59, 59);
     }
 
-    const result = await this.transactionsRepository.findByRiderProfileIdWithFilters(
-      riderProfileId,
-      {
-        page: options.page || 1,
-        limit: options.limit || 20,
-        type: transactionType,
-        status: transactionStatus,
-        startDate,
-        endDate,
-      },
-    );
+    const result =
+      await this.transactionsRepository.findByRiderProfileIdWithFilters(
+        riderProfileId,
+        {
+          page: options.page || 1,
+          limit: options.limit || 20,
+          type: transactionType,
+          status: transactionStatus,
+          startDate,
+          endDate,
+        },
+      );
 
     const transactions = result.transactions.map((t) => ({
       id: t._id.toString(),
@@ -372,9 +372,8 @@ export class WalletsService {
     accountName?: string;
     isVerified: boolean;
   } | null> {
-    const wallet = await this.walletsRepository.findByRiderProfileId(
-      riderProfileId,
-    );
+    const wallet =
+      await this.walletsRepository.findByRiderProfileId(riderProfileId);
 
     if (!wallet || !wallet.paystackRecipientCode) {
       return null;
@@ -508,16 +507,16 @@ export class WalletsService {
       });
     }
 
-    const wallet = await this.walletsRepository.findByRiderProfileIdOrThrow(
-      riderProfileId,
-    );
+    const wallet =
+      await this.walletsRepository.findByRiderProfileIdOrThrow(riderProfileId);
 
     if (!wallet.paystackRecipientCode) {
       throw new BadRequestException({
         success: false,
         error: {
           code: 'PAYMENT_DETAILS_NOT_SET',
-          message: 'Payment details not set. Please add bank account details first.',
+          message:
+            'Payment details not set. Please add bank account details first.',
         },
       });
     }
@@ -656,9 +655,8 @@ export class WalletsService {
    * Get wallet details (for admin)
    */
   async getWalletDetails(riderProfileId: string): Promise<any> {
-    const wallet = await this.walletsRepository.findByRiderProfileIdOrThrow(
-      riderProfileId,
-    );
+    const wallet =
+      await this.walletsRepository.findByRiderProfileIdOrThrow(riderProfileId);
     const rider = await this.ridersRepository.findById(riderProfileId);
 
     return {

@@ -47,8 +47,9 @@ describe('Admin Orders (e2e)', () => {
 
     ordersRepository = moduleFixture.get<OrdersRepository>(OrdersRepository);
     authRepository = moduleFixture.get<AuthRepository>(AuthRepository);
-    pickupLocationsRepository =
-      moduleFixture.get<PickupLocationsRepository>(PickupLocationsRepository);
+    pickupLocationsRepository = moduleFixture.get<PickupLocationsRepository>(
+      PickupLocationsRepository,
+    );
     ridersRepository = moduleFixture.get<RidersRepository>(RidersRepository);
   });
 
@@ -500,7 +501,7 @@ describe('Admin Orders (e2e)', () => {
   });
 
   describe('Scoping', () => {
-    it('should only return orders for admin\'s pickup location', async () => {
+    it("should only return orders for admin's pickup location", async () => {
       // Create another pickup location and admin
       const otherLocation = await pickupLocationsRepository.create({
         name: 'Other Pickup Location',

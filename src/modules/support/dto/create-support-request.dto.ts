@@ -23,7 +23,8 @@ export class CreateSupportRequestDto {
   source: SupportRequestSource;
 
   @ApiProperty({
-    description: 'Category (e.g. order_disputes, delivery_problems, bug, account_verification)',
+    description:
+      'Category (e.g. order_disputes, delivery_problems, bug, account_verification)',
     example: 'order_disputes',
   })
   @IsString()
@@ -61,7 +62,8 @@ export class CreateSupportRequestDto {
 
   @ApiProperty({
     description: 'Detailed description of the issue',
-    example: 'I ordered the economy pack and the order got cancelled without any explanation.',
+    example:
+      'I ordered the economy pack and the order got cancelled without any explanation.',
   })
   @IsString()
   @IsNotEmpty()

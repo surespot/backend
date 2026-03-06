@@ -10,6 +10,7 @@ import {
 import { AuthModule } from '../auth/auth.module';
 import { MailModule } from '../mail/mail.module';
 import { AdminUsersController } from './admin-users.controller';
+import { AdminOnboardingController } from './admin-onboarding.controller';
 
 @Module({
   imports: [
@@ -19,7 +20,11 @@ import { AdminUsersController } from './admin-users.controller';
     forwardRef(() => AuthModule),
     MailModule,
   ],
-  controllers: [PickupLocationsController, AdminUsersController],
+  controllers: [
+    PickupLocationsController,
+    AdminUsersController,
+    AdminOnboardingController,
+  ],
   providers: [PickupLocationsService, PickupLocationsRepository],
   exports: [PickupLocationsService, PickupLocationsRepository],
 })

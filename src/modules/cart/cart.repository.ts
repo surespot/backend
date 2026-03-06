@@ -293,6 +293,7 @@ export class CartRepository {
     foodExtraId: string;
     name: string;
     description?: string;
+    imageUrl?: string;
     price: number;
     currency: string;
     quantity: number;
@@ -305,6 +306,7 @@ export class CartRepository {
       foodExtraId: new Types.ObjectId(data.foodExtraId),
       name: data.name,
       description: data.description,
+      imageUrl: data.imageUrl,
       price: data.price,
       currency: data.currency,
       quantity: data.quantity,

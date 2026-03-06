@@ -48,9 +48,23 @@
       margin-bottom: 20px;
     }
     .payment-icon {
-      font-size: 64px;
       text-align: center;
-      margin: 20px 0;
+      margin: 24px 0;
+      padding: 24px;
+      background: linear-gradient(135deg, #FFF8E7 0%, #FAF0E6 100%);
+      border-radius: 8px;
+      border: 1px solid #F4D03F;
+    }
+    .payment-icon-inner {
+      width: 56px;
+      height: 56px;
+      margin: 0 auto;
+      background: linear-gradient(135deg, #D4AF37 0%, #F4D03F 100%);
+      border-radius: 50%;
+      line-height: 56px;
+      font-size: 28px;
+      font-weight: bold;
+      color: white;
     }
     .order-info {
       background: linear-gradient(135deg, #FFF8E7 0%, #FAF0E6 100%);
@@ -93,12 +107,14 @@
 <body>
   <div class="container">
     <div class="header">
-      <div class="logo">🍽️ SureSpot</div>
-      <h1 class="title">Payment Successful!</h1>
-      <div class="success-badge">✓ Payment Confirmed</div>
+      <div class="logo">SureSpot</div>
+      <h1 class="title">Payment Successful</h1>
+      <div class="success-badge">Payment Confirmed</div>
     </div>
     
-    <div class="payment-icon">💳✨</div>
+    <div class="payment-icon">
+      <div class="payment-icon-inner">&#10003;</div>
+    </div>
     
     <div class="content">
       <p>Hello,</p>
@@ -111,7 +127,7 @@
       
       <div class="message-box">
         <p style="margin: 0; font-size: 18px; font-weight: 600; color: #D4AF37;">
-          ✅ Payment Confirmed
+          Payment Confirmed
         </p>
         <p style="margin: 10px 0 0 0;">
           Your order is being processed and you'll receive updates as it progresses.

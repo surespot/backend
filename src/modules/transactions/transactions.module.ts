@@ -5,6 +5,7 @@ import { TransactionsRepository } from './transactions.repository';
 import { Transaction, TransactionSchema } from './schemas/transaction.schema';
 import { TransactionsController } from './transactions.controller';
 import { OrdersModule } from '../orders/orders.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { OrdersModule } from '../orders/orders.module';
       { name: Transaction.name, schema: TransactionSchema },
     ]),
     forwardRef(() => OrdersModule),
+    forwardRef(() => NotificationsModule),
   ],
   controllers: [TransactionsController],
   providers: [TransactionsService, TransactionsRepository],

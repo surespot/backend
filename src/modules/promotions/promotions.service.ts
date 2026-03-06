@@ -12,7 +12,7 @@ import { RestartPromotionDto } from './dto/restart-promotion.dto';
 import { GetPromotionsFilterDto } from './dto/get-promotions-filter.dto';
 import { PromotionDocument } from './schemas/promotion.schema';
 import { STORAGE_SERVICE } from '../../common/storage/storage.constants';
-import { IStorageService } from '../../common/storage/interfaces/storage.interface';
+import type { IStorageService } from '../../common/storage/interfaces/storage.interface';
 import { FoodItemsRepository } from '../food-items/food-items.repository';
 
 export interface ValidateDiscountContext {
@@ -119,7 +119,8 @@ export class PromotionsService {
           success: false,
           error: {
             code: 'PROMOTION_FREE_CATEGORY_REQUIRED',
-            message: 'targetCategory and maxFreeQuantity are required for free_category',
+            message:
+              'targetCategory and maxFreeQuantity are required for free_category',
           },
         });
       }
@@ -175,7 +176,9 @@ export class PromotionsService {
       minOrderAmount: promotion.minOrderAmount,
       maxDiscountAmount: promotion.maxDiscountAmount,
       targetCategory: promotion.targetCategory,
-      targetFoodItemIds: promotion.targetFoodItemIds?.map((id) => id.toString()),
+      targetFoodItemIds: promotion.targetFoodItemIds?.map((id) =>
+        id.toString(),
+      ),
       maxFreeQuantity: promotion.maxFreeQuantity,
       buyQuantity: promotion.buyQuantity,
       getFreeQuantity: promotion.getFreeQuantity,
@@ -353,11 +356,14 @@ export class PromotionsService {
         minOrderAmount: dto.minOrderAmount ?? existing.minOrderAmount,
         maxDiscountAmount: dto.maxDiscountAmount ?? existing.maxDiscountAmount,
         targetCategory: dto.targetCategory ?? existing.targetCategory,
-        targetFoodItemIds: dto.targetFoodItemIds ?? existing.targetFoodItemIds?.map((id) => id.toString()),
+        targetFoodItemIds:
+          dto.targetFoodItemIds ??
+          existing.targetFoodItemIds?.map((id) => id.toString()),
         maxFreeQuantity: dto.maxFreeQuantity ?? existing.maxFreeQuantity,
         buyQuantity: dto.buyQuantity ?? existing.buyQuantity,
         getFreeQuantity: dto.getFreeQuantity ?? existing.getFreeQuantity,
-        maxRedeemablePerOrder: dto.maxRedeemablePerOrder ?? existing.maxRedeemablePerOrder,
+        maxRedeemablePerOrder:
+          dto.maxRedeemablePerOrder ?? existing.maxRedeemablePerOrder,
       };
       this.validateDiscountFields(discountDto as UpdatePromotionDto);
     }
@@ -703,7 +709,12 @@ export class PromotionsService {
   private async calcFreeCategoryDiscount(
     promotion: PromotionDocument,
     orderAmount: number,
-    cartItems: Array<{ foodItemId: string; quantity: number; price: number; lineTotal: number }>,
+    cartItems: Array<{
+      foodItemId: string;
+      quantity: number;
+      price: number;
+      lineTotal: number;
+    }>,
   ): Promise<number> {
     if (
       !promotion.targetCategory ||
@@ -717,11 +728,16 @@ export class PromotionsService {
       cartItems.map((i) => i.foodItemId),
     );
 
-    const qualifying: Array<{ price: number; lineTotal: number; quantity: number }> = [];
+    const qualifying: Array<{
+      price: number;
+      lineTotal: number;
+      quantity: number;
+    }> = [];
     for (const item of cartItems) {
       const cat = categories.get(item.foodItemId);
       if (cat === promotion.targetCategory) {
-        const unitPrice = item.quantity > 0 ? item.lineTotal / item.quantity : 0;
+        const unitPrice =
+          item.quantity > 0 ? item.lineTotal / item.quantity : 0;
         for (let q = 0; q < item.quantity; q++) {
           qualifying.push({
             price: unitPrice,
@@ -740,7 +756,12 @@ export class PromotionsService {
   private async calcBogoDiscount(
     promotion: PromotionDocument,
     orderAmount: number,
-    cartItems: Array<{ foodItemId: string; quantity: number; price: number; lineTotal: number }>,
+    cartItems: Array<{
+      foodItemId: string;
+      quantity: number;
+      price: number;
+      lineTotal: number;
+    }>,
   ): Promise<number> {
     if (
       promotion.buyQuantity === undefined ||

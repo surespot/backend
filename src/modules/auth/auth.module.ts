@@ -15,6 +15,10 @@ import {
   RefreshToken,
   RefreshTokenSchema,
 } from './schemas/refresh-token.schema';
+import {
+  AdminBootstrapCode,
+  AdminBootstrapCodeSchema,
+} from './schemas/admin-bootstrap-code.schema';
 import { MailModule } from '../mail/mail.module';
 import { SmsModule } from '../sms/sms.module';
 import { RidersModule } from '../riders/riders.module';
@@ -26,6 +30,7 @@ import { RidersModule } from '../riders/riders.module';
       { name: User.name, schema: UserSchema },
       { name: OtpCode.name, schema: OtpCodeSchema },
       { name: RefreshToken.name, schema: RefreshTokenSchema },
+      { name: AdminBootstrapCode.name, schema: AdminBootstrapCodeSchema },
     ]),
 
     // Passport module for JWT strategy

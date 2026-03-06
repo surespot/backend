@@ -39,7 +39,10 @@ export class AdminSupportController {
     description:
       'Returns paginated list of support requests with optional filters (submitterRole, status)',
   })
-  @ApiResponse({ status: 200, description: 'Support requests retrieved successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Support requests retrieved successfully',
+  })
   async getAll(@Query() filter: AdminGetSupportDto) {
     const result = await this.adminSupportService.getAll(filter);
     return {
@@ -77,7 +80,10 @@ export class AdminSupportController {
     description:
       'Returns full details including user info and order details (if linked)',
   })
-  @ApiResponse({ status: 200, description: 'Support request details retrieved successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Support request details retrieved successfully',
+  })
   @ApiResponse({ status: 404, description: 'Support request not found' })
   async getById(@Param('id') id: string) {
     const data = await this.adminSupportService.getById(id);
@@ -115,7 +121,10 @@ export class AdminSupportController {
     status: 200,
     description: 'Bug report forwarded successfully',
   })
-  @ApiResponse({ status: 400, description: 'Not a bug report or no developer emails configured' })
+  @ApiResponse({
+    status: 400,
+    description: 'Not a bug report or no developer emails configured',
+  })
   @ApiResponse({ status: 404, description: 'Support request not found' })
   async forwardToDevelopers(@Param('id') id: string) {
     await this.adminSupportService.forwardBugReportToDevelopers(id);

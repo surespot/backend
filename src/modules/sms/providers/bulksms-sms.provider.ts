@@ -81,7 +81,10 @@ export class BulksmsSmsProvider implements ISmsProvider {
     } catch (error: unknown) {
       let errorMessage = 'Failed to send SMS';
       if (axios.isAxiosError(error)) {
-        const data = error.response?.data as { message?: string; error?: string };
+        const data = error.response?.data as {
+          message?: string;
+          error?: string;
+        };
         errorMessage = data?.message || data?.error || error.message;
         this.logger.error(`[BulkSMS] Failed to send to ${payload.to}`, {
           error: errorMessage,

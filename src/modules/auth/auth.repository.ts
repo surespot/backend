@@ -11,6 +11,10 @@ import {
   RefreshToken,
   RefreshTokenDocument,
 } from './schemas/refresh-token.schema';
+import {
+  AdminBootstrapCode,
+  AdminBootstrapCodeDocument,
+} from './schemas/admin-bootstrap-code.schema';
 
 @Injectable()
 export class AuthRepository {
@@ -19,6 +23,8 @@ export class AuthRepository {
     @InjectModel(OtpCode.name) private otpCodeModel: Model<OtpCodeDocument>,
     @InjectModel(RefreshToken.name)
     private refreshTokenModel: Model<RefreshTokenDocument>,
+    @InjectModel(AdminBootstrapCode.name)
+    private bootstrapCodeModel: Model<AdminBootstrapCodeDocument>,
   ) {}
 
   // ============ USER METHODS ============
@@ -40,9 +46,21 @@ export class AuthRepository {
   async findUserByPickupLocationId(
     pickupLocationId: string | Types.ObjectId,
   ): Promise<UserDocument | null> {
-    return this.userModel
-      .findOne({ pickupLocationId, deletedAt: null })
+    return this.userModel.findOne({ pickupLocationId, deletedAt: null }).exec();
+  }
+
+  /**
+   * Get all pickup location IDs that are assigned to users.
+   * Used to find unlinked pickup locations.
+   */
+  async findAssignedPickupLocationIds(): Promise<Types.ObjectId[]> {
+    const ids = await this.userModel
+      .distinct('pickupLocationId', {
+        pickupLocationId: { $exists: true, $ne: null },
+        deletedAt: null,
+      })
       .exec();
+    return ids.filter((id): id is Types.ObjectId => id != null);
   }
 
   /**
@@ -254,6 +272,41 @@ export class AuthRepository {
         { userId, isRevoked: false },
         { $set: { isRevoked: true, revokedAt: new Date() } },
       )
+      .exec();
+  }
+
+  // ============ ADMIN BOOTSTRAP METHODS ============
+
+  async countAdmins(): Promise<number> {
+    return this.userModel.countDocuments({
+      role: UserRole.ADMIN,
+      deletedAt: null,
+    });
+  }
+
+  async createBootstrapCode(
+    code: string,
+    expiresAt: Date,
+  ): Promise<AdminBootstrapCodeDocument> {
+    const record = new this.bootstrapCodeModel({
+      code,
+      expiresAt,
+      used: false,
+    });
+    return record.save();
+  }
+
+  async findBootstrapCode(
+    code: string,
+  ): Promise<AdminBootstrapCodeDocument | null> {
+    return this.bootstrapCodeModel.findOne({ code, used: false }).exec();
+  }
+
+  async markBootstrapCodeAsUsed(codeId: Types.ObjectId): Promise<void> {
+    await this.bootstrapCodeModel
+      .findByIdAndUpdate(codeId, {
+        $set: { used: true, usedAt: new Date() },
+      })
       .exec();
   }
 }

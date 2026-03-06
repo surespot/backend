@@ -35,6 +35,7 @@ import { CreateReviewDto } from './dto/create-review.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { Public } from '../auth/decorators/public.decorator';
 import { UserRole } from '../auth/schemas/user.schema';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Transform } from 'class-transformer';
@@ -345,6 +346,77 @@ export class FoodItemsController {
       query.page || 1,
       query.limit || 20,
     );
+  }
+
+  @Get('popular')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get popular meals (Public - no auth required)',
+  })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    type: Number,
+    description: 'Page number (1-indexed)',
+    example: 1,
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    description: 'Items per page (max: 50)',
+    example: 20,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Popular meals retrieved successfully',
+    schema: {
+      example: {
+        success: true,
+        data: {
+          items: [
+            {
+              id: '507f1f77bcf86cd799439011',
+              name: 'Jollof Rice',
+              description: 'Smoky jollof with grilled chicken wing...',
+              slug: 'jollof-rice',
+              price: 150000,
+              formattedPrice: '₦1,500',
+              currency: 'NGN',
+              imageUrl: 'https://cdn.surespot.app/images/jollof-rice.jpg',
+              category: 'Food',
+              tags: ['RICE', 'CHICKEN', 'JOLLOF'],
+              averageRating: 4.8,
+              ratingCount: 245,
+              estimatedTime: { min: 20, max: 25 },
+              eta: '20-25 mins',
+              isAvailable: true,
+              isPopular: true,
+              orderCount: 89,
+            },
+          ],
+          pagination: {
+            page: 1,
+            limit: 20,
+            total: 12,
+            totalPages: 1,
+            hasNext: false,
+            hasPrev: false,
+          },
+        },
+      },
+    },
+  })
+  async getPopularMeals(@Query() query: { page?: string; limit?: string }) {
+    const page = query.page ? parseInt(query.page, 10) : 1;
+    const limit = query.limit ? Math.min(parseInt(query.limit, 10), 50) : 20;
+    const filter: GetFoodItemsFilterDto = {
+      isPopular: true,
+      page: isNaN(page) ? 1 : page,
+      limit: isNaN(limit) ? 20 : limit,
+    };
+    return this.foodItemsService.findAll(filter);
   }
 
   @Get(':id')

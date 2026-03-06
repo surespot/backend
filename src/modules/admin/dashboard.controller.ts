@@ -34,7 +34,7 @@ export class DashboardController {
   @ApiOperation({
     summary: 'Get dashboard overview data',
     description:
-      'Returns aggregated dashboard data for the admin\'s assigned pickup location including stats, profit, traffic, order breakdown, menu performance, and customer ratings.',
+      "Returns aggregated dashboard data for the admin's assigned pickup location including stats, profit, traffic, order breakdown, menu performance, and customer ratings.",
   })
   @ApiResponse({
     status: 200,
@@ -43,7 +43,8 @@ export class DashboardController {
   })
   @ApiResponse({
     status: 403,
-    description: 'Forbidden - insufficient permissions or no pickup location assigned',
+    description:
+      'Forbidden - insufficient permissions or no pickup location assigned',
   })
   async getDashboardOverview(
     @Query() query: DashboardQueryDto,

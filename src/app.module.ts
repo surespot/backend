@@ -24,6 +24,7 @@ import { WalletsModule } from './modules/wallets/wallets.module';
 import { ChatModule } from './modules/chat/chat.module';
 import { SupportModule } from './modules/support/support.module';
 import { AdminModule } from './modules/admin/admin.module';
+import { IntegrationsTestModule } from './modules/integrations-test/integrations-test.module';
 
 @Module({
   imports: [
@@ -147,6 +148,9 @@ import { AdminModule } from './modules/admin/admin.module';
 
     // Admin Dashboard module
     AdminModule,
+
+    // Integrations test (admin-only connectivity checks)
+    IntegrationsTestModule,
   ],
   controllers: [AppController],
   providers: [AppService],

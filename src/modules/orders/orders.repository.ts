@@ -338,6 +338,8 @@ export class OrdersRepository {
       deliveredAt: Date;
       cancelledAt: Date;
       cancellationReason: string;
+      refundId: number;
+      hasBeenRefunded: boolean;
     }>,
   ): Promise<OrderDocument | null> {
     this.validateObjectId(id, 'orderId');
@@ -355,6 +357,9 @@ export class OrdersRepository {
       updateData.cancelledAt = data.cancelledAt;
     if (data.cancellationReason !== undefined)
       updateData.cancellationReason = data.cancellationReason;
+    if (data.refundId !== undefined) updateData.refundId = data.refundId;
+    if (data.hasBeenRefunded !== undefined)
+      updateData.hasBeenRefunded = data.hasBeenRefunded;
 
     if (data.transactionId) {
       updateData.transactionId = new Types.ObjectId(data.transactionId);
@@ -659,6 +664,8 @@ export class OrdersRepository {
     orderItemId: string;
     foodExtraId: string;
     name: string;
+    description?: string;
+    imageUrl?: string;
     price: number;
     currency: string;
     quantity: number;
@@ -670,6 +677,8 @@ export class OrdersRepository {
       orderItemId: new Types.ObjectId(data.orderItemId),
       foodExtraId: new Types.ObjectId(data.foodExtraId),
       name: data.name,
+      description: data.description,
+      imageUrl: data.imageUrl,
       price: data.price,
       currency: data.currency,
       quantity: data.quantity,
@@ -1090,9 +1099,7 @@ export class OrdersRepository {
 
     // Apply search filter
     if (filters.search) {
-      query.$or = [
-        { orderNumber: { $regex: filters.search, $options: 'i' } },
-      ];
+      query.$or = [{ orderNumber: { $regex: filters.search, $options: 'i' } }];
     }
 
     // Build sort

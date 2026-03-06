@@ -51,12 +51,9 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
         birthdays?: Array<{
           date?: { year?: number; month?: number; day?: number };
         }>;
-      }>(
-        'https://people.googleapis.com/v1/people/me?personFields=birthdays',
-        {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        },
-      );
+      }>('https://people.googleapis.com/v1/people/me?personFields=birthdays', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
       const date = res.data?.birthdays?.[0]?.date;
       if (date?.year && date?.month && date?.day) {
         birthday = new Date(date.year, date.month - 1, date.day);

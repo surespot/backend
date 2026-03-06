@@ -235,10 +235,7 @@ export class PromotionsController {
     status: 400,
     description: 'Can only restart ended promotions or invalid dates',
   })
-  async restart(
-    @Param('id') id: string,
-    @Body() dto: RestartPromotionDto,
-  ) {
+  async restart(@Param('id') id: string, @Body() dto: RestartPromotionDto) {
     return this.promotionsService.restart(id, dto);
   }
 

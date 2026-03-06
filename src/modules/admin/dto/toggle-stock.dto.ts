@@ -6,7 +6,10 @@ export class ToggleStockDto {
   @IsBoolean()
   inStock: boolean;
 
-  @ApiPropertyOptional({ enum: ['food', 'extra'], description: 'Item type; auto-detect if omitted' })
+  @ApiPropertyOptional({
+    enum: ['food', 'extra'],
+    description: 'Item type; auto-detect if omitted',
+  })
   @IsOptional()
   @IsEnum(['food', 'extra'])
   itemType?: 'food' | 'extra';

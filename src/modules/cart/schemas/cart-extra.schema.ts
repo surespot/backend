@@ -18,6 +18,9 @@ export class CartExtra {
   @Prop()
   description?: string;
 
+  @Prop()
+  imageUrl?: string;
+
   @Prop({ required: true, min: 0 })
   price: number; // Price in kobo at time of adding
 

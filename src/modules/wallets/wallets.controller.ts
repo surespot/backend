@@ -63,7 +63,10 @@ export class WalletsController {
     },
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Rider access required' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Rider access required',
+  })
   async getMyBalance(@CurrentUser() user: { id: string }) {
     const riderProfile = await this.ridersService.findProfileByUserId(user.id);
     if (!riderProfile) {
@@ -94,7 +97,8 @@ export class WalletsController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Get wallet transaction history (Rider only)',
-    description: 'Get transaction history for the authenticated rider with filtering and pagination',
+    description:
+      'Get transaction history for the authenticated rider with filtering and pagination',
   })
   @ApiQuery({
     name: 'page',
@@ -136,14 +140,18 @@ export class WalletsController {
     description: 'Transaction history retrieved successfully',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Rider access required' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Rider access required',
+  })
   async getMyTransactions(
     @CurrentUser() user: { id: string },
     @Query('page') page?: number,
     @Query('limit') limit?: number,
     @Query('type') type?: 'earned' | 'withdrew' | 'all',
     @Query('status') status?: 'completed' | 'pending' | 'failed' | 'all',
-    @Query('period') period?: 'this-month' | 'last-month' | 'this-year' | 'all-time',
+    @Query('period')
+    period?: 'this-month' | 'last-month' | 'this-year' | 'all-time',
   ) {
     const riderProfile = await this.ridersService.findProfileByUserId(user.id);
     if (!riderProfile) {
@@ -181,7 +189,8 @@ export class WalletsController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Get wallet summary/statistics (Rider only)',
-    description: 'Get wallet summary with total earnings, withdrawals, and available balance for a period',
+    description:
+      'Get wallet summary with total earnings, withdrawals, and available balance for a period',
   })
   @ApiQuery({
     name: 'period',
@@ -195,10 +204,14 @@ export class WalletsController {
     description: 'Wallet summary retrieved successfully',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Rider access required' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Rider access required',
+  })
   async getMySummary(
     @CurrentUser() user: { id: string },
-    @Query('period') period?: 'this-month' | 'last-month' | 'this-year' | 'all-time',
+    @Query('period')
+    period?: 'this-month' | 'last-month' | 'this-year' | 'all-time',
   ) {
     const riderProfile = await this.ridersService.findProfileByUserId(user.id);
     if (!riderProfile) {
@@ -241,7 +254,10 @@ export class WalletsController {
     description: 'Payment details not found',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Rider access required' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Rider access required',
+  })
   async getMyPaymentDetails(@CurrentUser() user: { id: string }) {
     const riderProfile = await this.ridersService.findProfileByUserId(user.id);
     if (!riderProfile) {
@@ -263,7 +279,8 @@ export class WalletsController {
         success: false,
         error: {
           code: 'PAYMENT_DETAILS_NOT_FOUND',
-          message: 'Payment details not found. Please add bank account details first.',
+          message:
+            'Payment details not found. Please add bank account details first.',
         },
       });
     }
@@ -289,7 +306,10 @@ export class WalletsController {
     description: 'Payment details added successfully',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Rider access required' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Rider access required',
+  })
   async addPaymentDetails(
     @CurrentUser() user: { id: string },
     @Body() dto: AddPaymentDetailsDto,
@@ -333,7 +353,10 @@ export class WalletsController {
     description: 'Withdrawal initiated successfully',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Rider access required' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Rider access required',
+  })
   async initiateWithdrawal(
     @CurrentUser() user: { id: string },
     @Body() dto: InitiateWithdrawalDto,
@@ -384,7 +407,10 @@ export class WalletsController {
     description: 'Wallets retrieved successfully',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Admin access required' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Admin access required',
+  })
   async listAllWallets(@Query('limit') limit?: number) {
     const wallets = await this.walletsService.listAllWallets(
       limit ? Number(limit) : 100,
@@ -411,7 +437,10 @@ export class WalletsController {
     description: 'Wallet details retrieved successfully',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Admin access required' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Admin access required',
+  })
   @ApiResponse({ status: 404, description: 'Wallet not found' })
   async getWalletDetails(@Param('riderProfileId') riderProfileId: string) {
     const wallet = await this.walletsService.getWalletDetails(riderProfileId);
@@ -437,7 +466,10 @@ export class WalletsController {
     description: 'Payment details added successfully',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Admin access required' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Admin access required',
+  })
   async addPaymentDetailsForRider(
     @Param('riderProfileId') riderProfileId: string,
     @Body() dto: AddPaymentDetailsDto,
