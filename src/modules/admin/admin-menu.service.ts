@@ -367,7 +367,7 @@ export class AdminMenuService {
     success: true;
     data: { categories: Array<{ id: string; label: string; image?: string }> };
   }> {
-    const result = await this.foodItemsService.getCategories(true, true);
+    const result = await this.foodItemsService.getCategories(true);
     const categories = (
       result.data as {
         categories: Array<{

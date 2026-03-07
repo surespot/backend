@@ -125,7 +125,7 @@ export class CategoriesController {
     description: 'Unauthorized - Invalid or missing token',
   })
   async getCategories(@Query() query: GetCategoriesQueryDto) {
-    const { includeCount = false, includeImage = false } = query;
-    return this.foodItemsService.getCategories(includeCount, includeImage);
+    const { includeCount = false } = query;
+    return this.foodItemsService.getCategories(includeCount);
   }
 }
