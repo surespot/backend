@@ -37,7 +37,12 @@ async function bootstrap() {
     origin: corsOrigin,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-verification-token'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'x-verification-token',
+      'x-bootstrap-token',
+    ],
   });
 
   // Swagger setup
