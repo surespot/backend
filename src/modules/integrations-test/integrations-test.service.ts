@@ -6,6 +6,8 @@ import { v2 as cloudinary } from 'cloudinary';
 import { S3Client, ListBucketsCommand } from '@aws-sdk/client-s3';
 import * as nodemailer from 'nodemailer';
 import axios from 'axios';
+import { existsSync, readdirSync } from 'fs';
+import { join } from 'path';
 
 export interface IntegrationCheckResult {
   name: string;
@@ -117,7 +119,6 @@ export class IntegrationsTestService {
   async checkSms(): Promise<IntegrationCheckResult> {
     const provider =
       this.configService.get<'bulksms' | 'termii'>('SMS_PROVIDER') ?? 'bulksms';
-
     if (provider === 'termii') {
       const apiKey = this.configService.get<string>('TERMII_API_KEY');
       const baseUrl =
@@ -338,6 +339,54 @@ export class IntegrationsTestService {
     }
 
     try {
+      let templateDir = join(process.cwd(), 'dist', 'modules', 'mail', 'templates');
+      if (!existsSync(join(templateDir, 'otp.hbs'))) {
+        const fallback = join(
+          process.cwd(),
+          'src',
+          'modules',
+          'mail',
+          'templates',
+        );
+        if (existsSync(join(fallback, 'otp.hbs'))) {
+          templateDir = fallback;
+        }
+      }
+
+      if (!existsSync(templateDir)) {
+        return {
+          name: 'Mail (SMTP)',
+          configured: true,
+          ok: false,
+          message: `Mail templates directory not found: ${templateDir}`,
+        };
+      }
+
+      const templateFiles = readdirSync(templateDir).filter((f) =>
+        f.endsWith('.hbs'),
+      );
+      const requiredTemplates = [
+        'otp.hbs',
+        'order-delivered.hbs',
+        'payment-success.hbs',
+        'payment-failed.hbs',
+        'refund-needs-attention.hbs',
+        'newsletter.hbs',
+        'bug-report.hbs',
+      ];
+      const missingTemplates = requiredTemplates.filter(
+        (file) => !templateFiles.includes(file),
+      );
+      if (missingTemplates.length > 0) {
+        return {
+          name: 'Mail (SMTP)',
+          configured: true,
+          ok: false,
+          message: `Missing mail template(s): ${missingTemplates.join(', ')}`,
+          details: { templateDir, templateFiles },
+        };
+      }
+
       const transporter = nodemailer.createTransport({
         host,
         port,
@@ -352,6 +401,7 @@ export class IntegrationsTestService {
         configured: true,
         ok: true,
         message: 'Connected',
+        details: { templateDir, templateCount: templateFiles.length },
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

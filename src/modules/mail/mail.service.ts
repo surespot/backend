@@ -44,6 +44,13 @@ export interface SendRefundNeedsAttentionEmailOptions {
   amount: string;
 }
 
+export interface SendNewsletterEmailOptions {
+  to: string;
+  firstName: string;
+  subject: string;
+  body: string; // HTML content
+}
+
 export interface SendBugReportEmailOptions {
   to: string[];
   reportId: string;
@@ -245,6 +252,40 @@ export class MailService {
     } catch (error) {
       this.logger.error(
         `Failed to send refund needs attention email to ${this.maskEmail(options.to)}`,
+        {
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        },
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Send newsletter email to a recipient
+   */
+  async sendNewsletterEmail(
+    options: SendNewsletterEmailOptions,
+  ): Promise<void> {
+    try {
+      await this.mailerService.sendMail({
+        to: options.to,
+        subject: options.subject,
+        template: 'newsletter',
+        context: {
+          firstName: options.firstName,
+          subject: options.subject,
+          body: options.body,
+          currentYear: new Date().getFullYear(),
+        },
+      });
+
+      this.logger.log(
+        `Newsletter email sent to ${this.maskEmail(options.to)}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to send newsletter email to ${this.maskEmail(options.to)}`,
         {
           error: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined,

@@ -206,6 +206,32 @@ export class RidersRepository {
       .exec();
   }
 
+  /**
+   * Find rider profiles with email for newsletter (all riders or by region).
+   */
+  async findNewsletterRecipients(
+    regionId?: string | Types.ObjectId,
+  ): Promise<Array<{ email: string; firstName: string }>> {
+    const query: Record<string, unknown> = {
+      email: { $exists: true, $ne: '' },
+    };
+    if (regionId) {
+      query.regionId =
+        typeof regionId === 'string' ? new Types.ObjectId(regionId) : regionId;
+    }
+    const profiles = await this.riderProfileModel
+      .find(query)
+      .select('email firstName')
+      .lean()
+      .exec();
+    return profiles
+      .filter((p) => p.email)
+      .map((p) => ({
+        email: p.email as string,
+        firstName: (p.firstName as string) || 'there',
+      }));
+  }
+
   // ============ CODE EXISTENCE CHECK ============
 
   async registrationCodeExists(code: string): Promise<boolean> {

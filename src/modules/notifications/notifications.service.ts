@@ -461,6 +461,10 @@ export class NotificationsService {
     orderNumber: string,
     orderId: string,
     isPickup: boolean,
+    pickupLocationName?: string,
+    pickupLocationAddress?: string,
+    pickupLocationLatitude?: number,
+    pickupLocationLongitude?: number,
   ): Promise<void> {
     const message = isPickup
       ? `Your order ${orderNumber} is ready for pickup.`
@@ -471,7 +475,15 @@ export class NotificationsService {
       NotificationType.ORDER_READY,
       'Order Ready',
       message,
-      { orderId, orderNumber, isPickup },
+      {
+        orderId,
+        orderNumber,
+        isPickup,
+        ...(pickupLocationName != null && { pickupLocationName }),
+        ...(pickupLocationAddress != null && { pickupLocationAddress }),
+        ...(pickupLocationLatitude != null && { pickupLocationLatitude }),
+        ...(pickupLocationLongitude != null && { pickupLocationLongitude }),
+      },
       [NotificationChannel.IN_APP, NotificationChannel.SMS],
     );
   }

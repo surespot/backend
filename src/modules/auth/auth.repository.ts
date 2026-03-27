@@ -94,6 +94,96 @@ export class AuthRepository {
   }
 
   /**
+   * Find users with email for newsletter (by role).
+   */
+  async findNewsletterRecipientsByRole(role: UserRole): Promise<
+    Array<{ email: string; firstName: string }>
+  > {
+    const users = await this.userModel
+      .find({
+        role,
+        email: { $exists: true, $ne: '' },
+        deletedAt: null,
+      })
+      .select('email firstName')
+      .lean()
+      .exec();
+    return users
+      .filter((u) => u.email)
+      .map((u) => ({
+        email: u.email as string,
+        firstName: (u.firstName as string) || 'there',
+      }));
+  }
+
+  /**
+   * Find users with email by IDs (for newsletter by pickup location).
+   */
+  async findNewsletterRecipientsByIds(
+    userIds: (string | Types.ObjectId)[],
+  ): Promise<Array<{ email: string; firstName: string }>> {
+    if (userIds.length === 0) return [];
+    const ids = userIds.map((id) =>
+      typeof id === 'string' ? new Types.ObjectId(id) : id,
+    );
+    const users = await this.userModel
+      .find({
+        _id: { $in: ids },
+        email: { $exists: true, $ne: '' },
+        deletedAt: null,
+      })
+      .select('email firstName')
+      .lean()
+      .exec();
+    return users
+      .filter((u) => u.email)
+      .map((u) => ({
+        email: u.email as string,
+        firstName: (u.firstName as string) || 'there',
+      }));
+  }
+
+  /**
+   * Find all active admin user IDs (for broadcasting admin notifications).
+   */
+  async findActiveAdminIds(): Promise<string[]> {
+    const admins = await this.userModel
+      .find({
+        role: UserRole.ADMIN,
+        isActive: true,
+        deletedAt: null,
+      })
+      .select('_id')
+      .lean()
+      .exec();
+    return admins.map((u) => (u._id as Types.ObjectId).toString());
+  }
+
+  /**
+   * Find users with pagination and query filter
+   */
+  async findUsersWithPagination(
+    query: Record<string, unknown>,
+    page: number,
+    limit: number,
+  ): Promise<UserDocument[]> {
+    const skip = (page - 1) * limit;
+    return this.userModel
+      .find(query)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .exec();
+  }
+
+  /**
+   * Count users with query filter
+   */
+  async countUsers(query: Record<string, unknown>): Promise<number> {
+    return this.userModel.countDocuments(query).exec();
+  }
+
+  /**
    * Find all active admin user IDs (for broadcasting admin notifications).
    */
   async findAdminUserIds(): Promise<string[]> {

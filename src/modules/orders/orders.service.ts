@@ -1275,6 +1275,7 @@ export class OrdersService {
       [OrderStatus.PREPARING]: [OrderStatus.READY, OrderStatus.CANCELLED],
       [OrderStatus.READY]: [
         OrderStatus.OUT_FOR_DELIVERY,
+        OrderStatus.DELIVERED,
         OrderStatus.CANCELLED,
       ],
       [OrderStatus.OUT_FOR_DELIVERY]: [OrderStatus.DELIVERED],
@@ -1396,12 +1397,36 @@ export class OrdersService {
           orderId,
         );
         break;
-      case DeliveryStatus.READY:
+      case DeliveryStatus.READY: {
+        let pickupLocationName: string | undefined;
+        let pickupLocationAddress: string | undefined;
+        let pickupLocationLatitude: number | undefined;
+        let pickupLocationLongitude: number | undefined;
+
+        // Pickup details are only required for pickup orders.
+        if (order.deliveryType === DeliveryType.PICKUP) {
+          const pickupLocationId = this.getPickupLocationIdString(
+            order.pickupLocationId,
+          );
+          if (pickupLocationId && Types.ObjectId.isValid(pickupLocationId)) {
+            const pickupLocation =
+              await this.pickupLocationsService.findOne(pickupLocationId);
+            pickupLocationName = pickupLocation.data?.name ?? undefined;
+            pickupLocationAddress = pickupLocation.data?.address ?? undefined;
+            pickupLocationLatitude = pickupLocation.data?.latitude ?? undefined;
+            pickupLocationLongitude =
+              pickupLocation.data?.longitude ?? undefined;
+          }
+        }
         await this.notificationsService.sendOrderReadyNotification(
           userId,
           order.orderNumber,
           orderId,
           order.deliveryType === DeliveryType.PICKUP,
+          pickupLocationName,
+          pickupLocationAddress,
+          pickupLocationLatitude,
+          pickupLocationLongitude,
         );
 
         // Find nearby active riders for door delivery orders
@@ -1409,6 +1434,7 @@ export class OrdersService {
           await this.findAndNotifyNearbyRiders(order);
         }
         break;
+      }
       case DeliveryStatus.RIDER_PICKED_UP: {
         // Fetch rider name if order is assigned to a rider
         let riderName: string | undefined;

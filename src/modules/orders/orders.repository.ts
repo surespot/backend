@@ -118,11 +118,9 @@ export class OrdersRepository {
     };
 
     // Generate a 4-digit delivery confirmation code for door-delivery orders
-    if (data.deliveryType === DeliveryType.DOOR_DELIVERY) {
       orderData.deliveryConfirmationCode = Math.floor(
         1000 + Math.random() * 9000,
       ).toString();
-    }
 
     if (data.promotionId) {
       orderData.promotionId = new Types.ObjectId(data.promotionId);
@@ -461,6 +459,54 @@ export class OrdersRepository {
         hasPrev: page > 1,
       },
     };
+  }
+
+  /**
+   * Find recent orders for a user (for analytics)
+   */
+  async findRecentUserOrders(
+    userId: string,
+    limit: number,
+  ): Promise<OrderDocument[]> {
+    this.validateObjectId(userId, 'userId');
+
+    return this.orderModel
+      .find({ userId: new Types.ObjectId(userId) })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .populate('pickupLocationId')
+      .exec();
+  }
+
+  /**
+   * Find distinct user IDs who have placed orders at a pickup location.
+   * Used for newsletter audience "pickup-locations".
+   */
+  async findDistinctUserIdsByPickupLocationId(
+    pickupLocationId: string | Types.ObjectId,
+  ): Promise<string[]> {
+    const id =
+      typeof pickupLocationId === 'string'
+        ? new Types.ObjectId(pickupLocationId)
+        : pickupLocationId;
+    const userIds = await this.orderModel
+      .distinct('userId', { pickupLocationId: id })
+      .exec();
+    return userIds.map((oid) => (oid as Types.ObjectId).toString());
+  }
+
+  /**
+   * Find orders by multiple pickup locations (for newsletter targeting)
+   */
+  async findOrdersByPickupLocations(
+    pickupLocationIds: string[],
+  ): Promise<Array<{ userId: Types.ObjectId }>> {
+    const objectIds = pickupLocationIds.map((id) => new Types.ObjectId(id));
+    return this.orderModel
+      .find({ pickupLocationId: { $in: objectIds } })
+      .select('userId')
+      .lean()
+      .exec() as Promise<Array<{ userId: Types.ObjectId }>>;
   }
 
   /**

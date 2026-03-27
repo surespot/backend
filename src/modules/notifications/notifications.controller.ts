@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Delete,
+  Patch,
   Body,
   Param,
   Query,
@@ -95,7 +96,7 @@ export class NotificationsController {
     return this.notificationsService.getUnreadCount(user.id);
   }
 
-  @Post(':notificationId/read')
+    @Patch(':notificationId/read')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mark a notification as read' })
   @ApiResponse({
@@ -113,7 +114,7 @@ export class NotificationsController {
     return this.notificationsService.markAsRead(user.id, notificationId);
   }
 
-  @Post('read-all')
+  @Patch('read-all')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mark all notifications as read' })
   @ApiResponse({

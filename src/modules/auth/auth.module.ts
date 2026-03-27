@@ -45,7 +45,7 @@ import { RidersModule } from '../riders/riders.module';
     }),
 
     // Mail module for sending OTP emails
-    MailModule,
+    forwardRef(() => MailModule),
 
     // SMS module for sending OTP SMS
     SmsModule,

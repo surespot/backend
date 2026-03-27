@@ -45,9 +45,10 @@ COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev && \
     npm install ts-node tsconfig-paths --save
 
-# Copy built application
+# Copy built application (Nest copies *.hbs into dist via nest-cli assets; also copy
+# templates from src so the image is valid even if the asset step is skipped.)
 COPY --from=build /app/dist ./dist
-COPY --from=build /app/scripts ./scripts
+COPY --from=build /app/src/modules/mail/templates ./dist/modules/mail/templates
 COPY --from=build /app/tsconfig.json ./
 
 # Ownership
@@ -61,4 +62,4 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=100s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:3000/docs || exit 1
 
-CMD ["node", "dist/src/main"]
+CMD ["node", "dist/main"]
