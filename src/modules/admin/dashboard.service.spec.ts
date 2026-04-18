@@ -29,7 +29,9 @@ describe('DashboardService', () => {
       getMenuItemPerformance: jest.fn(),
     };
 
-    const mockFoodItemsRepository = {};
+    const mockFoodItemsRepository = {
+      getRecentReviewsForDashboard: jest.fn().mockResolvedValue([]),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -147,12 +149,20 @@ describe('DashboardService', () => {
 
       ordersRepository.getHourlyOrderCounts.mockResolvedValue(hourlyData);
 
+      const singleDayRange = {
+        start: new Date('2026-02-10T08:00:00'),
+        end: new Date('2026-02-10T20:00:00'),
+      };
+
       const result = await service.getOrderTraffic(
         mockPickupLocationId,
-        mockDateRange,
+        singleDayRange,
       );
 
-      expect(result.date).toBe('2026-02-10');
+      const dayStart = new Date(singleDayRange.start);
+      dayStart.setHours(0, 0, 0, 0);
+      const expectedDateLabel = dayStart.toISOString().split('T')[0];
+      expect(result.date).toBe(expectedDateLabel);
       expect(result.buckets).toHaveLength(24);
       expect(result.buckets[12]).toEqual({
         timeLabel: '12PM',
@@ -234,13 +244,18 @@ describe('DashboardService', () => {
   });
 
   describe('getCustomerRatings', () => {
-    it('should return empty reviews array (not implemented yet)', async () => {
+    it('should return reviews from food items repository', async () => {
+      foodItemsRepository.getRecentReviewsForDashboard.mockResolvedValue([]);
+
       const result = await service.getCustomerRatings(
         mockPickupLocationId,
         mockDateRange,
       );
 
       expect(result.reviews).toEqual([]);
+      expect(
+        foodItemsRepository.getRecentReviewsForDashboard,
+      ).toHaveBeenCalledWith(mockPickupLocationId, mockDateRange);
     });
   });
 

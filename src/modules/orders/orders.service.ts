@@ -702,12 +702,25 @@ export class OrdersService {
         await session.endSession();
       }
 
+      if (!order) {
+        throw new InternalServerErrorException({
+          success: false,
+          error: {
+            code: 'ORDER_CREATE_FAILED',
+            message: 'Order creation did not return an order',
+          },
+        });
+      }
+
+      // Assigned inside withTransaction; TS does not narrow `order` across that callback.
+      let activeOrder: OrderDocument = order;
+
       // Clear cart (outside transaction — recoverable if it fails)
       try {
         await this.cartService.clearCartAfterOrder(userId);
       } catch (cartError) {
         this.logger.warn(
-          `Failed to clear cart after order ${order!.orderNumber} — cart may show stale items`,
+          `Failed to clear cart after order ${orderNumber} — cart may show stale items`,
           { error: cartError instanceof Error ? cartError.message : String(cartError) },
         );
       }
@@ -716,8 +729,8 @@ export class OrdersService {
       await this.notificationsService.sendOrderPlacedNotification(
         userId,
         orderNumber,
-        order._id.toString(),
-        order.total,
+        activeOrder._id.toString(),
+        activeOrder.total,
       );
 
       // Note: Admin notification for confirmed orders is sent in updatePaymentStatusByReference
@@ -726,12 +739,12 @@ export class OrdersService {
       // If payment was already successful (webhook/verify ran before order creation),
       // verify and update payment status now
       if (
-        order.paymentIntentId &&
-        order.paymentStatus === PaymentStatus.PENDING
+        activeOrder.paymentIntentId &&
+        activeOrder.paymentStatus === PaymentStatus.PENDING
       ) {
         try {
           const verification = await this.transactionsService.verifyPayment(
-            order.paymentIntentId,
+            activeOrder.paymentIntentId,
           );
           if (verification.success) {
             const updateData: any = {
@@ -740,21 +753,22 @@ export class OrdersService {
             };
 
             await this.ordersRepository.updateOrder(
-              order._id.toString(),
+              activeOrder._id.toString(),
               updateData,
             );
             const updatedOrder = await this.ordersRepository.findById(
-              order._id.toString(),
+              activeOrder._id.toString(),
             );
             if (updatedOrder) {
               order = updatedOrder;
+              activeOrder = updatedOrder;
 
               // Send confirmation code if generated
               if (
-                order.deliveryType === DeliveryType.DOOR_DELIVERY &&
-                order.deliveryConfirmationCode
+                activeOrder.deliveryType === DeliveryType.DOOR_DELIVERY &&
+                activeOrder.deliveryConfirmationCode
               ) {
-                const confirmationCode = order.deliveryConfirmationCode;
+                const confirmationCode = activeOrder.deliveryConfirmationCode;
 
                 // Send SMS
                 try {
@@ -766,7 +780,7 @@ export class OrdersService {
                       'Delivery Confirmation Code',
                       `Your delivery confirmation code for order ${orderNumber} is ${confirmationCode}. Share this code with your rider when they deliver your order.`,
                       {
-                        orderId: order._id.toString(),
+                        orderId: activeOrder._id.toString(),
                         orderNumber,
                         confirmationCode,
                         type: 'delivery_confirmation',
@@ -789,7 +803,7 @@ export class OrdersService {
                   userId,
                   'order:confirm_delivery',
                   {
-                    orderId: order._id.toString(),
+                    orderId: activeOrder._id.toString(),
                     orderNumber,
                     confirmationCode,
                     message: `Your delivery confirmation code is ${confirmationCode}. Share this code with your rider when they deliver your order.`,
@@ -805,7 +819,7 @@ export class OrdersService {
       }
 
       // Get formatted order
-      const formattedOrder = await this.formatOrder(order);
+      const formattedOrder = await this.formatOrder(activeOrder);
 
       return {
         success: true,
