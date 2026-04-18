@@ -1,16 +1,11 @@
 # Used by GitHub Actions for dev deployment - uses pre-built image from GHCR
-# Local development: use compose-dev.yml (builds from source)
+# Local development: use compose.yml (infrastructure) + npm run start:dev
 services:
   mongodb-dev:
     image: mongo:8.0
     container_name: surespot-mongodb-dev
     restart: unless-stopped
-    ports:
-      - '27017:27017'
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: surespot
-      MONGO_INITDB_ROOT_PASSWORD: surespot_dev_password
-      MONGO_INITDB_DATABASE: surespot
+    command: mongod --replSet rs0 --bind_ip_all
     volumes:
       - mongodb_dev_data:/data/db
       - mongodb_dev_config:/data/configdb
@@ -22,12 +17,23 @@ services:
       timeout: 5s
       retries: 5
 
+  mongodb-dev-init:
+    image: mongo:8.0
+    container_name: surespot-mongodb-dev-init
+    restart: 'no'
+    depends_on:
+      mongodb-dev:
+        condition: service_healthy
+    networks:
+      - surespot-dev-network
+    entrypoint: >
+      mongosh --host mongodb-dev --eval
+      "try { rs.status() } catch(e) { rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'mongodb-dev:27017' }] }) }"
+
   redis-dev:
     image: redis:latest
     container_name: surespot-redis-dev
     restart: unless-stopped
-    ports:
-      - '6379:6379'
     command: redis-server --appendonly yes --requirepass surespot_redis_password
     volumes:
       - redis_dev_data:/data
@@ -50,15 +56,58 @@ services:
     environment:
       NODE_ENV: development
       PORT: 4000
-      MONGODB_URI: mongodb://surespot:surespot_dev_password@mongodb-dev:27017/surespot?authSource=admin
+      MONGODB_URI: mongodb://surespot:surespot_dev_password@mongodb-dev:27017/surespot?authSource=admin&replicaSet=rs0
       REDIS_HOST: redis-dev
       REDIS_PORT: 6379
       REDIS_PASSWORD: surespot_redis_password
+      LOKI_URL: http://loki-dev:3100
     depends_on:
       mongodb-dev:
         condition: service_healthy
+      mongodb-dev-init:
+        condition: service_completed_successfully
       redis-dev:
         condition: service_healthy
+    networks:
+      - surespot-dev-network
+
+  prometheus-dev:
+    image: prom/prometheus:latest
+    container_name: surespot-prometheus-dev
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/prometheus-dev.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_dev_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=7d'
+    networks:
+      - surespot-dev-network
+
+  loki-dev:
+    image: grafana/loki:latest
+    container_name: surespot-loki-dev
+    restart: unless-stopped
+    volumes:
+      - loki_dev_data:/loki
+    networks:
+      - surespot-dev-network
+
+  grafana-dev:
+    image: grafana/grafana:latest
+    container_name: surespot-grafana-dev
+    restart: unless-stopped
+    ports:
+      - '3002:3000'
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-changeme}
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+    volumes:
+      - grafana_dev_data:/var/lib/grafana
+      - ./monitoring/grafana-dev/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus-dev
+      - loki-dev
     networks:
       - surespot-dev-network
 
@@ -68,6 +117,12 @@ volumes:
   mongodb_dev_config:
     driver: local
   redis_dev_data:
+    driver: local
+  prometheus_dev_data:
+    driver: local
+  loki_dev_data:
+    driver: local
+  grafana_dev_data:
     driver: local
 
 networks:

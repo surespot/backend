@@ -26,7 +26,7 @@ import { TransactionsService } from '../transactions/transactions.service';
 import { RiderLocationRepository } from '../riders/rider-location.repository';
 import { RidersRepository } from '../riders/riders.repository';
 import { RiderStatus } from '../riders/schemas/rider-profile.schema';
-import { Types } from 'mongoose';
+import { Types, ClientSession } from 'mongoose';
 import { ValidateCheckoutDto } from './dto/validate-checkout.dto';
 import { PlaceOrderDto } from './dto/place-order.dto';
 import { GetOrdersFilterDto } from './dto/get-orders-filter.dto';
@@ -628,76 +628,89 @@ export class OrdersService {
         }
       }
 
-      // Create order
-      order = await this.ordersRepository.createOrder({
-        orderNumber,
-        userId,
-        deliveryType: dto.deliveryType,
-        subtotal: validation.data.cart.subtotal,
-        extrasTotal: validation.data.cart.extrasTotal,
-        deliveryFee: validation.data.deliveryFee,
-        discountAmount: validation.data.cart.discountAmount,
-        discountPercent: validation.data.cart.discountPercent,
-        promoCode: validation.data.cart.promoCode,
-        promotionId,
-        total: validation.data.cart.total,
-        itemCount: cart.itemCount,
-        extrasCount: cart.extrasCount,
-        deliveryAddress,
-        pickupLocationId,
-        estimatedDeliveryTime: new Date(validation.data.estimatedDeliveryTime),
-        estimatedPreparationTime: validation.data.estimatedPreparationTime,
-        paymentMethod: dto.paymentMethod,
-        paymentIntentId: dto.paymentIntentId,
-        instructions: dto.instructions,
-      });
+      // Atomically create order, items, extras, and delivery status
+      const session = await this.ordersRepository.startSession();
+      try {
+        await session.withTransaction(async () => {
+          order = await this.ordersRepository.createOrder({
+            orderNumber,
+            userId,
+            deliveryType: dto.deliveryType,
+            subtotal: validation.data.cart.subtotal,
+            extrasTotal: validation.data.cart.extrasTotal,
+            deliveryFee: validation.data.deliveryFee,
+            discountAmount: validation.data.cart.discountAmount,
+            discountPercent: validation.data.cart.discountPercent,
+            promoCode: validation.data.cart.promoCode,
+            promotionId,
+            total: validation.data.cart.total,
+            itemCount: cart.itemCount,
+            extrasCount: cart.extrasCount,
+            deliveryAddress,
+            pickupLocationId,
+            estimatedDeliveryTime: new Date(
+              validation.data.estimatedDeliveryTime,
+            ),
+            estimatedPreparationTime: validation.data.estimatedPreparationTime,
+            paymentMethod: dto.paymentMethod,
+            paymentIntentId: dto.paymentIntentId,
+            instructions: dto.instructions,
+          }, session);
 
-      // Create order items
-      for (const item of items) {
-        const itemExtras = extras.get(item._id.toString()) || [];
-        const extrasTotal =
-          itemExtras.reduce((sum, e) => sum + e.price * e.quantity, 0) *
-          item.quantity;
-        const lineTotal = item.price * item.quantity + extrasTotal;
+          for (const item of items) {
+            const itemExtras = extras.get(item._id.toString()) || [];
+            const extrasTotal =
+              itemExtras.reduce((sum, e) => sum + e.price * e.quantity, 0) *
+              item.quantity;
+            const lineTotal = item.price * item.quantity + extrasTotal;
 
-        const orderItem = await this.ordersRepository.createOrderItem({
-          orderId: order._id.toString(),
-          foodItemId: item.foodItemId.toString(),
-          name: item.name,
-          description: item.description,
-          slug: item.slug,
-          price: item.price,
-          currency: item.currency,
-          imageUrl: item.imageUrl,
-          quantity: item.quantity,
-          estimatedTime: item.estimatedTime,
-          lineTotal,
+            const orderItem = await this.ordersRepository.createOrderItem({
+              orderId: order!._id.toString(),
+              foodItemId: item.foodItemId.toString(),
+              name: item.name,
+              description: item.description,
+              slug: item.slug,
+              price: item.price,
+              currency: item.currency,
+              imageUrl: item.imageUrl,
+              quantity: item.quantity,
+              estimatedTime: item.estimatedTime,
+              lineTotal,
+            }, session);
+
+            for (const extra of itemExtras) {
+              await this.ordersRepository.createOrderExtra({
+                orderItemId: orderItem._id.toString(),
+                foodExtraId: extra.foodExtraId.toString(),
+                name: extra.name,
+                description: extra.description,
+                imageUrl: extra.imageUrl,
+                price: extra.price,
+                currency: extra.currency,
+                quantity: extra.quantity,
+              }, session);
+            }
+          }
+
+          await this.ordersRepository.createDeliveryStatus({
+            orderId: order!._id.toString(),
+            status: DeliveryStatus.PENDING,
+            message: 'Order placed',
+          }, session);
         });
-
-        // Create order extras
-        for (const extra of itemExtras) {
-          await this.ordersRepository.createOrderExtra({
-            orderItemId: orderItem._id.toString(),
-            foodExtraId: extra.foodExtraId.toString(),
-            name: extra.name,
-            description: extra.description,
-            imageUrl: extra.imageUrl,
-            price: extra.price,
-            currency: extra.currency,
-            quantity: extra.quantity,
-          });
-        }
+      } finally {
+        await session.endSession();
       }
 
-      // Create initial delivery status
-      await this.ordersRepository.createDeliveryStatus({
-        orderId: order._id.toString(),
-        status: DeliveryStatus.PENDING,
-        message: 'Order placed',
-      });
-
-      // Clear cart
-      await this.cartService.clearCartAfterOrder(userId);
+      // Clear cart (outside transaction — recoverable if it fails)
+      try {
+        await this.cartService.clearCartAfterOrder(userId);
+      } catch (cartError) {
+        this.logger.warn(
+          `Failed to clear cart after order ${order!.orderNumber} — cart may show stale items`,
+          { error: cartError instanceof Error ? cartError.message : String(cartError) },
+        );
+      }
 
       // Send order placed notification to customer
       await this.notificationsService.sendOrderPlacedNotification(
@@ -1610,6 +1623,7 @@ export class OrdersService {
     reference: string,
     paymentStatus: PaymentStatus,
     refundId?: number,
+    session?: ClientSession,
   ): Promise<void> {
     const order = await this.ordersRepository.findByPaymentIntentId(reference);
 
@@ -1637,7 +1651,7 @@ export class OrdersService {
       updateData.status = OrderStatus.CONFIRMED;
     }
 
-    await this.ordersRepository.updateOrder(order._id.toString(), updateData);
+    await this.ordersRepository.updateOrder(order._id.toString(), updateData, session);
 
     // Reload order to get updated fields (like confirmation code)
     const updatedOrder = await this.ordersRepository.findById(

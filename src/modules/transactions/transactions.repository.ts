@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { InjectModel, InjectConnection } from '@nestjs/mongoose';
+import { Model, Types, ClientSession, Connection } from 'mongoose';
 import {
   Transaction,
   TransactionDocument,
@@ -14,7 +14,12 @@ export class TransactionsRepository {
   constructor(
     @InjectModel(Transaction.name)
     private transactionModel: Model<TransactionDocument>,
+    @InjectConnection() private connection: Connection,
   ) {}
+
+  async startSession(): Promise<ClientSession> {
+    return this.connection.startSession();
+  }
 
   private validateObjectId(id: string, fieldName: string): void {
     if (!Types.ObjectId.isValid(id)) {
@@ -292,6 +297,7 @@ export class TransactionsRepository {
       paidAt?: Date;
       refundedAt?: Date;
     },
+    session?: ClientSession,
   ): Promise<TransactionDocument | null> {
     const updateData: Record<string, unknown> = { status };
 
@@ -301,8 +307,9 @@ export class TransactionsRepository {
     if (data?.paidAt) updateData.paidAt = data.paidAt;
     if (data?.refundedAt) updateData.refundedAt = data.refundedAt;
 
+    const options = session ? { new: true, session } : { new: true };
     return this.transactionModel
-      .findOneAndUpdate({ reference }, { $set: updateData }, { new: true })
+      .findOneAndUpdate({ reference }, { $set: updateData }, options)
       .exec();
   }
 }

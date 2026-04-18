@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Model, Types, ClientSession } from 'mongoose';
 import { InjectConnection } from '@nestjs/mongoose';
 import { Connection } from 'mongoose';
 import {
@@ -45,6 +45,10 @@ export class OrdersRepository {
     private orderDeliveryStatusModel: Model<OrderDeliveryStatusDocument>,
     @InjectConnection() private connection: Connection,
   ) {}
+
+  async startSession(): Promise<ClientSession> {
+    return this.connection.startSession();
+  }
 
   private validateObjectId(id: string, fieldName: string): void {
     if (!Types.ObjectId.isValid(id)) {
@@ -91,7 +95,7 @@ export class OrdersRepository {
     paymentMethod?: string;
     paymentIntentId?: string;
     instructions?: string;
-  }): Promise<OrderDocument> {
+  }, session?: ClientSession): Promise<OrderDocument> {
     this.validateObjectId(data.userId, 'userId');
 
     const orderData: Record<string, unknown> = {
@@ -132,7 +136,7 @@ export class OrdersRepository {
     }
 
     const order = new this.orderModel(orderData);
-    return order.save();
+    return order.save(session ? { session } : {});
   }
 
   async findById(id: string): Promise<OrderDocument | null> {
@@ -339,6 +343,7 @@ export class OrdersRepository {
       refundId: number;
       hasBeenRefunded: boolean;
     }>,
+    session?: ClientSession,
   ): Promise<OrderDocument | null> {
     this.validateObjectId(id, 'orderId');
 
@@ -363,8 +368,9 @@ export class OrdersRepository {
       updateData.transactionId = new Types.ObjectId(data.transactionId);
     }
 
+    const options = session ? { new: true, session } : { new: true };
     return this.orderModel
-      .findByIdAndUpdate(id, { $set: updateData }, { new: true })
+      .findByIdAndUpdate(id, { $set: updateData }, options)
       .populate('pickupLocationId')
       .exec();
   }
@@ -646,7 +652,7 @@ export class OrdersRepository {
     quantity: number;
     estimatedTime: { min: number; max: number };
     lineTotal: number;
-  }): Promise<OrderItemDocument> {
+  }, session?: ClientSession): Promise<OrderItemDocument> {
     this.validateObjectId(data.orderId, 'orderId');
     this.validateObjectId(data.foodItemId, 'foodItemId');
 
@@ -663,7 +669,7 @@ export class OrdersRepository {
       estimatedTime: data.estimatedTime,
       lineTotal: data.lineTotal,
     });
-    return orderItem.save();
+    return orderItem.save(session ? { session } : {});
   }
 
   async findOrderItemsByOrderId(orderId: string): Promise<OrderItemDocument[]> {
@@ -715,7 +721,7 @@ export class OrdersRepository {
     price: number;
     currency: string;
     quantity: number;
-  }): Promise<OrderExtraDocument> {
+  }, session?: ClientSession): Promise<OrderExtraDocument> {
     this.validateObjectId(data.orderItemId, 'orderItemId');
     this.validateObjectId(data.foodExtraId, 'foodExtraId');
 
@@ -729,7 +735,7 @@ export class OrdersRepository {
       currency: data.currency,
       quantity: data.quantity,
     });
-    return orderExtra.save();
+    return orderExtra.save(session ? { session } : {});
   }
 
   async findOrderExtrasByOrderItemId(
@@ -750,7 +756,7 @@ export class OrdersRepository {
     updatedBy?: string;
     latitude?: number;
     longitude?: number;
-  }): Promise<OrderDeliveryStatusDocument> {
+  }, session?: ClientSession): Promise<OrderDeliveryStatusDocument> {
     this.validateObjectId(data.orderId, 'orderId');
 
     const statusData: Record<string, unknown> = {
@@ -772,7 +778,7 @@ export class OrdersRepository {
     }
 
     const deliveryStatus = new this.orderDeliveryStatusModel(statusData);
-    return deliveryStatus.save();
+    return deliveryStatus.save(session ? { session } : {});
   }
 
   async findDeliveryStatusHistory(
