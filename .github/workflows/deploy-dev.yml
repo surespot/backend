@@ -78,6 +78,9 @@ jobs:
           script: |
             set -e
             cd /opt/surespot-backend
+            git fetch origin
+            git checkout dev
+            git pull --ff-only origin dev
             export APP_IMAGE=${{ env.REGISTRY }}/${{ github.repository }}:dev
             docker compose -f compose-dev-deploy.yml pull
             docker compose -f compose-dev-deploy.yml up -d

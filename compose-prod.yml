@@ -16,6 +16,16 @@ services:
       timeout: 5s
       retries: 5
 
+  seed:
+    image: ${APP_IMAGE:-ghcr.io/surespot/backend:prod}
+    container_name: surespot-seed-prod
+    restart: 'no'
+    env_file:
+      - .env.production
+    entrypoint: npx ts-node -r tsconfig-paths/register scripts/seed.ts
+    networks:
+      - surespot-prod-network
+
   app:
     image: ${APP_IMAGE:-ghcr.io/surespot/backend:prod}
     container_name: surespot-app-prod
@@ -34,6 +44,8 @@ services:
     depends_on:
       redis-prod:
         condition: service_healthy
+      seed:
+        condition: service_completed_successfully
     networks:
       - surespot-prod-network
 
