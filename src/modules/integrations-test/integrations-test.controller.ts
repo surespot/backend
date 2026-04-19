@@ -1,5 +1,6 @@
 import { Controller, Get, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { PublicInDevelopment } from '../auth/decorators/public.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -17,10 +18,11 @@ export class IntegrationsTestController {
   ) {}
 
   @Get()
+  @PublicInDevelopment()
   @ApiOperation({
     summary: 'Test external integrations',
     description:
-      'Runs connectivity checks for Paystack, SMS, Storage (Cloudinary/S3), Redis, and Mail. Admin only. No charges or real messages sent.',
+      'Runs connectivity checks for Paystack, SMS, Storage (Cloudinary/S3), Redis, and Mail. No charges or real messages sent. In NODE_ENV=development this route is public; otherwise admin JWT required.',
   })
   async checkAll() {
     const results = await this.integrationsTestService.checkAll();

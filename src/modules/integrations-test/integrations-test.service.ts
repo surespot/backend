@@ -3,7 +3,12 @@ import { ConfigService } from '@nestjs/config';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { v2 as cloudinary } from 'cloudinary';
-import { S3Client, ListBucketsCommand } from '@aws-sdk/client-s3';
+import { randomUUID } from 'crypto';
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+} from '@aws-sdk/client-s3';
 import * as nodemailer from 'nodemailer';
 import axios from 'axios';
 import { existsSync, readdirSync } from 'fs';
@@ -251,10 +256,12 @@ export class IntegrationsTestService {
       }
     }
 
-    // S3
+    // S3 — put + delete a tiny object in the configured bucket (same auth path as uploads)
     const accessKey = this.configService.get<string>('AWS_ACCESS_KEY_ID');
     const secretKey = this.configService.get<string>('AWS_SECRET_ACCESS_KEY');
     const region = this.configService.get<string>('AWS_REGION') ?? 'us-east-1';
+    const bucket =
+      this.configService.get<string>('S3_BUCKET_NAME') ?? 'surespot-uploads';
 
     if (!accessKey || !secretKey) {
       return {
@@ -271,13 +278,28 @@ export class IntegrationsTestService {
         credentials: { accessKeyId: accessKey, secretAccessKey: secretKey },
       });
 
-      await client.send(new ListBucketsCommand({}));
+      const key = `surespot/_integrations_health/${randomUUID()}.txt`;
+      await client.send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          Body: 'ok',
+          ContentType: 'text/plain',
+        }),
+      );
+      await client.send(
+        new DeleteObjectCommand({
+          Bucket: bucket,
+          Key: key,
+        }),
+      );
 
       return {
         name: 'Storage (S3)',
         configured: true,
         ok: true,
-        message: 'Connected',
+        message: 'Connected (write + delete ok)',
+        details: { bucket, region },
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -286,6 +308,7 @@ export class IntegrationsTestService {
         configured: true,
         ok: false,
         message,
+        details: { bucket, region },
       };
     }
   }
