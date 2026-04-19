@@ -22,7 +22,7 @@ services:
     restart: 'no'
     env_file:
       - .env.production
-    entrypoint: node_modules/.bin/ts-node -r tsconfig-paths/register scripts/seed.ts
+    entrypoint: /app/node_modules/.bin/ts-node -r tsconfig-paths/register scripts/seed.ts
     networks:
       - surespot-prod-network
 
