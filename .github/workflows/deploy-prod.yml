@@ -82,7 +82,7 @@ jobs:
             cd /opt/surespot-backend
             git fetch origin
             git clean -fd
-            git checkout main
+            git checkout -f main
             git reset --hard origin/main
             export APP_IMAGE=${{ env.REGISTRY }}/${{ github.repository }}:prod
             docker compose -f compose-prod.yml pull
