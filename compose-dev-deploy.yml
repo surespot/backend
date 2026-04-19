@@ -45,6 +45,22 @@ services:
       timeout: 5s
       retries: 5
 
+  seed:
+    image: ${APP_IMAGE}
+    container_name: surespot-seed-dev
+    restart: 'no'
+    environment:
+      MONGODB_URI: mongodb://surespot:surespot_dev_password@mongodb-dev:27017/surespot?authSource=admin&replicaSet=rs0
+      MONGODB_DB_NAME: surespot
+    entrypoint: npx ts-node -r tsconfig-paths/register scripts/seed.ts
+    depends_on:
+      mongodb-dev:
+        condition: service_healthy
+      mongodb-dev-init:
+        condition: service_completed_successfully
+    networks:
+      - surespot-dev-network
+
   app:
     image: ${APP_IMAGE}
     container_name: surespot-app-dev
@@ -65,6 +81,8 @@ services:
       mongodb-dev:
         condition: service_healthy
       mongodb-dev-init:
+        condition: service_completed_successfully
+      seed:
         condition: service_completed_successfully
       redis-dev:
         condition: service_healthy

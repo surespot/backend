@@ -50,6 +50,7 @@ RUN npm ci --omit=dev && \
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/src/modules/mail/templates ./dist/modules/mail/templates
 COPY --from=build /app/tsconfig.json ./
+COPY --from=build /app/scripts ./scripts
 
 # Ownership
 RUN chown -R nestjs:nodejs /app
