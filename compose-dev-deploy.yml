@@ -52,7 +52,7 @@ services:
     environment:
       MONGODB_URI: mongodb://surespot:surespot_dev_password@mongodb-dev:27017/surespot?authSource=admin&replicaSet=rs0
       MONGODB_DB_NAME: surespot
-    entrypoint: npx ts-node -r tsconfig-paths/register scripts/seed.ts
+    entrypoint: node_modules/.bin/ts-node -r tsconfig-paths/register scripts/seed.ts
     depends_on:
       mongodb-dev:
         condition: service_healthy
