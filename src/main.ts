@@ -7,6 +7,7 @@ import { RedisIoAdapter } from './common/websocket/redis-io.adapter';
 import helmet from 'helmet';
 import { validateEnv } from './common/config/env.validation';
 import { GlobalExceptionFilter } from './common/filters/http-exception.filter';
+import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const morgan = require('morgan') as typeof import('morgan');
 
@@ -15,7 +16,10 @@ async function bootstrap() {
     validateEnv();
   }
 
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+
+  // Route all NestJS Logger (new Logger()) calls through Winston → Loki
+  app.useLogger(app.get(WINSTON_MODULE_NEST_PROVIDER));
 
   const configService = app.get(ConfigService);
 
