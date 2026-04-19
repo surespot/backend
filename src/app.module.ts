@@ -31,6 +31,7 @@ import { AdminModule } from './modules/admin/admin.module';
 import { IntegrationsTestModule } from './modules/integrations-test/integrations-test.module';
 import { HealthModule } from './modules/health/health.module';
 import { CorrelationMiddleware } from './common/correlation/correlation.middleware';
+import { HttpMetricsMiddleware } from './common/metrics/http-metrics.middleware';
 
 @Module({
   imports: [
@@ -199,6 +200,6 @@ import { CorrelationMiddleware } from './common/correlation/correlation.middlewa
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(CorrelationMiddleware).forRoutes('*');
+    consumer.apply(CorrelationMiddleware, HttpMetricsMiddleware).forRoutes('*');
   }
 }

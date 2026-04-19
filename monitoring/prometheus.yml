@@ -5,4 +5,8 @@ scrape_configs:
   - job_name: surespot-backend
     static_configs:
       - targets: ['app:3000']
+        labels:
+          group: surespot-backend
+          stack: prod
+          service: surespot-backend-prod
     metrics_path: /metrics
