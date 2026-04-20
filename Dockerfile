@@ -42,8 +42,7 @@ RUN addgroup -g 1001 -S nodejs && \
 COPY package.json package-lock.json* ./
 
 # Install production deps + ts-node/tsconfig-paths for seed script
-RUN npm ci --omit=dev && \
-    npm install --no-save ts-node tsconfig-paths
+RUN npm ci --omit=dev
 
 # Copy built application (Nest copies *.hbs into dist via nest-cli assets; also copy
 # templates from src so the image is valid even if the asset step is skipped.)
