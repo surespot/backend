@@ -42,6 +42,7 @@ import { OrderItemDocument } from './schemas/order-item.schema';
 import { OrderExtraDocument } from './schemas/order-extra.schema';
 import { DeliveryStatus } from './schemas/order-delivery-status.schema';
 import { PickupLocationDocument } from '../pickup-locations/schemas/pickup-location.schema';
+import { PickupLocationsRepository } from '../pickup-locations/pickup-locations.repository';
 import { WalletsService } from '../wallets/wallets.service';
 import { ChatService } from '../chat/chat.service';
 import { AuthRepository } from '../auth/auth.repository';
@@ -134,7 +135,9 @@ export class OrdersService {
   private readonly EXTRA_ITEMS_THRESHOLD = 5;
 
   // Delivery time estimation (in minutes)
-  private readonly DELIVERY_TIME_PER_KM = 3; // 3 minutes per km
+  // Riders travel at 15 km/h → 60/15 = 4 minutes per km
+  private readonly DELIVERY_TIME_PER_KM = 4;
+  private readonly PREP_TIME_MINUTES = 25; // kitchen prep + rider dispatch
 
   private readonly logger = new Logger(OrdersService.name);
 
@@ -161,6 +164,7 @@ export class OrdersService {
     private readonly adminGateway: any,
     @Inject(forwardRef(() => AdminMenuRepository))
     private readonly adminMenuRepository: AdminMenuRepository | null,
+    private readonly pickupLocationsRepository: PickupLocationsRepository,
   ) {}
 
   private formatPrice(price: number, currency: string = 'NGN'): string {
@@ -253,6 +257,52 @@ export class OrdersService {
     const count = await this.ordersRepository.countOrdersForYear(year);
     const sequence = String(count + 1).padStart(6, '0');
     return `ORD-${year}-${sequence}`;
+  }
+
+  private isDemoUser(userId: string): boolean {
+    const demoId = process.env.DEMO_USER_ID;
+    return (
+      process.env.NODE_ENV !== 'production' &&
+      !!demoId &&
+      userId === demoId
+    );
+  }
+
+  private async advanceDemoOrderStatus(order: OrderDocument): Promise<void> {
+    const sequence: OrderStatus[] = [
+      OrderStatus.CONFIRMED,
+      OrderStatus.PREPARING,
+      OrderStatus.READY,
+      OrderStatus.OUT_FOR_DELIVERY,
+      OrderStatus.DELIVERED,
+    ];
+
+    const deliveryStatusMap: Partial<Record<OrderStatus, DeliveryStatus>> = {
+      [OrderStatus.PREPARING]: DeliveryStatus.PREPARING,
+      [OrderStatus.READY]: DeliveryStatus.READY,
+      [OrderStatus.OUT_FOR_DELIVERY]: DeliveryStatus.RIDER_PICKED_UP,
+      [OrderStatus.DELIVERED]: DeliveryStatus.DELIVERED,
+    };
+
+    const currentIndex = sequence.indexOf(order.status);
+    if (currentIndex === -1 || currentIndex === sequence.length - 1) return;
+
+    const nextStatus = sequence[currentIndex + 1];
+
+    const updateData: Record<string, unknown> = { status: nextStatus };
+    if (nextStatus === OrderStatus.DELIVERED) updateData.deliveredAt = new Date();
+
+    await this.ordersRepository.updateOrder(order._id.toString(), updateData as any);
+
+    const deliveryStatus = deliveryStatusMap[nextStatus];
+    if (deliveryStatus) {
+      await this.ordersRepository.createDeliveryStatus({
+        orderId: order._id.toString(),
+        status: deliveryStatus,
+        message: 'demo',
+        updatedBy: order.userId.toString(),
+      });
+    }
   }
 
   /**
@@ -382,6 +432,12 @@ export class OrdersService {
       }
     } else {
       // Pickup - need pickup location
+      // Demo mode: auto-assign first active location when none provided
+      if (!dto.pickupLocationId && this.isDemoUser(userId)) {
+        const fallback = await this.pickupLocationsRepository.findFirstActive();
+        if (fallback) dto = { ...dto, pickupLocationId: fallback._id.toString() };
+      }
+
       if (dto.pickupLocationId) {
         try {
           const location = await this.pickupLocationsService.findOne(
@@ -474,11 +530,15 @@ export class OrdersService {
       subtotal + extrasTotal + deliveryFee - discountAmount,
     );
 
-    // Hardcode estimated time: 1 hour from when the order is made
-    const ONE_HOUR_MINUTES = 60;
+    const ridingMinutes = this.isDemoUser(userId)
+      ? 0
+      : Math.round(distanceKm * this.DELIVERY_TIME_PER_KM);
+    const totalMinutes = this.isDemoUser(userId)
+      ? 5
+      : this.PREP_TIME_MINUTES + ridingMinutes;
     const estimatedDeliveryTime = new Date();
     estimatedDeliveryTime.setMinutes(
-      estimatedDeliveryTime.getMinutes() + ONE_HOUR_MINUTES,
+      estimatedDeliveryTime.getMinutes() + totalMinutes,
     );
 
     const isValid = errors.length === 0;
@@ -508,7 +568,7 @@ export class OrdersService {
         },
         deliveryFee,
         estimatedDeliveryTime: estimatedDeliveryTime.toISOString(),
-        estimatedPreparationTime: ONE_HOUR_MINUTES,
+        estimatedPreparationTime: totalMinutes,
         errors: errors.length > 0 ? errors : undefined,
         warnings: warnings.length > 0 ? warnings : undefined,
       },
@@ -697,6 +757,18 @@ export class OrdersService {
             status: DeliveryStatus.PENDING,
             message: 'Order placed',
           }, session);
+        });
+      } catch (transactionError) {
+        this.logger.error(
+          `Transaction failed while creating order ${orderNumber}`,
+          transactionError instanceof Error ? transactionError.stack : String(transactionError),
+        );
+        throw new InternalServerErrorException({
+          success: false,
+          error: {
+            code: 'ORDER_TRANSACTION_FAILED',
+            message: 'Failed to create order due to database error',
+          },
         });
       } finally {
         await session.endSession();
@@ -1147,7 +1219,7 @@ export class OrdersService {
    * Get order tracking information
    */
   async getOrderTracking(userId: string, orderId: string) {
-    const order = await this.ordersRepository.findById(orderId);
+    let order = await this.ordersRepository.findById(orderId);
 
     if (!order) {
       throw new NotFoundException({
@@ -1168,6 +1240,11 @@ export class OrdersService {
           message: 'You do not have access to this order',
         },
       });
+    }
+
+    if (this.isDemoUser(userId)) {
+      await this.advanceDemoOrderStatus(order);
+      order = (await this.ordersRepository.findById(orderId))!;
     }
 
     // Get status history

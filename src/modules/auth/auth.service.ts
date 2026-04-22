@@ -2741,6 +2741,16 @@ export class AuthService {
     message: string;
     data: { email: string; isEmailVerified: boolean };
   }> {
+    // Demo mode: skip OTP validation entirely
+    if (process.env.NODE_ENV !== 'production' && userId === process.env.DEMO_USER_ID) {
+      await this.authRepository.updateUser(userId, { email: dto.email, isEmailVerified: true });
+      return {
+        success: true,
+        message: 'Email verified and added to account successfully',
+        data: { email: dto.email, isEmailVerified: true },
+      };
+    }
+
     const startTime = Date.now();
     const maskedEmail = this.maskEmail(dto.email);
     const maskedOtp = this.maskOtp();
@@ -3199,6 +3209,12 @@ export class AuthService {
     newPhone: string,
     otp: string,
   ): Promise<{ success: boolean; message: string }> {
+    // Demo mode: skip OTP validation entirely
+    if (process.env.NODE_ENV !== 'production' && userId === process.env.DEMO_USER_ID) {
+      await this.authRepository.updateUser(userId, { phone: newPhone, isPhoneVerified: true });
+      return { success: true, message: 'Phone number updated successfully' };
+    }
+
     const otpRecord = await this.authRepository.findLatestOtpCode(newPhone, OtpPurpose.PHONE_CHANGE);
 
     if (!otpRecord) {

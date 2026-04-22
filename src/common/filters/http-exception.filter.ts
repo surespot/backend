@@ -44,10 +44,15 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     }
 
     // Truly unexpected error — log and return a generic 500
+    const errorMessage = exception instanceof Error ? exception.message : String(exception);
+    const errorStack = exception instanceof Error ? exception.stack : undefined;
+    
     this.logger.error(
-      `Unhandled exception on ${request.method} ${request.url}`,
-      exception instanceof Error ? exception.stack : String(exception),
+      `Unhandled exception on ${request.method} ${request.url}: ${errorMessage}`,
     );
+    if (errorStack) {
+      this.logger.error(errorStack);
+    }
 
     response.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
       success: false,

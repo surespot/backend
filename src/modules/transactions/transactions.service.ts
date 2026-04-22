@@ -705,6 +705,12 @@ export class TransactionsService {
           );
         }
       });
+    } catch (error) {
+      this.logger.error(
+        `Failed to process charge.success webhook for reference ${reference}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+      throw error;
     } finally {
       await session.endSession();
     }
