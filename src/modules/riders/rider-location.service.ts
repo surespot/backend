@@ -20,11 +20,11 @@ export class RiderLocationService {
     data: {
       id: string;
       riderProfileId: string;
-      streetAddress: string;
+      streetAddress?: string;
       latitude: number;
       longitude: number;
       state?: string;
-      country: string;
+      country?: string;
       regionId?: string;
       lastUpdated: Date;
     };
@@ -79,11 +79,11 @@ export class RiderLocationService {
     data: {
       id: string;
       riderProfileId: string;
-      streetAddress: string;
+      streetAddress?: string;
       latitude: number;
       longitude: number;
       state?: string;
-      country: string;
+      country?: string;
       regionId?: string;
       lastUpdated: Date;
     };

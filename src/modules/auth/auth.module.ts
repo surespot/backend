@@ -22,6 +22,9 @@ import {
 import { MailModule } from '../mail/mail.module';
 import { SmsModule } from '../sms/sms.module';
 import { RidersModule } from '../riders/riders.module';
+import { SavedLocationsModule } from '../saved-locations/saved-locations.module';
+import { CartModule } from '../cart/cart.module';
+import { UserCleanupScheduler } from './user-cleanup.scheduler';
 
 @Module({
   imports: [
@@ -50,6 +53,8 @@ import { RidersModule } from '../riders/riders.module';
     // SMS module for sending OTP SMS
     SmsModule,
     forwardRef(() => RidersModule),
+    forwardRef(() => SavedLocationsModule),
+    forwardRef(() => CartModule),
   ],
   controllers: [AuthController],
   providers: [
@@ -58,6 +63,7 @@ import { RidersModule } from '../riders/riders.module';
     JwtStrategy,
     GoogleStrategy,
     RolesGuard,
+    UserCleanupScheduler,
   ],
   exports: [AuthService, AuthRepository, JwtStrategy, RolesGuard],
 })

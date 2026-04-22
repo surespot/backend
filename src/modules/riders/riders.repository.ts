@@ -101,6 +101,27 @@ export class RidersRepository {
     return this.riderProfileModel.findOne({ userId: userIdObjectId }).exec();
   }
 
+  async anonymizeByUserId(userId: string | Types.ObjectId): Promise<void> {
+    const userIdObjectId =
+      typeof userId === 'string' ? new Types.ObjectId(userId) : userId;
+    await this.riderProfileModel
+      .findOneAndUpdate(
+        { userId: userIdObjectId },
+        {
+          $set: {
+            firstName: null,
+            lastName: null,
+            phone: null,
+            email: null,
+            dateOfBirth: null,
+            address: null,
+            nin: null,
+          },
+        },
+      )
+      .exec();
+  }
+
   async updateProfile(
     id: string | Types.ObjectId,
     updates: Partial<RiderProfile>,

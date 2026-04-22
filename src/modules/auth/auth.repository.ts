@@ -244,6 +244,33 @@ export class AuthRepository {
       .exec();
   }
 
+  async findUsersToAnonymize(): Promise<UserDocument[]> {
+    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    return this.userModel
+      .find({ deletedAt: { $lte: cutoff }, anonymizedAt: null })
+      .exec();
+  }
+
+  async anonymizeUser(userId: string | Types.ObjectId): Promise<void> {
+    await this.userModel
+      .findByIdAndUpdate(userId, {
+        $set: {
+          firstName: 'Deleted',
+          lastName: 'User',
+          email: null,
+          phone: null,
+          password: null,
+          avatar: null,
+          googleId: null,
+          appleId: null,
+          birthday: null,
+          expoPushTokens: [],
+          anonymizedAt: new Date(),
+        },
+      })
+      .exec();
+  }
+
   // ============ OTP CODE METHODS ============
 
   async createOtpCode(

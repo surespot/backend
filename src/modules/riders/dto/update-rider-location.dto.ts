@@ -9,13 +9,13 @@ import {
 } from 'class-validator';
 
 export class UpdateRiderLocationDto {
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Street address',
     example: '123 Main Street',
   })
   @IsString()
-  @IsNotEmpty()
-  streetAddress: string;
+  @IsOptional()
+  streetAddress?: string;
 
   @ApiProperty({
     description: 'Latitude coordinate',
@@ -43,14 +43,13 @@ export class UpdateRiderLocationDto {
   @IsOptional()
   state?: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Country',
     example: 'Nigeria',
-    default: 'Nigeria',
   })
   @IsString()
-  @IsNotEmpty()
-  country: string;
+  @IsOptional()
+  country?: string;
 
   @ApiPropertyOptional({
     description: 'Region ID',

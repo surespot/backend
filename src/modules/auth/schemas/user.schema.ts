@@ -69,6 +69,9 @@ export class User {
   @Prop()
   deletedAt?: Date;
 
+  @Prop()
+  anonymizedAt?: Date;
+
   @Prop({ type: [String], default: [] })
   expoPushTokens?: string[];
 

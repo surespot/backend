@@ -1832,6 +1832,19 @@ export class AuthService {
       await this.authRepository.revokeRefreshToken(tokenRecord._id);
     }
 
+    if (dto.expoPushToken && tokenRecord?.userId) {
+      const user = await this.authRepository.findUserById(
+        tokenRecord.userId.toString(),
+      );
+      if (user?.expoPushTokens?.length) {
+        await this.authRepository.updateUser(tokenRecord.userId.toString(), {
+          expoPushTokens: user.expoPushTokens.filter(
+            (t) => t !== dto.expoPushToken,
+          ),
+        });
+      }
+    }
+
     return {
       success: true,
       message: 'Logged out successfully',
@@ -3080,5 +3093,195 @@ export class AuthService {
         },
       });
     }
+  }
+
+  // ============ PROFILE UPDATE ============
+
+  async updateProfile(
+    userId: string,
+    dto: { firstName?: string; lastName?: string },
+  ): Promise<{ success: boolean; message: string; data: { firstName: string; lastName: string } }> {
+    const updates: Partial<{ firstName: string; lastName: string }> = {};
+    if (dto.firstName !== undefined) updates.firstName = dto.firstName.trim();
+    if (dto.lastName !== undefined) updates.lastName = dto.lastName.trim();
+
+    if (Object.keys(updates).length === 0) {
+      throw new BadRequestException({
+        success: false,
+        error: { code: 'NO_CHANGES', message: 'No fields provided to update' },
+      });
+    }
+
+    const updated = await this.authRepository.updateUser(userId, updates);
+    if (!updated) {
+      throw new NotFoundException({
+        success: false,
+        error: { code: 'USER_NOT_FOUND', message: 'User not found' },
+      });
+    }
+
+    return {
+      success: true,
+      message: 'Profile updated successfully',
+      data: {
+        firstName: updated.firstName ?? '',
+        lastName: updated.lastName ?? '',
+      },
+    };
+  }
+
+  // ============ PHONE CHANGE FLOW ============
+
+  async changePhoneRequest(
+    userId: string,
+    newPhone: string,
+  ): Promise<{ success: boolean; message: string; data: { expiresIn: number; retryAfter: number } }> {
+    // Ensure new number isn't already taken
+    const existing = await this.authRepository.findUserByPhone(newPhone);
+    if (existing) {
+      throw new ConflictException({
+        success: false,
+        error: { code: 'PHONE_TAKEN', message: 'This phone number is already associated with an account' },
+      });
+    }
+
+    // Rate-limit check
+    const latestOtp = await this.authRepository.findLatestOtpCode(newPhone, OtpPurpose.PHONE_CHANGE);
+    if (latestOtp?.createdAt) {
+      const elapsed = (Date.now() - latestOtp.createdAt.getTime()) / 1000;
+      if (elapsed < this.otpResendSeconds) {
+        throw new BadRequestException({
+          success: false,
+          error: {
+            code: 'OTP_RATE_LIMITED',
+            message: 'Please wait before requesting another OTP',
+            details: { retryAfter: Math.ceil(this.otpResendSeconds - elapsed) },
+          },
+        });
+      }
+    }
+
+    const otpCode = this.generateOtpCode();
+    const expiresAt = new Date(Date.now() + this.otpExpiryMinutes * 60 * 1000);
+
+    await this.authRepository.invalidateOtpCodes(newPhone, OtpPurpose.PHONE_CHANGE);
+    await this.authRepository.createOtpCode(newPhone, otpCode, OtpPurpose.PHONE_CHANGE, expiresAt);
+
+    const maskedPhone = this.maskPhone(newPhone);
+    try {
+      await this.smsService.sendOtp(newPhone, {
+        otpCode,
+        purpose: 'PHONE_CHANGE',
+        expiresInMinutes: this.otpExpiryMinutes,
+      });
+      this.logger.info('Phone change OTP sent', { context: 'AuthService', method: 'changePhoneRequest', phone: maskedPhone });
+    } catch (smsError) {
+      this.logger.error('Failed to send phone change OTP', {
+        context: 'AuthService',
+        method: 'changePhoneRequest',
+        phone: maskedPhone,
+        error: smsError instanceof Error ? smsError.message : String(smsError),
+      });
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`Phone change OTP for ${newPhone}: ${otpCode}`);
+      }
+    }
+
+    return {
+      success: true,
+      message: `OTP sent to ${maskedPhone}`,
+      data: { expiresIn: this.otpExpiryMinutes * 60, retryAfter: this.otpResendSeconds },
+    };
+  }
+
+  async changePhoneVerify(
+    userId: string,
+    newPhone: string,
+    otp: string,
+  ): Promise<{ success: boolean; message: string }> {
+    const otpRecord = await this.authRepository.findLatestOtpCode(newPhone, OtpPurpose.PHONE_CHANGE);
+
+    if (!otpRecord) {
+      throw new BadRequestException({
+        success: false,
+        error: { code: 'OTP_INVALID', message: 'Invalid or expired OTP' },
+      });
+    }
+
+    if (otpRecord.attempts >= this.maxOtpAttempts) {
+      throw new BadRequestException({
+        success: false,
+        error: { code: 'OTP_MAX_ATTEMPTS', message: 'Maximum OTP verification attempts exceeded' },
+      });
+    }
+
+    if (otpRecord.code !== otp) {
+      await this.authRepository.incrementOtpAttempts(otpRecord._id);
+      throw new BadRequestException({
+        success: false,
+        error: { code: 'OTP_INVALID', message: 'Invalid OTP code' },
+      });
+    }
+
+    if (otpRecord.expiresAt < new Date()) {
+      throw new BadRequestException({
+        success: false,
+        error: { code: 'OTP_EXPIRED', message: 'OTP has expired' },
+      });
+    }
+
+    // Final check — number still available (race condition guard)
+    const existing = await this.authRepository.findUserByPhone(newPhone);
+    if (existing) {
+      throw new ConflictException({
+        success: false,
+        error: { code: 'PHONE_TAKEN', message: 'This phone number is already associated with an account' },
+      });
+    }
+
+    await this.authRepository.markOtpAsVerified(otpRecord._id);
+    await this.authRepository.updateUser(userId, { phone: newPhone, isPhoneVerified: true });
+
+    return { success: true, message: 'Phone number updated successfully' };
+  }
+
+  async deleteAccount(
+    userId: string,
+  ): Promise<{ success: boolean; message: string }> {
+    const user = await this.authRepository.findUserById(userId);
+    if (!user) {
+      throw new NotFoundException({
+        success: false,
+        error: { code: 'USER_NOT_FOUND', message: 'User not found' },
+      });
+    }
+
+    await this.authRepository.softDeleteUser(userId);
+    await this.authRepository.revokeAllUserTokens(new Types.ObjectId(userId));
+    await this.authRepository.updateUser(userId, { expoPushTokens: [] });
+
+    if (user.email) {
+      try {
+        await this.mailService.sendNewsletterEmail({
+          to: user.email,
+          firstName: user.firstName ?? 'there',
+          subject: 'Your SureSpot account has been deleted',
+          body: 'Your account has been successfully deleted. Your personal data will be permanently removed within 30 days. If this was a mistake, please contact our support team.',
+        });
+      } catch (err) {
+        this.logger.warn('Failed to send account deletion email', {
+          context: 'AuthService',
+          method: 'deleteAccount',
+          userId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    return {
+      success: true,
+      message:
+        'Account deleted successfully. Your data will be permanently removed within 30 days.',
+    };
   }
 }
