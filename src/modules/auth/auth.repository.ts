@@ -33,8 +33,16 @@ export class AuthRepository {
     return this.userModel.findOne({ phone, deletedAt: null }).exec();
   }
 
+  async findDeletedUserByPhone(phone: string): Promise<UserDocument | null> {
+    return this.userModel.findOne({ phone, deletedAt: { $ne: null } }).exec();
+  }
+
   async findUserByEmail(email: string): Promise<UserDocument | null> {
     return this.userModel.findOne({ email, deletedAt: null }).exec();
+  }
+
+  async findDeletedUserByEmail(email: string): Promise<UserDocument | null> {
+    return this.userModel.findOne({ email, deletedAt: { $ne: null } }).exec();
   }
 
   async findUserById(

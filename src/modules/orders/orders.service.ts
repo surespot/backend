@@ -586,12 +586,25 @@ export class OrdersService {
     let order: OrderDocument | null = null;
 
     try {
+      // Demo mode: resolve pickup location fallback ONCE before validation
+      let resolvedPickupLocationId = dto.pickupLocationId;
+      if (
+        !resolvedPickupLocationId &&
+        dto.deliveryType === DeliveryType.PICKUP &&
+        this.isDemoUser(userId)
+      ) {
+        const fallback = await this.pickupLocationsRepository.findFirstActive();
+        if (fallback) {
+          resolvedPickupLocationId = fallback._id.toString();
+        }
+      }
+
       // Validate checkout first
       const validation = await this.validateCheckout(userId, {
         deliveryType: dto.deliveryType,
         deliveryAddressId: dto.deliveryAddressId,
         deliveryAddress: dto.deliveryAddress,
-        pickupLocationId: dto.pickupLocationId,
+        pickupLocationId: resolvedPickupLocationId,
         promoCode: dto.promoCode,
       });
 
@@ -668,7 +681,8 @@ export class OrdersService {
           pickupLocationId = nearest.data.id;
         }
       } else {
-        pickupLocationId = dto.pickupLocationId;
+        // Use the resolved pickup location ID (with demo fallback already applied)
+        pickupLocationId = resolvedPickupLocationId;
       }
 
       // Generate order number

@@ -54,6 +54,7 @@ export class PickupLocationsService {
       role: UserRole.PICKUP_ADMIN,
       isEmailVerified: true,
       isActive: true,
+      isOnboarded: true,
     });
 
     try {

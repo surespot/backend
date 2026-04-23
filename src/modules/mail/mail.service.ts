@@ -102,10 +102,12 @@ export class MailService {
 
       this.logger.log(`OTP email sent to ${this.maskEmail(options.to)}`);
     } catch (error) {
+      const errMsg =
+        error instanceof Error ? error.message : String(error);
       this.logger.error(
-        `Failed to send OTP email to ${this.maskEmail(options.to)}`,
+        `Failed to send OTP email to ${this.maskEmail(options.to)}: ${errMsg}`,
         {
-          error: error instanceof Error ? error.message : String(error),
+          error: errMsg,
           stack: error instanceof Error ? error.stack : undefined,
         },
       );

@@ -63,9 +63,28 @@ export interface AuthResponse {
     email?: string;
     birthday?: string;
     avatar?: string;
+    isOnboarded: boolean;
     createdAt: Date;
   };
   tokens: TokenPair;
+}
+
+/**
+ * True when the user has finished consumer onboarding. Uses DB flag, staff roles,
+ * and a legacy fall-back for users who completed their profile before isOnboarded existed.
+ */
+function userIsOnboardedForResponse(user: UserDocument): boolean {
+  if (user.isOnboarded === true) return true;
+  if (
+    user.role === UserRole.ADMIN ||
+    user.role === UserRole.PICKUP_ADMIN
+  ) {
+    return true;
+  }
+  return Boolean(
+    user.birthday &&
+      !(user.firstName === 'New' && user.lastName === 'User'),
+  );
 }
 
 @Injectable()
@@ -146,6 +165,18 @@ export class AuthService {
     });
 
     try {
+      // Check if phone belongs to a recently deleted account
+      const deletedUser = await this.authRepository.findDeletedUserByPhone(dto.phone);
+      if (deletedUser) {
+        throw new ConflictException({
+          success: false,
+          error: {
+            code: 'ACCOUNT_RECENTLY_DELETED',
+            message: 'This phone number is associated with a recently deleted account. Please wait a month before registering again.',
+          },
+        });
+      }
+
       // Check if phone already registered
       const existingUser = await this.authRepository.findUserByPhone(dto.phone);
       if (existingUser) {
@@ -503,7 +534,7 @@ export class AuthService {
   async sendEmailOtp(dto: SendEmailOtpDto): Promise<{
     success: boolean;
     message: string;
-    data: { expiresIn: number; retryAfter: number };
+    data: { expiresIn: number; retryAfter: number; emailSent: boolean };
   }> {
     const startTime = Date.now();
     const maskedEmail = this.maskEmail(dto.email);
@@ -515,6 +546,18 @@ export class AuthService {
     });
 
     try {
+      // Check if email belongs to a recently deleted account
+      const deletedUser = await this.authRepository.findDeletedUserByEmail(dto.email);
+      if (deletedUser) {
+        throw new ConflictException({
+          success: false,
+          error: {
+            code: 'ACCOUNT_RECENTLY_DELETED',
+            message: 'This email address is associated with a recently deleted account. Please wait a month before registering again.',
+          },
+        });
+      }
+
       // Check if email already registered
       const existingUser = await this.authRepository.findUserByEmail(dto.email);
       if (existingUser) {
@@ -594,6 +637,7 @@ export class AuthService {
       );
 
       // Send OTP via email service
+      let mailSendDelivered = true;
       try {
         await this.mailService.sendOtpEmail({
           to: dto.email,
@@ -602,10 +646,13 @@ export class AuthService {
           expiresInMinutes: this.otpExpiryMinutes,
         });
       } catch (error) {
+        mailSendDelivered = false;
+        const mailErr = error instanceof Error ? error.message : String(error);
         this.logger.error(
-          `Failed to send email OTP to ${this.maskEmail(dto.email)}`,
+          `Failed to send email OTP to ${this.maskEmail(dto.email)}: ${mailErr}`,
           {
-            error: error instanceof Error ? error.message : String(error),
+            error: mailErr,
+            stack: error instanceof Error ? error.stack : undefined,
           },
         );
         // Don't throw - OTP is still saved, user can request resend
@@ -614,21 +661,35 @@ export class AuthService {
       const executionTime = Date.now() - startTime;
       const response = {
         success: true,
-        message: 'OTP sent successfully',
+        message: mailSendDelivered
+          ? 'OTP sent successfully'
+          : 'We could not send the email, but a verification code is ready. Check your email settings and try resend, or contact support if this persists.',
         data: {
           expiresIn: this.otpExpiryMinutes * 60,
           retryAfter: this.otpResendSeconds,
+          emailSent: mailSendDelivered,
         },
       };
 
-      this.logger.info('Email signup OTP sent successfully', {
-        context: 'AuthService',
-        method: 'sendEmailOtp',
-        email: maskedEmail,
-        expiresIn: `${this.otpExpiryMinutes * 60}s`,
-        retryAfter: `${this.otpResendSeconds}s`,
-        executionTime: `${executionTime}ms`,
-      });
+      if (mailSendDelivered) {
+        this.logger.info('Email signup OTP sent successfully', {
+          context: 'AuthService',
+          method: 'sendEmailOtp',
+          email: maskedEmail,
+          expiresIn: `${this.otpExpiryMinutes * 60}s`,
+          retryAfter: `${this.otpResendSeconds}s`,
+          executionTime: `${executionTime}ms`,
+        });
+      } else {
+        this.logger.warn('Email signup OTP: code stored but email not delivered', {
+          context: 'AuthService',
+          method: 'sendEmailOtp',
+          email: maskedEmail,
+          expiresIn: `${this.otpExpiryMinutes * 60}s`,
+          retryAfter: `${this.otpResendSeconds}s`,
+          executionTime: `${executionTime}ms`,
+        });
+      }
 
       return response;
     } catch (error) {
@@ -818,7 +879,7 @@ export class AuthService {
   async resendEmailOtp(dto: ResendEmailOtpDto): Promise<{
     success: boolean;
     message: string;
-    data: { expiresIn: number; retryAfter: number };
+    data: { expiresIn: number; retryAfter: number; emailSent: boolean };
   }> {
     const startTime = Date.now();
     const maskedEmail = this.maskEmail(dto.email);
@@ -832,14 +893,28 @@ export class AuthService {
     try {
       const result = await this.sendEmailOtp({ email: dto.email });
       const executionTime = Date.now() - startTime;
-      this.logger.info('Email signup OTP resent successfully', {
-        context: 'AuthService',
-        method: 'resendEmailOtp',
-        email: maskedEmail,
-        expiresIn: `${result.data.expiresIn}s`,
-        retryAfter: `${result.data.retryAfter}s`,
-        executionTime: `${executionTime}ms`,
-      });
+      if (result.data.emailSent) {
+        this.logger.info('Email signup OTP resent successfully', {
+          context: 'AuthService',
+          method: 'resendEmailOtp',
+          email: maskedEmail,
+          expiresIn: `${result.data.expiresIn}s`,
+          retryAfter: `${result.data.retryAfter}s`,
+          executionTime: `${executionTime}ms`,
+        });
+      } else {
+        this.logger.warn(
+          'Email signup OTP resend: code updated but email not delivered',
+          {
+            context: 'AuthService',
+            method: 'resendEmailOtp',
+            email: maskedEmail,
+            expiresIn: `${result.data.expiresIn}s`,
+            retryAfter: `${result.data.retryAfter}s`,
+            executionTime: `${executionTime}ms`,
+          },
+        );
+      }
       return result;
     } catch (error) {
       const executionTime = Date.now() - startTime;
@@ -954,6 +1029,7 @@ export class AuthService {
     data: {
       userId: string;
       requiresProfileCompletion: boolean;
+      isOnboarded: boolean;
       tokens: TokenPair;
     };
   }> {
@@ -1110,6 +1186,7 @@ export class AuthService {
         data: {
           userId: user._id.toString(),
           requiresProfileCompletion: true,
+          isOnboarded: false,
           tokens,
         },
       };
@@ -1247,6 +1324,7 @@ export class AuthService {
           email: updatedUser.email,
           birthday: updatedUser.birthday?.toISOString().split('T')[0],
           avatar: updatedUser.avatar,
+          isOnboarded: userIsOnboardedForResponse(updatedUser),
           createdAt: updatedUser.createdAt!,
         },
         tokens,
@@ -1362,6 +1440,7 @@ export class AuthService {
         firstName: dto.firstName,
         lastName: dto.lastName,
         birthday: new Date(dto.birthday),
+        isOnboarded: true,
       });
 
       if (!updatedUser) {
@@ -1405,6 +1484,7 @@ export class AuthService {
             email: updatedUser.email,
             birthday: updatedUser.birthday?.toISOString().split('T')[0],
             avatar: updatedUser.avatar,
+            isOnboarded: userIsOnboardedForResponse(updatedUser),
             createdAt: updatedUser.createdAt!,
           },
           tokens,
@@ -1527,6 +1607,7 @@ export class AuthService {
           email: user.email,
           birthday: user.birthday?.toISOString().split('T')[0],
           avatar: user.avatar,
+          isOnboarded: userIsOnboardedForResponse(user),
           createdAt: user.createdAt!,
         },
         tokens,
@@ -1569,6 +1650,12 @@ export class AuthService {
           birthday: profile.birthday,
           isEmailVerified: !!profile.email,
           role: UserRole.USER,
+          isOnboarded: Boolean(
+            profile.birthday &&
+              profile.firstName &&
+              profile.lastName &&
+              !(profile.firstName === 'New' && profile.lastName === 'User'),
+          ),
         });
       }
     }
@@ -1611,6 +1698,7 @@ export class AuthService {
         email: user.email,
         birthday: user.birthday?.toISOString().split('T')[0],
         avatar: user.avatar,
+        isOnboarded: userIsOnboardedForResponse(user),
         createdAt: user.createdAt!,
       },
       tokens,
@@ -1732,6 +1820,7 @@ export class AuthService {
           email: user.email,
           birthday: user.birthday?.toISOString().split('T')[0],
           avatar: user.avatar,
+          isOnboarded: userIsOnboardedForResponse(user),
           createdAt: user.createdAt!,
         },
         tokens,
@@ -2500,6 +2589,7 @@ export class AuthService {
       role: UserRole.ADMIN,
       isEmailVerified: true,
       isActive: true,
+      isOnboarded: true,
     });
 
     await this.authRepository.markBootstrapCodeAsUsed(codeRecord._id);
@@ -2521,6 +2611,7 @@ export class AuthService {
           email: adminUser.email,
           birthday: adminUser.birthday?.toISOString().split('T')[0],
           avatar: adminUser.avatar,
+          isOnboarded: userIsOnboardedForResponse(adminUser),
           createdAt: adminUser.createdAt!,
         },
         tokens,
@@ -2962,6 +3053,7 @@ export class AuthService {
       isPhoneVerified: boolean;
       isEmailVerified: boolean;
       isActive: boolean;
+      isOnboarded: boolean;
       createdAt: Date;
       lastLoginAt?: Date;
       pickupLocationId?: string;
@@ -2994,6 +3086,7 @@ export class AuthService {
         isPhoneVerified: user.isPhoneVerified,
         isEmailVerified: user.isEmailVerified,
         isActive: user.isActive,
+        isOnboarded: userIsOnboardedForResponse(user),
         createdAt: user.createdAt!,
         lastLoginAt: user.lastLoginAt,
         pickupLocationId: user.pickupLocationId
