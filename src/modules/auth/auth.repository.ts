@@ -58,6 +58,22 @@ export class AuthRepository {
   }
 
   /**
+   * All non-deleted users linked to a pickup (e.g. pickup admin, super admin attached to location).
+   */
+  async findUsersByPickupLocationId(
+    pickupLocationId: string | Types.ObjectId,
+  ): Promise<UserDocument[]> {
+    const id =
+      typeof pickupLocationId === 'string'
+        ? new Types.ObjectId(pickupLocationId)
+        : pickupLocationId;
+    return this.userModel
+      .find({ pickupLocationId: id, deletedAt: null })
+      .select('firstName lastName email role phone isActive')
+      .exec();
+  }
+
+  /**
    * Get all pickup location IDs that are assigned to users.
    * Used to find unlinked pickup locations.
    */

@@ -172,9 +172,10 @@ export class PickupLocationsService {
       isActive: dto.isActive ?? true,
     });
 
-    // Attach the pickup location to the admin user
+    // Attach the pickup location to the admin user (super admin onboarding)
     const updatedAdminUser = await this.authRepository.updateUser(adminUserId, {
       pickupLocationId: pickupLocation._id,
+      isOnboarded: true,
     });
 
     if (!updatedAdminUser) {
@@ -260,6 +261,7 @@ export class PickupLocationsService {
     const updatedUser = await this.authRepository.updateUser(userId, {
       pickupLocationId: pickupLocation._id,
       role: newRole,
+      isOnboarded: true,
     });
 
     if (!updatedUser) {
@@ -352,6 +354,19 @@ export class PickupLocationsService {
         ? region.name
         : undefined;
 
+    const linkedUsers = await this.authRepository.findUsersByPickupLocationId(
+      pickupLocation._id,
+    );
+    const linkedAdmins = linkedUsers.map((u) => ({
+      id: u._id.toString(),
+      firstName: u.firstName,
+      lastName: u.lastName,
+      email: u.email,
+      role: u.role,
+      phone: u.phone,
+      isActive: u.isActive,
+    }));
+
     return {
       success: true,
       message: 'Pickup location retrieved successfully',
@@ -360,6 +375,10 @@ export class PickupLocationsService {
         regionName,
         totalOrders: stats.totalOrders,
         totalIncome: stats.totalIncome,
+        linkedAdmins,
+        pickupLocationAdmin: linkedAdmins.find(
+          (a) => a.role === UserRole.PICKUP_ADMIN,
+        ),
       },
     };
   }

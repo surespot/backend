@@ -70,20 +70,19 @@ export interface AuthResponse {
 }
 
 /**
- * True when the user has finished consumer onboarding. Uses DB flag, staff roles,
- * and a legacy fall-back for users who completed their profile before isOnboarded existed.
+ * True when the user has finished onboarding. PICKUP_ADMIN: always. ADMIN (super
+ * admin): has a linked pickup location. Otherwise: DB flag and consumer legacy rule.
  */
 function userIsOnboardedForResponse(user: UserDocument): boolean {
-  if (user.isOnboarded === true) return true;
-  if (
-    user.role === UserRole.ADMIN ||
-    user.role === UserRole.PICKUP_ADMIN
-  ) {
+  if (user.role === UserRole.PICKUP_ADMIN) {
     return true;
   }
+  if (user.role === UserRole.ADMIN) {
+    return Boolean(user.pickupLocationId);
+  }
+  if (user.isOnboarded === true) return true;
   return Boolean(
-    user.birthday &&
-      !(user.firstName === 'New' && user.lastName === 'User'),
+    user.birthday && !(user.firstName === 'New' && user.lastName === 'User'),
   );
 }
 
@@ -1771,6 +1770,7 @@ export class AuthService {
         user = await this.authRepository.createUser({
           appleId,
           email,
+          isOnboarded: false,
           firstName: fullName?.givenName ?? 'User',
           lastName: fullName?.familyName ?? '',
           isEmailVerified: !!email,
@@ -2589,7 +2589,6 @@ export class AuthService {
       role: UserRole.ADMIN,
       isEmailVerified: true,
       isActive: true,
-      isOnboarded: true,
     });
 
     await this.authRepository.markBootstrapCodeAsUsed(codeRecord._id);
