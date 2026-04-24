@@ -22,6 +22,7 @@ import {
   QueryRiderProfilesDto,
   InitiateRiderRegistrationDto,
   CompleteRiderRegistrationDto,
+  AdminUpdateRiderProfileDto,
 } from './dto';
 import {
   RiderProfileDocument,
@@ -384,6 +385,54 @@ export class RidersService {
     return {
       success: true,
       message: 'Rider status updated successfully',
+      data: this.formatProfile(updated!, false),
+    };
+  }
+
+  /**
+   * Edit rider profile fields (Admin only)
+   */
+  async adminUpdateRiderProfile(id: string, dto: AdminUpdateRiderProfileDto) {
+    const profile = await this.ridersRepository.findById(id);
+    if (!profile) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'RIDER_PROFILE_NOT_FOUND',
+          message: 'Rider profile not found',
+        },
+      });
+    }
+
+    if (dto.regionId) {
+      const region = await this.regionsRepository.findById(dto.regionId);
+      if (!region) {
+        throw new NotFoundException({
+          success: false,
+          error: {
+            code: 'REGION_NOT_FOUND',
+            message: 'Region not found',
+          },
+        });
+      }
+    }
+
+    const updates: Partial<Record<string, unknown>> = {};
+    if (dto.firstName !== undefined) updates.firstName = dto.firstName;
+    if (dto.lastName !== undefined) updates.lastName = dto.lastName;
+    if (dto.phone !== undefined) updates.phone = dto.phone;
+    if (dto.dateOfBirth !== undefined)
+      updates.dateOfBirth = new Date(dto.dateOfBirth);
+    if (dto.regionId !== undefined)
+      updates.regionId = new Types.ObjectId(dto.regionId);
+
+    const updated = await this.ridersRepository.updateProfile(id, updates);
+
+    this.logger.log(`Rider ${id} profile updated by admin`);
+
+    return {
+      success: true,
+      message: 'Rider profile updated successfully',
       data: this.formatProfile(updated!, false),
     };
   }

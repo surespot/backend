@@ -3,3 +3,4 @@ export * from './create-rider-documentation.dto';
 export * from './update-rider-status.dto';
 export * from './rider-registration.dto';
 export * from './query-rider-profiles.dto';
+export * from './admin-update-rider-profile.dto';
