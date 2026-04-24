@@ -1,14 +1,14 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty } from 'class-validator';
+import { ApiPropertyOptional, ApiProperty } from '@nestjs/swagger';
+import { IsString, IsNotEmpty, IsOptional } from 'class-validator';
 
 export class SendSmsDto {
-  @ApiProperty({
-    example: 'SureSpot',
-    description: 'Sender ID (max 11 characters)',
+  @ApiPropertyOptional({
+    example: 'N-Alert',
+    description: 'Sender ID (max 11 characters). Defaults to SMS_SENDER_ID env var.',
   })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  from: string;
+  from?: string;
 
   @ApiProperty({
     example: '2347037770033',
