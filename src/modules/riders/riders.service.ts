@@ -769,13 +769,14 @@ export class RidersService {
     const todayEnd = new Date();
     todayEnd.setHours(23, 59, 59, 999);
 
-    const [todayStats, todayTransactionStats] = await Promise.all([
+    const [todayStats, todayTransactionStats, user] = await Promise.all([
       this.ordersRepository.getTodayStatsForRider(profile._id.toString()),
       this.transactionsRepository.getRiderTransactionStats(
         profile._id.toString(),
         todayStart,
         todayEnd,
       ),
+      this.authRepository.findUserById(userId),
     ]);
 
     // Calculate distance covered in kilometers
@@ -816,6 +817,7 @@ export class RidersService {
       message: 'Rider profile retrieved successfully',
       data: {
         ...formattedProfile,
+        avatar: user?.avatar ?? null,
         stats,
       },
     };
