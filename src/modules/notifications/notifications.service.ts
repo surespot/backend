@@ -118,9 +118,8 @@ export class NotificationsService {
         const user = await this.authRepository.findUserById(userId);
         if (user && user.phone) {
           await this.smsService.sendSms({
-            from: 'SureSpot',
             to: user.phone,
-            body: `${title}\n\n${message}`,
+            body: `[Surespot Eatery] ${title}\n\n${message}`,
           });
           this.logger.debug(
             `SMS notification sent to user ${userId} for notification ${notification.id}`,

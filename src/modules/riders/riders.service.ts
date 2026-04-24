@@ -854,7 +854,7 @@ export class RidersService {
   private async sendRegistrationCode(
     profile: RiderProfileDocument,
   ): Promise<void> {
-    const message = `Welcome to SureSpot! Your rider registration code is: ${profile.registrationCode}. Use this code in the SureSpot Riders app to complete your registration. Do not share this code with anyone.`;
+    const message = `[Surespot Eatery] Your rider registration code is: ${profile.registrationCode}. Use this code in the SureSpot Riders app to complete your registration. Do not share this code with anyone.`;
 
     const deliveryPromises: Promise<unknown>[] = [];
 
@@ -863,7 +863,6 @@ export class RidersService {
       deliveryPromises.push(
         this.smsService
           .sendSms({
-            from: 'SureSpot',
             to: profile.phone,
             body: message,
           })
