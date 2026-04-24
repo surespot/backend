@@ -32,7 +32,7 @@ type CurrentUserType = {
 @ApiTags('Admin Onboarding')
 @Controller('admin/onboarding')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.ADMIN, UserRole.PICKUP_ADMIN)
+@Roles(UserRole.ADMIN)
 @ApiBearerAuth()
 export class AdminOnboardingController {
   constructor(

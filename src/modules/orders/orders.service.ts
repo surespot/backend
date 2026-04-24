@@ -1393,7 +1393,9 @@ export class OrdersService {
       [OrderStatus.PREPARING]: [OrderStatus.READY, OrderStatus.CANCELLED],
       [OrderStatus.READY]: [
         OrderStatus.OUT_FOR_DELIVERY,
-        OrderStatus.DELIVERED,
+        ...(order.deliveryType === DeliveryType.PICKUP
+          ? [OrderStatus.DELIVERED]
+          : []),
         OrderStatus.CANCELLED,
       ],
       [OrderStatus.OUT_FOR_DELIVERY]: [OrderStatus.DELIVERED],
@@ -2373,19 +2375,20 @@ export class OrdersService {
     const regionId = riderProfile.regionId.toString();
     const status = filter.status || OrderStatus.READY;
 
-    // Get a larger set of orders to filter by proximity
-    // We'll filter by proximity after fetching, so get more than needed
+    // Get a larger set of orders to filter by proximity.
+    // Always fetch from page 1 up to page*limit*3 so that after proximity
+    // filtering there are enough results to correctly slice page N.
     const page = filter.page || 1;
     const limit = filter.limit || 20;
-    const fetchLimit = limit * 3; // Fetch 3x to account for proximity filtering
+    const fetchLimit = page * limit * 3;
 
     // Find orders in the region with the specified status
     const orders = await this.ordersRepository.findByRegionAndStatus(
       regionId,
       status,
       {
-        page: 1, // Start from page 1
-        limit: fetchLimit, // Fetch more to filter
+        page: 1,
+        limit: fetchLimit,
       },
     );
 
@@ -2822,12 +2825,10 @@ export class OrdersService {
         );
         const distanceMeters = distanceKm * 1000;
 
-        // Update rider profile with distance
-        // Need to fetch current value first since updateProfile doesn't support $inc
-        const currentDistance = riderProfile.totalDistanceToday || 0;
-        await this.ridersRepository.updateProfile(riderProfile._id.toString(), {
-          totalDistanceToday: currentDistance + distanceMeters,
-        });
+        await this.ridersRepository.incrementProfile(
+          riderProfile._id.toString(),
+          { totalDistanceToday: distanceMeters },
+        );
       }
     }
 

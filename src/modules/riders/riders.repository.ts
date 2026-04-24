@@ -132,6 +132,16 @@ export class RidersRepository {
       .exec();
   }
 
+  async incrementProfile(
+    id: string | Types.ObjectId,
+    increments: Partial<Record<keyof RiderProfile, number>>,
+    session?: ClientSession,
+  ): Promise<RiderProfileDocument | null> {
+    return this.riderProfileModel
+      .findByIdAndUpdate(id, { $inc: increments }, { new: true, session })
+      .exec();
+  }
+
   async findProfiles(
     filters: RiderProfileFilters = {},
     pagination: PaginationOptions = {},
