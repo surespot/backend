@@ -11,6 +11,7 @@ export interface PushNotificationOptions {
   sound?: 'default' | null;
   priority?: 'default' | 'normal' | 'high';
   badge?: number;
+  channelId?: string;
 }
 
 @Injectable()
@@ -82,6 +83,7 @@ export class PushNotificationService {
         sound: options.sound ?? 'default',
         priority: options.priority ?? 'default',
         badge: options.badge,
+        channelId: options.channelId ?? 'default',
       }));
 
       // Send notifications in chunks (Expo allows up to 100 at a time)
