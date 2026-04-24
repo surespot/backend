@@ -184,6 +184,23 @@ export class PushNotificationService {
     });
   }
 
+  async sendOrderReady(
+    userId: string,
+    orderNumber: string,
+    orderId: string,
+  ): Promise<boolean> {
+    return this.sendToUser(userId, {
+      title: 'Order Ready',
+      body: `Your order ${orderNumber} is ready and a rider is on the way to pick it up!`,
+      data: {
+        type: NotificationType.ORDER_READY,
+        orderId,
+        orderNumber,
+      },
+      priority: 'high',
+    });
+  }
+
   /**
    * Send order delivered push notification
    */
