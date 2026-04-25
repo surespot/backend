@@ -932,6 +932,68 @@ export class OrdersRepository {
     }));
   }
 
+  async getHourlyRevenue(
+    pickupLocationId: Types.ObjectId | undefined,
+    startDate: Date,
+    endDate: Date,
+  ): Promise<Array<{ hour: number; revenue: number }>> {
+    const matchStage: Record<string, unknown> = {
+      createdAt: { $gte: startDate, $lte: endDate },
+      paymentStatus: PaymentStatus.PAID,
+    };
+    if (pickupLocationId) matchStage.pickupLocationId = pickupLocationId;
+
+    const results = await this.orderModel
+      .aggregate<{ _id: number; revenue: number }>([
+        { $match: matchStage },
+        {
+          $group: {
+            _id: { $hour: '$createdAt' },
+            revenue: { $sum: '$total' },
+          },
+        },
+        { $sort: { _id: 1 } },
+      ])
+      .exec();
+
+    return results.map((r) => ({ hour: r._id, revenue: r.revenue }));
+  }
+
+  async getWeeklyRevenue(
+    pickupLocationId: Types.ObjectId | undefined,
+    startDate: Date,
+    endDate: Date,
+  ): Promise<Array<{ week: number; weekStart: string; revenue: number }>> {
+    const matchStage: Record<string, unknown> = {
+      createdAt: { $gte: startDate, $lte: endDate },
+      paymentStatus: PaymentStatus.PAID,
+    };
+    if (pickupLocationId) matchStage.pickupLocationId = pickupLocationId;
+
+    const results = await this.orderModel
+      .aggregate<{ _id: { week: number; year: number }; weekStart: Date; revenue: number }>([
+        { $match: matchStage },
+        {
+          $group: {
+            _id: {
+              year: { $isoWeekYear: '$createdAt' },
+              week: { $isoWeek: '$createdAt' },
+            },
+            weekStart: { $min: '$createdAt' },
+            revenue: { $sum: '$total' },
+          },
+        },
+        { $sort: { '_id.year': 1, '_id.week': 1 } },
+      ])
+      .exec();
+
+    return results.map((r) => ({
+      week: r._id.week,
+      weekStart: r.weekStart.toISOString().split('T')[0],
+      revenue: r.revenue,
+    }));
+  }
+
   /**
    * Get hourly order counts for a specific day
    */

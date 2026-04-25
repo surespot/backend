@@ -11,6 +11,7 @@ import {
   DashboardOverviewResponseDto,
 } from './dto/dashboard-response.dto';
 import { Types } from 'mongoose';
+import { DashboardPeriod } from './dto/dashboard-query.dto';
 
 export interface DateRange {
   start: Date;
@@ -42,6 +43,7 @@ export class DashboardService {
     pickupLocationId: string | undefined,
     dateRange: DateRange,
     previousDateRange: DateRange,
+    period?: DashboardPeriod,
   ): Promise<DashboardOverviewResponseDto> {
     const pickupLocationFilter =
       this.resolvePickupLocationFilter(pickupLocationId);
@@ -55,7 +57,7 @@ export class DashboardService {
       customerRatings,
     ] = await Promise.all([
       this.getStats(pickupLocationFilter, dateRange, previousDateRange),
-      this.getProfit(pickupLocationFilter, dateRange),
+      this.getProfit(pickupLocationFilter, dateRange, period),
       this.getOrderTraffic(pickupLocationFilter, dateRange),
       this.getOrderBreakdown(pickupLocationFilter, dateRange),
       this.getMenuPerformance(
@@ -123,25 +125,57 @@ export class DashboardService {
   }
 
   /**
-   * ProfitChart: total profit and daily series
+   * ProfitChart: total profit and series.
+   * - today  → hourly buckets
+   * - 7d     → daily buckets (day of week label)
+   * - 30d    → weekly buckets (week label)
    */
   async getProfit(
     pickupLocationId: Types.ObjectId | undefined,
     dateRange: DateRange,
+    period?: DashboardPeriod,
   ): Promise<ProfitChartDto> {
-    const dailyProfits = await this.ordersRepository.getDailyRevenue(
+    const effectivePeriod = period ?? DashboardPeriod.TODAY;
+
+    if (effectivePeriod === DashboardPeriod.TODAY) {
+      const hourlyData = await this.ordersRepository.getHourlyRevenue(
+        pickupLocationId,
+        dateRange.start,
+        dateRange.end,
+      );
+      const totalProfit = hourlyData.reduce((sum, h) => sum + h.revenue, 0);
+      const series = hourlyData.map((h) => ({
+        label: this.formatHourLabel(h.hour),
+        profit: h.revenue,
+      }));
+      return { totalProfit, series };
+    }
+
+    if (effectivePeriod === DashboardPeriod.THIRTY_DAYS) {
+      const weeklyData = await this.ordersRepository.getWeeklyRevenue(
+        pickupLocationId,
+        dateRange.start,
+        dateRange.end,
+      );
+      const totalProfit = weeklyData.reduce((sum, w) => sum + w.revenue, 0);
+      const series = weeklyData.map((w) => ({
+        label: this.formatWeekLabel(w.weekStart),
+        profit: w.revenue,
+      }));
+      return { totalProfit, series };
+    }
+
+    // SEVEN_DAYS → daily
+    const dailyData = await this.ordersRepository.getDailyRevenue(
       pickupLocationId,
       dateRange.start,
       dateRange.end,
     );
-
-    const totalProfit = dailyProfits.reduce((sum, day) => sum + day.revenue, 0);
-
-    const series = dailyProfits.map((day) => ({
-      label: this.formatDateLabel(day.date),
-      profit: day.revenue,
+    const totalProfit = dailyData.reduce((sum, d) => sum + d.revenue, 0);
+    const series = dailyData.map((d) => ({
+      label: this.formatDateLabel(d.date),
+      profit: d.revenue,
     }));
-
     return { totalProfit, series };
   }
 
@@ -330,5 +364,13 @@ export class DashboardService {
     if (hour === 12) return '12PM';
     if (hour < 12) return `${hour}AM`;
     return `${hour - 12}PM`;
+  }
+
+  /**
+   * Format week label from ISO week start date (e.g., "Apr 21")
+   */
+  private formatWeekLabel(weekStart: string): string {
+    const d = new Date(weekStart);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
 }
