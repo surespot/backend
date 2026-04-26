@@ -4,7 +4,8 @@ import { IsString, IsNotEmpty, IsOptional } from 'class-validator';
 export class SendSmsDto {
   @ApiPropertyOptional({
     example: 'N-Alert',
-    description: 'Sender ID (max 11 characters). Defaults to SMS_SENDER_ID env var.',
+    description:
+      'Sender ID (max 11 characters). Defaults to SMS_SENDER_ID env var.',
   })
   @IsOptional()
   @IsString()

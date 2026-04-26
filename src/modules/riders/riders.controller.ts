@@ -215,11 +215,20 @@ export class RidersController {
     description: 'Update rider name, phone, date of birth, or region',
   })
   @ApiParam({ name: 'id', description: 'Rider profile ID' })
-  @ApiResponse({ status: 200, description: 'Rider profile updated successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Rider profile updated successfully',
+  })
   @ApiResponse({ status: 400, description: 'Invalid input data' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Admin access required' })
-  @ApiResponse({ status: 404, description: 'Rider profile or region not found' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Admin access required',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Rider profile or region not found',
+  })
   async updateProfile(
     @Param('id') id: string,
     @Body() dto: AdminUpdateRiderProfileDto,

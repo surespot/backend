@@ -70,7 +70,10 @@ export class DashboardController {
 
     // Resolve date range
     const { dateRange, previousDateRange } = this.resolveDateRanges(query);
-    const period = query.from && query.to ? undefined : (query.period ?? DashboardPeriod.TODAY);
+    const period =
+      query.from && query.to
+        ? undefined
+        : (query.period ?? DashboardPeriod.TODAY);
 
     // Fetch dashboard data
     const data = await this.dashboardService.getDashboardOverview(

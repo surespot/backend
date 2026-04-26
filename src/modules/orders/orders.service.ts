@@ -262,9 +262,7 @@ export class OrdersService {
   private isDemoUser(userId: string): boolean {
     const demoId = process.env.DEMO_USER_ID;
     return (
-      process.env.NODE_ENV !== 'production' &&
-      !!demoId &&
-      userId === demoId
+      process.env.NODE_ENV !== 'production' && !!demoId && userId === demoId
     );
   }
 
@@ -290,9 +288,13 @@ export class OrdersService {
     const nextStatus = sequence[currentIndex + 1];
 
     const updateData: Record<string, unknown> = { status: nextStatus };
-    if (nextStatus === OrderStatus.DELIVERED) updateData.deliveredAt = new Date();
+    if (nextStatus === OrderStatus.DELIVERED)
+      updateData.deliveredAt = new Date();
 
-    await this.ordersRepository.updateOrder(order._id.toString(), updateData as any);
+    await this.ordersRepository.updateOrder(
+      order._id.toString(),
+      updateData as any,
+    );
 
     const deliveryStatus = deliveryStatusMap[nextStatus];
     if (deliveryStatus) {
@@ -435,7 +437,8 @@ export class OrdersService {
       // Demo mode: auto-assign first active location when none provided
       if (!dto.pickupLocationId && this.isDemoUser(userId)) {
         const fallback = await this.pickupLocationsRepository.findFirstActive();
-        if (fallback) dto = { ...dto, pickupLocationId: fallback._id.toString() };
+        if (fallback)
+          dto = { ...dto, pickupLocationId: fallback._id.toString() };
       }
 
       if (dto.pickupLocationId) {
@@ -706,30 +709,34 @@ export class OrdersService {
       const session = await this.ordersRepository.startSession();
       try {
         await session.withTransaction(async () => {
-          order = await this.ordersRepository.createOrder({
-            orderNumber,
-            userId,
-            deliveryType: dto.deliveryType,
-            subtotal: validation.data.cart.subtotal,
-            extrasTotal: validation.data.cart.extrasTotal,
-            deliveryFee: validation.data.deliveryFee,
-            discountAmount: validation.data.cart.discountAmount,
-            discountPercent: validation.data.cart.discountPercent,
-            promoCode: validation.data.cart.promoCode,
-            promotionId,
-            total: validation.data.cart.total,
-            itemCount: cart.itemCount,
-            extrasCount: cart.extrasCount,
-            deliveryAddress,
-            pickupLocationId,
-            estimatedDeliveryTime: new Date(
-              validation.data.estimatedDeliveryTime,
-            ),
-            estimatedPreparationTime: validation.data.estimatedPreparationTime,
-            paymentMethod: dto.paymentMethod,
-            paymentIntentId: dto.paymentIntentId,
-            instructions: dto.instructions,
-          }, session);
+          order = await this.ordersRepository.createOrder(
+            {
+              orderNumber,
+              userId,
+              deliveryType: dto.deliveryType,
+              subtotal: validation.data.cart.subtotal,
+              extrasTotal: validation.data.cart.extrasTotal,
+              deliveryFee: validation.data.deliveryFee,
+              discountAmount: validation.data.cart.discountAmount,
+              discountPercent: validation.data.cart.discountPercent,
+              promoCode: validation.data.cart.promoCode,
+              promotionId,
+              total: validation.data.cart.total,
+              itemCount: cart.itemCount,
+              extrasCount: cart.extrasCount,
+              deliveryAddress,
+              pickupLocationId,
+              estimatedDeliveryTime: new Date(
+                validation.data.estimatedDeliveryTime,
+              ),
+              estimatedPreparationTime:
+                validation.data.estimatedPreparationTime,
+              paymentMethod: dto.paymentMethod,
+              paymentIntentId: dto.paymentIntentId,
+              instructions: dto.instructions,
+            },
+            session,
+          );
 
           for (const item of items) {
             const itemExtras = extras.get(item._id.toString()) || [];
@@ -738,44 +745,55 @@ export class OrdersService {
               item.quantity;
             const lineTotal = item.price * item.quantity + extrasTotal;
 
-            const orderItem = await this.ordersRepository.createOrderItem({
-              orderId: order!._id.toString(),
-              foodItemId: item.foodItemId.toString(),
-              name: item.name,
-              description: item.description,
-              slug: item.slug,
-              price: item.price,
-              currency: item.currency,
-              imageUrl: item.imageUrl,
-              quantity: item.quantity,
-              estimatedTime: item.estimatedTime,
-              lineTotal,
-            }, session);
+            const orderItem = await this.ordersRepository.createOrderItem(
+              {
+                orderId: order!._id.toString(),
+                foodItemId: item.foodItemId.toString(),
+                name: item.name,
+                description: item.description,
+                slug: item.slug,
+                price: item.price,
+                currency: item.currency,
+                imageUrl: item.imageUrl,
+                quantity: item.quantity,
+                estimatedTime: item.estimatedTime,
+                lineTotal,
+              },
+              session,
+            );
 
             for (const extra of itemExtras) {
-              await this.ordersRepository.createOrderExtra({
-                orderItemId: orderItem._id.toString(),
-                foodExtraId: extra.foodExtraId.toString(),
-                name: extra.name,
-                description: extra.description,
-                imageUrl: extra.imageUrl,
-                price: extra.price,
-                currency: extra.currency,
-                quantity: extra.quantity,
-              }, session);
+              await this.ordersRepository.createOrderExtra(
+                {
+                  orderItemId: orderItem._id.toString(),
+                  foodExtraId: extra.foodExtraId.toString(),
+                  name: extra.name,
+                  description: extra.description,
+                  imageUrl: extra.imageUrl,
+                  price: extra.price,
+                  currency: extra.currency,
+                  quantity: extra.quantity,
+                },
+                session,
+              );
             }
           }
 
-          await this.ordersRepository.createDeliveryStatus({
-            orderId: order!._id.toString(),
-            status: DeliveryStatus.PENDING,
-            message: 'Order placed',
-          }, session);
+          await this.ordersRepository.createDeliveryStatus(
+            {
+              orderId: order!._id.toString(),
+              status: DeliveryStatus.PENDING,
+              message: 'Order placed',
+            },
+            session,
+          );
         });
       } catch (transactionError) {
         this.logger.error(
           `Transaction failed while creating order ${orderNumber}`,
-          transactionError instanceof Error ? transactionError.stack : String(transactionError),
+          transactionError instanceof Error
+            ? transactionError.stack
+            : String(transactionError),
         );
         throw new InternalServerErrorException({
           success: false,
@@ -807,7 +825,12 @@ export class OrdersService {
       } catch (cartError) {
         this.logger.warn(
           `Failed to clear cart after order ${orderNumber} — cart may show stale items`,
-          { error: cartError instanceof Error ? cartError.message : String(cartError) },
+          {
+            error:
+              cartError instanceof Error
+                ? cartError.message
+                : String(cartError),
+          },
         );
       }
 
@@ -1758,7 +1781,11 @@ export class OrdersService {
       updateData.status = OrderStatus.CONFIRMED;
     }
 
-    await this.ordersRepository.updateOrder(order._id.toString(), updateData, session);
+    await this.ordersRepository.updateOrder(
+      order._id.toString(),
+      updateData,
+      session,
+    );
 
     // Reload order to get updated fields (like confirmation code)
     const updatedOrder = await this.ordersRepository.findById(

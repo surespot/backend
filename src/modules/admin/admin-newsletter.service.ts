@@ -97,7 +97,9 @@ export class AdminNewsletterService {
         return this.ridersRepository.findNewsletterRecipients();
 
       case NewsletterAudience.CUSTOMERS:
-        return this.authRepository.findNewsletterRecipientsByRole(UserRole.USER);
+        return this.authRepository.findNewsletterRecipientsByRole(
+          UserRole.USER,
+        );
 
       case NewsletterAudience.PICKUP_LOCATIONS: {
         if (!dto.pickupLocationId) {
@@ -138,7 +140,9 @@ export class AdminNewsletterService {
             },
           });
         }
-        const regionExists = await this.regionsRepository.findById(dto.regionId);
+        const regionExists = await this.regionsRepository.findById(
+          dto.regionId,
+        );
         if (!regionExists) {
           throw new NotFoundException({
             success: false,

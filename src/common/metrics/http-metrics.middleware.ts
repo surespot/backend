@@ -37,7 +37,9 @@ export class HttpMetricsMiddleware implements NestMiddleware {
         Number(process.hrtime.bigint() - start) / 1_000_000_000;
 
       httpRequestsTotal.labels(method, route, statusCode).inc();
-      httpRequestDuration.labels(method, route, statusCode).observe(durationSeconds);
+      httpRequestDuration
+        .labels(method, route, statusCode)
+        .observe(durationSeconds);
     });
 
     next();

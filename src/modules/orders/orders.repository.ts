@@ -64,38 +64,41 @@ export class OrdersRepository {
 
   // ============ Order Operations ============
 
-  async createOrder(data: {
-    orderNumber: string;
-    userId: string;
-    deliveryType: DeliveryType;
-    subtotal: number;
-    extrasTotal: number;
-    deliveryFee: number;
-    discountAmount: number;
-    discountPercent?: number;
-    promoCode?: string;
-    promotionId?: string;
-    total: number;
-    itemCount: number;
-    extrasCount: number;
-    deliveryAddress?: {
-      id?: string;
-      address: string;
-      street?: string;
-      city?: string;
-      state?: string;
-      country?: string;
-      coordinates?: { latitude: number; longitude: number };
+  async createOrder(
+    data: {
+      orderNumber: string;
+      userId: string;
+      deliveryType: DeliveryType;
+      subtotal: number;
+      extrasTotal: number;
+      deliveryFee: number;
+      discountAmount: number;
+      discountPercent?: number;
+      promoCode?: string;
+      promotionId?: string;
+      total: number;
+      itemCount: number;
+      extrasCount: number;
+      deliveryAddress?: {
+        id?: string;
+        address: string;
+        street?: string;
+        city?: string;
+        state?: string;
+        country?: string;
+        coordinates?: { latitude: number; longitude: number };
+        instructions?: string;
+        contactPhone?: string;
+      };
+      pickupLocationId?: string;
+      estimatedDeliveryTime?: Date;
+      estimatedPreparationTime?: number;
+      paymentMethod?: string;
+      paymentIntentId?: string;
       instructions?: string;
-      contactPhone?: string;
-    };
-    pickupLocationId?: string;
-    estimatedDeliveryTime?: Date;
-    estimatedPreparationTime?: number;
-    paymentMethod?: string;
-    paymentIntentId?: string;
-    instructions?: string;
-  }, session?: ClientSession): Promise<OrderDocument> {
+    },
+    session?: ClientSession,
+  ): Promise<OrderDocument> {
     this.validateObjectId(data.userId, 'userId');
 
     const orderData: Record<string, unknown> = {
@@ -122,9 +125,9 @@ export class OrdersRepository {
     };
 
     // Generate a 4-digit delivery confirmation code for door-delivery orders
-      orderData.deliveryConfirmationCode = Math.floor(
-        1000 + Math.random() * 9000,
-      ).toString();
+    orderData.deliveryConfirmationCode = Math.floor(
+      1000 + Math.random() * 9000,
+    ).toString();
 
     if (data.promotionId) {
       orderData.promotionId = new Types.ObjectId(data.promotionId);
@@ -640,19 +643,22 @@ export class OrdersRepository {
 
   // ============ Order Item Operations ============
 
-  async createOrderItem(data: {
-    orderId: string;
-    foodItemId: string;
-    name: string;
-    description: string;
-    slug: string;
-    price: number;
-    currency: string;
-    imageUrl: string;
-    quantity: number;
-    estimatedTime: { min: number; max: number };
-    lineTotal: number;
-  }, session?: ClientSession): Promise<OrderItemDocument> {
+  async createOrderItem(
+    data: {
+      orderId: string;
+      foodItemId: string;
+      name: string;
+      description: string;
+      slug: string;
+      price: number;
+      currency: string;
+      imageUrl: string;
+      quantity: number;
+      estimatedTime: { min: number; max: number };
+      lineTotal: number;
+    },
+    session?: ClientSession,
+  ): Promise<OrderItemDocument> {
     this.validateObjectId(data.orderId, 'orderId');
     this.validateObjectId(data.foodItemId, 'foodItemId');
 
@@ -712,16 +718,19 @@ export class OrdersRepository {
 
   // ============ Order Extra Operations ============
 
-  async createOrderExtra(data: {
-    orderItemId: string;
-    foodExtraId: string;
-    name: string;
-    description?: string;
-    imageUrl?: string;
-    price: number;
-    currency: string;
-    quantity: number;
-  }, session?: ClientSession): Promise<OrderExtraDocument> {
+  async createOrderExtra(
+    data: {
+      orderItemId: string;
+      foodExtraId: string;
+      name: string;
+      description?: string;
+      imageUrl?: string;
+      price: number;
+      currency: string;
+      quantity: number;
+    },
+    session?: ClientSession,
+  ): Promise<OrderExtraDocument> {
     this.validateObjectId(data.orderItemId, 'orderItemId');
     this.validateObjectId(data.foodExtraId, 'foodExtraId');
 
@@ -749,14 +758,17 @@ export class OrdersRepository {
 
   // ============ Order Delivery Status Operations ============
 
-  async createDeliveryStatus(data: {
-    orderId: string;
-    status: DeliveryStatus;
-    message?: string;
-    updatedBy?: string;
-    latitude?: number;
-    longitude?: number;
-  }, session?: ClientSession): Promise<OrderDeliveryStatusDocument> {
+  async createDeliveryStatus(
+    data: {
+      orderId: string;
+      status: DeliveryStatus;
+      message?: string;
+      updatedBy?: string;
+      latitude?: number;
+      longitude?: number;
+    },
+    session?: ClientSession,
+  ): Promise<OrderDeliveryStatusDocument> {
     this.validateObjectId(data.orderId, 'orderId');
 
     const statusData: Record<string, unknown> = {
@@ -971,7 +983,11 @@ export class OrdersRepository {
     if (pickupLocationId) matchStage.pickupLocationId = pickupLocationId;
 
     const results = await this.orderModel
-      .aggregate<{ _id: { week: number; year: number }; weekStart: Date; revenue: number }>([
+      .aggregate<{
+        _id: { week: number; year: number };
+        weekStart: Date;
+        revenue: number;
+      }>([
         { $match: matchStage },
         {
           $group: {

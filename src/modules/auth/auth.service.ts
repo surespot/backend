@@ -165,13 +165,16 @@ export class AuthService {
 
     try {
       // Check if phone belongs to a recently deleted account
-      const deletedUser = await this.authRepository.findDeletedUserByPhone(dto.phone);
+      const deletedUser = await this.authRepository.findDeletedUserByPhone(
+        dto.phone,
+      );
       if (deletedUser) {
         throw new ConflictException({
           success: false,
           error: {
             code: 'ACCOUNT_RECENTLY_DELETED',
-            message: 'This phone number is associated with a recently deleted account. Please wait a month before registering again.',
+            message:
+              'This phone number is associated with a recently deleted account. Please wait a month before registering again.',
           },
         });
       }
@@ -546,13 +549,16 @@ export class AuthService {
 
     try {
       // Check if email belongs to a recently deleted account
-      const deletedUser = await this.authRepository.findDeletedUserByEmail(dto.email);
+      const deletedUser = await this.authRepository.findDeletedUserByEmail(
+        dto.email,
+      );
       if (deletedUser) {
         throw new ConflictException({
           success: false,
           error: {
             code: 'ACCOUNT_RECENTLY_DELETED',
-            message: 'This email address is associated with a recently deleted account. Please wait a month before registering again.',
+            message:
+              'This email address is associated with a recently deleted account. Please wait a month before registering again.',
           },
         });
       }
@@ -680,14 +686,17 @@ export class AuthService {
           executionTime: `${executionTime}ms`,
         });
       } else {
-        this.logger.warn('Email signup OTP: code stored but email not delivered', {
-          context: 'AuthService',
-          method: 'sendEmailOtp',
-          email: maskedEmail,
-          expiresIn: `${this.otpExpiryMinutes * 60}s`,
-          retryAfter: `${this.otpResendSeconds}s`,
-          executionTime: `${executionTime}ms`,
-        });
+        this.logger.warn(
+          'Email signup OTP: code stored but email not delivered',
+          {
+            context: 'AuthService',
+            method: 'sendEmailOtp',
+            email: maskedEmail,
+            expiresIn: `${this.otpExpiryMinutes * 60}s`,
+            retryAfter: `${this.otpResendSeconds}s`,
+            executionTime: `${executionTime}ms`,
+          },
+        );
       }
 
       return response;
@@ -2832,8 +2841,14 @@ export class AuthService {
     data: { email: string; isEmailVerified: boolean };
   }> {
     // Demo mode: skip OTP validation entirely
-    if (process.env.NODE_ENV !== 'production' && userId === process.env.DEMO_USER_ID) {
-      await this.authRepository.updateUser(userId, { email: dto.email, isEmailVerified: true });
+    if (
+      process.env.NODE_ENV !== 'production' &&
+      userId === process.env.DEMO_USER_ID
+    ) {
+      await this.authRepository.updateUser(userId, {
+        email: dto.email,
+        isEmailVerified: true,
+      });
       return {
         success: true,
         message: 'Email verified and added to account successfully',
@@ -3089,7 +3104,7 @@ export class AuthService {
         createdAt: user.createdAt!,
         lastLoginAt: user.lastLoginAt,
         pickupLocationId: user.pickupLocationId
-          ? (user.pickupLocationId as Types.ObjectId).toString()
+          ? user.pickupLocationId.toString()
           : undefined,
       },
     };
@@ -3202,7 +3217,11 @@ export class AuthService {
   async updateProfile(
     userId: string,
     dto: { firstName?: string; lastName?: string },
-  ): Promise<{ success: boolean; message: string; data: { firstName: string; lastName: string } }> {
+  ): Promise<{
+    success: boolean;
+    message: string;
+    data: { firstName: string; lastName: string };
+  }> {
     const updates: Partial<{ firstName: string; lastName: string }> = {};
     if (dto.firstName !== undefined) updates.firstName = dto.firstName.trim();
     if (dto.lastName !== undefined) updates.lastName = dto.lastName.trim();
@@ -3237,18 +3256,28 @@ export class AuthService {
   async changePhoneRequest(
     userId: string,
     newPhone: string,
-  ): Promise<{ success: boolean; message: string; data: { expiresIn: number; retryAfter: number } }> {
+  ): Promise<{
+    success: boolean;
+    message: string;
+    data: { expiresIn: number; retryAfter: number };
+  }> {
     // Ensure new number isn't already taken
     const existing = await this.authRepository.findUserByPhone(newPhone);
     if (existing) {
       throw new ConflictException({
         success: false,
-        error: { code: 'PHONE_TAKEN', message: 'This phone number is already associated with an account' },
+        error: {
+          code: 'PHONE_TAKEN',
+          message: 'This phone number is already associated with an account',
+        },
       });
     }
 
     // Rate-limit check
-    const latestOtp = await this.authRepository.findLatestOtpCode(newPhone, OtpPurpose.PHONE_CHANGE);
+    const latestOtp = await this.authRepository.findLatestOtpCode(
+      newPhone,
+      OtpPurpose.PHONE_CHANGE,
+    );
     if (latestOtp?.createdAt) {
       const elapsed = (Date.now() - latestOtp.createdAt.getTime()) / 1000;
       if (elapsed < this.otpResendSeconds) {
@@ -3266,8 +3295,16 @@ export class AuthService {
     const otpCode = this.generateOtpCode();
     const expiresAt = new Date(Date.now() + this.otpExpiryMinutes * 60 * 1000);
 
-    await this.authRepository.invalidateOtpCodes(newPhone, OtpPurpose.PHONE_CHANGE);
-    await this.authRepository.createOtpCode(newPhone, otpCode, OtpPurpose.PHONE_CHANGE, expiresAt);
+    await this.authRepository.invalidateOtpCodes(
+      newPhone,
+      OtpPurpose.PHONE_CHANGE,
+    );
+    await this.authRepository.createOtpCode(
+      newPhone,
+      otpCode,
+      OtpPurpose.PHONE_CHANGE,
+      expiresAt,
+    );
 
     const maskedPhone = this.maskPhone(newPhone);
     try {
@@ -3276,7 +3313,11 @@ export class AuthService {
         purpose: 'PHONE_CHANGE',
         expiresInMinutes: this.otpExpiryMinutes,
       });
-      this.logger.info('Phone change OTP sent', { context: 'AuthService', method: 'changePhoneRequest', phone: maskedPhone });
+      this.logger.info('Phone change OTP sent', {
+        context: 'AuthService',
+        method: 'changePhoneRequest',
+        phone: maskedPhone,
+      });
     } catch (smsError) {
       this.logger.error('Failed to send phone change OTP', {
         context: 'AuthService',
@@ -3292,7 +3333,10 @@ export class AuthService {
     return {
       success: true,
       message: `OTP sent to ${maskedPhone}`,
-      data: { expiresIn: this.otpExpiryMinutes * 60, retryAfter: this.otpResendSeconds },
+      data: {
+        expiresIn: this.otpExpiryMinutes * 60,
+        retryAfter: this.otpResendSeconds,
+      },
     };
   }
 
@@ -3302,12 +3346,21 @@ export class AuthService {
     otp: string,
   ): Promise<{ success: boolean; message: string }> {
     // Demo mode: skip OTP validation entirely
-    if (process.env.NODE_ENV !== 'production' && userId === process.env.DEMO_USER_ID) {
-      await this.authRepository.updateUser(userId, { phone: newPhone, isPhoneVerified: true });
+    if (
+      process.env.NODE_ENV !== 'production' &&
+      userId === process.env.DEMO_USER_ID
+    ) {
+      await this.authRepository.updateUser(userId, {
+        phone: newPhone,
+        isPhoneVerified: true,
+      });
       return { success: true, message: 'Phone number updated successfully' };
     }
 
-    const otpRecord = await this.authRepository.findLatestOtpCode(newPhone, OtpPurpose.PHONE_CHANGE);
+    const otpRecord = await this.authRepository.findLatestOtpCode(
+      newPhone,
+      OtpPurpose.PHONE_CHANGE,
+    );
 
     if (!otpRecord) {
       throw new BadRequestException({
@@ -3319,7 +3372,10 @@ export class AuthService {
     if (otpRecord.attempts >= this.maxOtpAttempts) {
       throw new BadRequestException({
         success: false,
-        error: { code: 'OTP_MAX_ATTEMPTS', message: 'Maximum OTP verification attempts exceeded' },
+        error: {
+          code: 'OTP_MAX_ATTEMPTS',
+          message: 'Maximum OTP verification attempts exceeded',
+        },
       });
     }
 
@@ -3343,12 +3399,18 @@ export class AuthService {
     if (existing) {
       throw new ConflictException({
         success: false,
-        error: { code: 'PHONE_TAKEN', message: 'This phone number is already associated with an account' },
+        error: {
+          code: 'PHONE_TAKEN',
+          message: 'This phone number is already associated with an account',
+        },
       });
     }
 
     await this.authRepository.markOtpAsVerified(otpRecord._id);
-    await this.authRepository.updateUser(userId, { phone: newPhone, isPhoneVerified: true });
+    await this.authRepository.updateUser(userId, {
+      phone: newPhone,
+      isPhoneVerified: true,
+    });
 
     return { success: true, message: 'Phone number updated successfully' };
   }

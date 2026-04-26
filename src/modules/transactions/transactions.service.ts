@@ -686,7 +686,9 @@ export class TransactionsService {
     const reference = data.reference as string;
 
     const session = await this.transactionsRepository.startSession();
-    let transaction: Awaited<ReturnType<typeof this.transactionsRepository.updateByReference>> = null;
+    let transaction: Awaited<
+      ReturnType<typeof this.transactionsRepository.updateByReference>
+    > = null;
     try {
       await session.withTransaction(async () => {
         transaction = await this.transactionsRepository.updateByReference(

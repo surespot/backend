@@ -362,7 +362,13 @@ export class IntegrationsTestService {
     }
 
     try {
-      let templateDir = join(process.cwd(), 'dist', 'modules', 'mail', 'templates');
+      let templateDir = join(
+        process.cwd(),
+        'dist',
+        'modules',
+        'mail',
+        'templates',
+      );
       if (!existsSync(join(templateDir, 'otp.hbs'))) {
         const fallback = join(
           process.cwd(),

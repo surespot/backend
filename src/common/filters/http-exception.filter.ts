@@ -31,7 +31,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       const message =
         typeof body === 'string'
           ? body
-          : (body as Record<string, unknown>).message ?? exception.message;
+          : ((body as Record<string, unknown>).message ?? exception.message);
 
       response.status(status).json({
         success: false,
@@ -44,9 +44,10 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     }
 
     // Truly unexpected error — log and return a generic 500
-    const errorMessage = exception instanceof Error ? exception.message : String(exception);
+    const errorMessage =
+      exception instanceof Error ? exception.message : String(exception);
     const errorStack = exception instanceof Error ? exception.stack : undefined;
-    
+
     this.logger.error(
       `Unhandled exception on ${request.method} ${request.url}: ${errorMessage}`,
     );

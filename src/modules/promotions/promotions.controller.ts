@@ -100,11 +100,9 @@ export class PromotionsController {
   }
 
   @Get('active')
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Get all active promotions for authenticated users',
+    summary: 'Get all active promotions',
   })
   @ApiResponse({
     status: 200,

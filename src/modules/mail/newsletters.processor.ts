@@ -118,7 +118,9 @@ export class NewslettersProcessor extends WorkerHost {
         const userIdsFromPickup = [
           ...new Set(ordersByPickup.map((o) => o.userId.toString())),
         ];
-        query._id = { $in: userIdsFromPickup.map((id) => new Types.ObjectId(id)) };
+        query._id = {
+          $in: userIdsFromPickup.map((id) => new Types.ObjectId(id)),
+        };
         query.role = 'user';
         break;
 

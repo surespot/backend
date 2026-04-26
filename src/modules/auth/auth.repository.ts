@@ -106,7 +106,7 @@ export class AuthRepository {
       .select('_id')
       .lean()
       .exec();
-    return users.map((u) => (u._id as Types.ObjectId).toString());
+    return users.map((u) => u._id.toString());
   }
 
   async findUserByGoogleId(googleId: string): Promise<UserDocument | null> {
@@ -120,9 +120,9 @@ export class AuthRepository {
   /**
    * Find users with email for newsletter (by role).
    */
-  async findNewsletterRecipientsByRole(role: UserRole): Promise<
-    Array<{ email: string; firstName: string }>
-  > {
+  async findNewsletterRecipientsByRole(
+    role: UserRole,
+  ): Promise<Array<{ email: string; firstName: string }>> {
     const users = await this.userModel
       .find({
         role,
@@ -180,7 +180,7 @@ export class AuthRepository {
       .select('_id')
       .lean()
       .exec();
-    return admins.map((u) => (u._id as Types.ObjectId).toString());
+    return admins.map((u) => u._id.toString());
   }
 
   /**
@@ -220,7 +220,7 @@ export class AuthRepository {
       .select('_id')
       .lean()
       .exec();
-    return users.map((u) => (u._id as Types.ObjectId).toString());
+    return users.map((u) => u._id.toString());
   }
 
   async findUserByEmailOrPhone(

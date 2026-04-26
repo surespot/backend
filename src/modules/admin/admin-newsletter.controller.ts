@@ -25,7 +25,9 @@ import { SendNewsletterDto } from './dto/send-newsletter.dto';
 @Roles(UserRole.ADMIN)
 @ApiBearerAuth()
 export class AdminNewsletterController {
-  constructor(private readonly adminNewsletterService: AdminNewsletterService) {}
+  constructor(
+    private readonly adminNewsletterService: AdminNewsletterService,
+  ) {}
 
   @Post('send')
   @HttpCode(HttpStatus.OK)
@@ -35,9 +37,15 @@ export class AdminNewsletterController {
       'Sends a newsletter email to the selected audience. Template includes a greeting. Audiences: riders (all), customers (all), pickup-locations (customers who ordered from a pickup location - requires pickupLocationId), regions (riders in a region - requires regionId).',
   })
   @ApiResponse({ status: 200, description: 'Newsletter sent successfully' })
-  @ApiResponse({ status: 400, description: 'Invalid audience or missing required fields' })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid audience or missing required fields',
+  })
   @ApiResponse({ status: 403, description: 'Forbidden - admin only' })
-  @ApiResponse({ status: 404, description: 'Pickup location or region not found' })
+  @ApiResponse({
+    status: 404,
+    description: 'Pickup location or region not found',
+  })
   async sendNewsletter(@Body() dto: SendNewsletterDto) {
     return this.adminNewsletterService.sendNewsletter(dto);
   }

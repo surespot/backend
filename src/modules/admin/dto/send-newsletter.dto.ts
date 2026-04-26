@@ -45,7 +45,8 @@ export class SendNewsletterDto {
   subject: string;
 
   @ApiProperty({
-    example: '<p>We have added exciting new dishes to our menu. Check them out!</p>',
+    example:
+      '<p>We have added exciting new dishes to our menu. Check them out!</p>',
     description: 'HTML body content (after the greeting).',
   })
   @IsString()

@@ -2,7 +2,11 @@ import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
-import { ThrottlerModule, ThrottlerModuleOptions, ThrottlerGuard } from '@nestjs/throttler';
+import {
+  ThrottlerModule,
+  ThrottlerModuleOptions,
+  ThrottlerGuard,
+} from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
 import { WinstonModule } from 'nest-winston';
 import * as winston from 'winston';
@@ -111,12 +115,16 @@ import { HttpMetricsMiddleware } from './common/metrics/http-metrics.middleware'
           ? [
               new LokiTransport({
                 host: process.env.LOKI_URL,
-                labels: { app: 'surespot-backend', env: process.env.NODE_ENV ?? 'development' },
+                labels: {
+                  app: 'surespot-backend',
+                  env: process.env.NODE_ENV ?? 'development',
+                },
                 format: winston.format.combine(
                   winston.format.timestamp(),
                   winston.format.json(),
                 ),
-                onConnectionError: (err) => console.error('Loki connection error:', err),
+                onConnectionError: (err) =>
+                  console.error('Loki connection error:', err),
               }),
             ]
           : []),

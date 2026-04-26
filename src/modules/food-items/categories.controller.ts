@@ -15,6 +15,7 @@ import {
 } from '@nestjs/swagger';
 import { FoodItemsService } from './food-items.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Public } from '../auth/decorators/public.decorator';
 import { Transform } from 'class-transformer';
 import { IsOptional, IsBoolean } from 'class-validator';
 
@@ -47,6 +48,7 @@ export class CategoriesController {
 
   @Get()
   @HttpCode(HttpStatus.OK)
+  @Public()
   @ApiOperation({ summary: 'Get all food categories' })
   @ApiQuery({
     name: 'includeCount',

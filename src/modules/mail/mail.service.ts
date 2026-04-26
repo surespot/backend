@@ -95,15 +95,14 @@ export class MailService {
         context: {
           otp: options.otp,
           purpose: purposeMessage,
-          expiresInMinutes: options.expiresInMinutes || 5,
+          expiresInMinutes: options.expiresInMinutes ?? null,
           currentYear: new Date().getFullYear(),
         },
       });
 
       this.logger.log(`OTP email sent to ${this.maskEmail(options.to)}`);
     } catch (error) {
-      const errMsg =
-        error instanceof Error ? error.message : String(error);
+      const errMsg = error instanceof Error ? error.message : String(error);
       this.logger.error(
         `Failed to send OTP email to ${this.maskEmail(options.to)}: ${errMsg}`,
         {
@@ -282,9 +281,7 @@ export class MailService {
         },
       });
 
-      this.logger.log(
-        `Newsletter email sent to ${this.maskEmail(options.to)}`,
-      );
+      this.logger.log(`Newsletter email sent to ${this.maskEmail(options.to)}`);
     } catch (error) {
       this.logger.error(
         `Failed to send newsletter email to ${this.maskEmail(options.to)}`,

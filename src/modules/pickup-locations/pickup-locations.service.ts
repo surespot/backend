@@ -8,7 +8,11 @@ import { PickupLocationsRepository } from './pickup-locations.repository';
 import { CreatePickupLocationDto } from './dto/create-pickup-location.dto';
 import { UpdatePickupLocationDto } from './dto/update-pickup-location.dto';
 import { FindNearestPickupLocationDto } from './dto/find-nearest-pickup-location.dto';
-import { PickupLocationDocument } from './schemas/pickup-location.schema';
+import {
+  isPopulatedRegionId,
+  PickupLocationDocument,
+  type RegionIdField,
+} from './schemas/pickup-location.schema';
 import { CreatePickupLocationForAdminDto } from './dto/create-pickup-location-for-admin.dto';
 import { AuthRepository } from '../auth/auth.repository';
 import { UserRole } from '../auth/schemas/user.schema';
@@ -345,14 +349,7 @@ export class PickupLocationsService {
       pickupLocation._id.toString(),
     );
 
-    const region = pickupLocation.regionId as
-      | { _id?: unknown; name?: string }
-      | null
-      | undefined;
-    const regionName =
-      region && typeof region === 'object' && 'name' in region
-        ? region.name
-        : undefined;
+    const { regionName } = this.getRegionIdApiFields(pickupLocation);
 
     const linkedUsers = await this.authRepository.findUsersByPickupLocationId(
       pickupLocation._id,
@@ -491,16 +488,27 @@ export class PickupLocationsService {
     return code;
   }
 
+  private getRegionIdApiFields(loc: PickupLocationDocument): {
+    regionId: string;
+    regionName?: string;
+  } {
+    const rf: RegionIdField = loc.regionId;
+    if (isPopulatedRegionId(rf)) {
+      return { regionId: rf._id.toString(), regionName: rf.name };
+    }
+    return { regionId: rf.toString() };
+  }
+
   private formatPickupLocation(pickupLocation: PickupLocationDocument) {
-    const region = pickupLocation.regionId as any;
+    const { regionId, regionName } = this.getRegionIdApiFields(pickupLocation);
     return {
       id: pickupLocation._id.toString(),
       name: pickupLocation.name,
       address: pickupLocation.address,
       latitude: pickupLocation.location.coordinates[1], // GeoJSON: [lng, lat]
       longitude: pickupLocation.location.coordinates[0],
-      regionId: region?._id?.toString() || region?.toString(),
-      regionName: region?.name,
+      regionId,
+      regionName,
       isActive: pickupLocation.isActive,
       createdAt: pickupLocation.createdAt,
       updatedAt: pickupLocation.updatedAt,

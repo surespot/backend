@@ -143,13 +143,10 @@ export class PushNotificationService {
 
       return true;
     } catch (error) {
-      this.logger.error(
-        `[sendToUser] Unhandled error for user ${userId}`,
-        {
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-        },
-      );
+      this.logger.error(`[sendToUser] Unhandled error for user ${userId}`, {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       return false;
     }
   }

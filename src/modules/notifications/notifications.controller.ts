@@ -96,7 +96,7 @@ export class NotificationsController {
     return this.notificationsService.getUnreadCount(user.id);
   }
 
-    @Patch(':notificationId/read')
+  @Patch(':notificationId/read')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mark a notification as read' })
   @ApiResponse({

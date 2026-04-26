@@ -66,10 +66,7 @@ export class RedisIoAdapter extends IoAdapter {
   }
 
   async closeRedis(): Promise<void> {
-    await Promise.all([
-      this.pubClient?.quit(),
-      this.subClient?.quit(),
-    ]);
+    await Promise.all([this.pubClient?.quit(), this.subClient?.quit()]);
   }
 
   createIOServer(port: number, options?: ServerOptions): unknown {
