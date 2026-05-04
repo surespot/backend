@@ -268,6 +268,21 @@ export class AuthRepository {
       .exec();
   }
 
+  async unlinkUsersFromPickupLocation(
+    pickupLocationId: string | Types.ObjectId,
+  ): Promise<void> {
+    const id =
+      typeof pickupLocationId === 'string'
+        ? new Types.ObjectId(pickupLocationId)
+        : pickupLocationId;
+    await this.userModel
+      .updateMany(
+        { pickupLocationId: id, deletedAt: null },
+        { $unset: { pickupLocationId: '' } },
+      )
+      .exec();
+  }
+
   async findUsersToAnonymize(): Promise<UserDocument[]> {
     const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     return this.userModel

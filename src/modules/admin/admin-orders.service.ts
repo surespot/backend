@@ -352,17 +352,20 @@ export class AdminOrdersService {
   }
 
   /**
-   * Get order details by ID
+   * Get order details by ID.
+   * Pass null as pickupLocationId to skip ownership check (super admin use case).
    */
-  async getOrderById(pickupLocationId: string, orderId: string) {
+  async getOrderById(pickupLocationId: string | null, orderId: string) {
     const order = await this.ordersRepository.findById(orderId);
 
     if (!order) {
       return null;
     }
 
-    // Verify order belongs to this pickup location
-    if (!this.orderBelongsToPickupLocation(order, pickupLocationId)) {
+    if (
+      pickupLocationId &&
+      !this.orderBelongsToPickupLocation(order, pickupLocationId)
+    ) {
       return null;
     }
 
@@ -616,10 +619,14 @@ export class AdminOrdersService {
     };
   }
 
-  async getOrderHistory(pickupLocationId: string, orderId: string) {
+  async getOrderHistory(pickupLocationId: string | null, orderId: string) {
     const order = await this.ordersRepository.findById(orderId);
 
-    if (!order || !this.orderBelongsToPickupLocation(order, pickupLocationId)) {
+    if (
+      !order ||
+      (pickupLocationId &&
+        !this.orderBelongsToPickupLocation(order, pickupLocationId))
+    ) {
       throw new NotFoundException({
         success: false,
         error: {

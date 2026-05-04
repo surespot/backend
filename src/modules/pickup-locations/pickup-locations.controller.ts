@@ -24,6 +24,7 @@ import { FindNearestPickupLocationDto } from './dto/find-nearest-pickup-location
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { UserRole } from '../auth/schemas/user.schema';
 
 @ApiTags('pickup-locations')
@@ -165,6 +166,26 @@ export class PickupLocationsController {
   })
   async update(@Param('id') id: string, @Body() dto: UpdatePickupLocationDto) {
     return this.pickupLocationsService.update(id, dto);
+  }
+
+  @Patch(':id/deactivate')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.PICKUP_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Deactivate a pickup location. Super admins can deactivate any location; pickup admins can only deactivate their own.',
+  })
+  @ApiResponse({ status: 200, description: 'Pickup location deactivated successfully' })
+  @ApiResponse({ status: 400, description: 'Pickup location is already inactive' })
+  @ApiResponse({ status: 403, description: 'Forbidden - pickup admin can only deactivate their own location' })
+  @ApiResponse({ status: 404, description: 'Pickup location not found' })
+  async deactivate(
+    @Param('id') id: string,
+    @CurrentUser() user: { id: string; role: string; pickupLocationId?: string },
+  ) {
+    return this.pickupLocationsService.deactivatePickupLocation(id, user);
   }
 
   @Delete(':id')

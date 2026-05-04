@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PickupLocationsRepository } from './pickup-locations.repository';
 import { CreatePickupLocationDto } from './dto/create-pickup-location.dto';
@@ -455,6 +456,110 @@ export class PickupLocationsService {
       success: true,
       message: 'Pickup location updated successfully',
       data: this.formatPickupLocation(updated),
+    };
+  }
+
+  async deactivatePickupLocation(
+    locationId: string,
+    requestingUser: { id: string; role: string; pickupLocationId?: string },
+  ) {
+    const location =
+      await this.pickupLocationsRepository.findById(locationId);
+    if (!location) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'PICKUP_LOCATION_NOT_FOUND',
+          message: 'Pickup location not found',
+        },
+      });
+    }
+
+    if (requestingUser.role === UserRole.PICKUP_ADMIN) {
+      if (requestingUser.pickupLocationId !== locationId) {
+        throw new ForbiddenException({
+          success: false,
+          error: {
+            code: 'FORBIDDEN',
+            message:
+              'You can only deactivate your own pickup location',
+          },
+        });
+      }
+    }
+
+    if (!location.isActive) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'ALREADY_INACTIVE',
+          message: 'Pickup location is already inactive',
+        },
+      });
+    }
+
+    await this.pickupLocationsRepository.update(locationId, {
+      isActive: false,
+    });
+    await this.authRepository.unlinkUsersFromPickupLocation(locationId);
+
+    return {
+      success: true,
+      message: 'Pickup location deactivated successfully',
+    };
+  }
+
+  async promoteUserToPickupAdmin(userId: string) {
+    const user = await this.authRepository.findUserById(userId);
+    if (!user) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'USER_NOT_FOUND',
+          message: 'User not found',
+        },
+      });
+    }
+
+    if (user.role !== UserRole.USER) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'INVALID_USER_ROLE',
+          message: `Only regular users can be promoted to pickup admin. This user has role: ${user.role}`,
+        },
+      });
+    }
+
+    const updated = await this.authRepository.updateUser(userId, {
+      role: UserRole.PICKUP_ADMIN,
+    });
+
+    if (!updated) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'USER_NOT_FOUND',
+          message: 'User not found after promotion',
+        },
+      });
+    }
+
+    return {
+      success: true,
+      message: 'User promoted to pickup admin successfully',
+      data: {
+        user: {
+          id: updated._id.toString(),
+          firstName: updated.firstName,
+          lastName: updated.lastName,
+          email: updated.email,
+          role: updated.role,
+          pickupLocationId: updated.pickupLocationId
+            ? updated.pickupLocationId.toString()
+            : undefined,
+        },
+      },
     };
   }
 
