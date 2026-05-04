@@ -18,6 +18,7 @@ import { UserRole } from '../auth/schemas/user.schema';
 import { AdminOrdersService } from './admin-orders.service';
 import { AdminGetOrdersDto } from './dto/admin-get-orders.dto';
 import { AdminUpdateOrderStatusDto } from './dto/admin-update-order-status.dto';
+import { AdminRedirectOrderDto } from './dto/admin-redirect-order.dto';
 
 type CurrentUserType = {
   id: string;
@@ -163,6 +164,62 @@ export class AdminOrdersController {
       orderId,
       dto,
       user.id,
+    );
+  }
+
+  @Patch(':orderId/redirect')
+  @ApiOperation({ summary: 'Redirect order to another pickup location' })
+  @ApiResponse({ status: 200, description: 'Order redirected successfully' })
+  @ApiResponse({ status: 400, description: 'Order cannot be redirected (already preparing or beyond)' })
+  @ApiResponse({ status: 403, description: 'Forbidden - no pickup location assigned' })
+  @ApiResponse({ status: 404, description: 'Order or target pickup location not found' })
+  async redirectOrder(
+    @Param('orderId') orderId: string,
+    @Body() dto: AdminRedirectOrderDto,
+    @CurrentUser() user: CurrentUserType,
+  ) {
+    if (!user.pickupLocationId) {
+      throw new ForbiddenException({
+        success: false,
+        error: {
+          code: 'NO_PICKUP_LOCATION',
+          message:
+            'Your account is not linked to a pickup location. Please contact support.',
+        },
+      });
+    }
+
+    return this.adminOrdersService.redirectOrder(
+      user.pickupLocationId,
+      orderId,
+      dto,
+      user.id,
+    );
+  }
+
+  @Get(':orderId/history')
+  @ApiOperation({ summary: 'Get order status history / audit trail' })
+  @ApiResponse({ status: 200, description: 'Order history retrieved successfully' })
+  @ApiResponse({ status: 403, description: 'Forbidden - no pickup location assigned' })
+  @ApiResponse({ status: 404, description: 'Order not found' })
+  async getOrderHistory(
+    @Param('orderId') orderId: string,
+    @CurrentUser() user: CurrentUserType,
+  ) {
+    if (!user.pickupLocationId) {
+      throw new ForbiddenException({
+        success: false,
+        error: {
+          code: 'NO_PICKUP_LOCATION',
+          message:
+            'Your account is not linked to a pickup location. Please contact support.',
+        },
+      });
+    }
+
+    return this.adminOrdersService.getOrderHistory(
+      user.pickupLocationId,
+      orderId,
     );
   }
 

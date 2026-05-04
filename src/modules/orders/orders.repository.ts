@@ -378,6 +378,22 @@ export class OrdersRepository {
       .exec();
   }
 
+  async updatePickupLocation(
+    orderId: string,
+    newPickupLocationId: string,
+  ): Promise<OrderDocument | null> {
+    this.validateObjectId(orderId, 'orderId');
+    this.validateObjectId(newPickupLocationId, 'pickupLocationId');
+    return this.orderModel
+      .findByIdAndUpdate(
+        orderId,
+        { $set: { pickupLocationId: new Types.ObjectId(newPickupLocationId) } },
+        { new: true },
+      )
+      .populate('pickupLocationId')
+      .exec();
+  }
+
   /**
    * Atomically assign a rider to an order
    * Uses findOneAndUpdate with conditions to prevent race conditions

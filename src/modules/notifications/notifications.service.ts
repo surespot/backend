@@ -770,6 +770,42 @@ export class NotificationsService {
     );
   }
 
+  async notifyPickupLocationAdminsOrderRedirected(
+    targetPickupLocationId: string,
+    orderNumber: string,
+    orderId: string,
+    fromLocationName: string,
+  ): Promise<void> {
+    const userIds =
+      await this.authRepository.findUserIdsByPickupLocationId(
+        targetPickupLocationId,
+      );
+    if (userIds.length === 0) return;
+    const channels = [NotificationChannel.IN_APP];
+    const message = `Order ${orderNumber} has been redirected to your location from ${fromLocationName}.`;
+    await Promise.all(
+      userIds.map((userId) =>
+        this.queueNotification(
+          userId,
+          NotificationType.ORDER_CONFIRMED,
+          'Order Redirected to You',
+          message,
+          {
+            orderId,
+            orderNumber,
+            fromLocationName,
+            pickupLocationId: targetPickupLocationId,
+            source: 'order_redirect',
+          },
+          channels,
+        ),
+      ),
+    );
+    this.logger.log(
+      `Redirect notifications sent to ${userIds.length} admin(s) at target location for order ${orderNumber}`,
+    );
+  }
+
   /**
    * Notify pickup location admins when a new review is submitted for a meal from an order at their location.
    * Only sends when the review has an orderId linked to an order with a pickup location.

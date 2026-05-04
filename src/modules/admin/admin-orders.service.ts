@@ -14,6 +14,9 @@ import {
 import { DeliveryStatus } from '../orders/schemas/order-delivery-status.schema';
 import { AuthRepository } from '../auth/auth.repository';
 import { RidersRepository } from '../riders/riders.repository';
+import { PickupLocationsRepository } from '../pickup-locations/pickup-locations.repository';
+import { AdminGateway } from './admin.gateway';
+import { NotificationsService } from '../notifications/notifications.service';
 import {
   AdminOrderRowDto,
   AdminOrderDetailsDto,
@@ -24,6 +27,7 @@ import {
   AdminUpdateOrderStatusDto,
   AdminOrderStatus,
 } from './dto/admin-update-order-status.dto';
+import { AdminRedirectOrderDto } from './dto/admin-redirect-order.dto';
 
 @Injectable()
 export class AdminOrdersService {
@@ -32,6 +36,9 @@ export class AdminOrdersService {
     private readonly ordersService: OrdersService,
     private readonly authRepository: AuthRepository,
     private readonly ridersRepository: RidersRepository,
+    private readonly pickupLocationsRepository: PickupLocationsRepository,
+    private readonly adminGateway: AdminGateway,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   /**
@@ -461,6 +468,186 @@ export class AdminOrdersService {
       success: true,
       message: 'Order status updated successfully',
       data: orderDetails,
+    };
+  }
+
+  async redirectOrder(
+    currentPickupLocationId: string,
+    orderId: string,
+    dto: AdminRedirectOrderDto,
+    adminId: string,
+  ) {
+    const order = await this.ordersRepository.findById(orderId);
+
+    if (!order) {
+      throw new NotFoundException({
+        success: false,
+        error: { code: 'ORDER_NOT_FOUND', message: 'Order not found' },
+      });
+    }
+
+    if (!this.orderBelongsToPickupLocation(order, currentPickupLocationId)) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'ORDER_NOT_FOUND',
+          message: 'Order not found or does not belong to your pickup location',
+        },
+      });
+    }
+
+    const nonRedirectableStatuses: OrderStatus[] = [
+      OrderStatus.PREPARING,
+      OrderStatus.READY,
+      OrderStatus.OUT_FOR_DELIVERY,
+      OrderStatus.DELIVERED,
+      OrderStatus.CANCELLED,
+    ];
+
+    if (nonRedirectableStatuses.includes(order.status)) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'ORDER_CANNOT_BE_REDIRECTED',
+          message:
+            'Order can only be redirected before preparation has started.',
+        },
+      });
+    }
+
+    if (dto.targetPickupLocationId === currentPickupLocationId) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'SAME_PICKUP_LOCATION',
+          message:
+            'Target pickup location must be different from the current location.',
+        },
+      });
+    }
+
+    const targetLocation = await this.pickupLocationsRepository.findById(
+      dto.targetPickupLocationId,
+    );
+
+    if (!targetLocation) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'PICKUP_LOCATION_NOT_FOUND',
+          message: 'Target pickup location not found.',
+        },
+      });
+    }
+
+    if (!targetLocation.isActive) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'PICKUP_LOCATION_INACTIVE',
+          message: 'Target pickup location is not active.',
+        },
+      });
+    }
+
+    const currentLocation =
+      await this.pickupLocationsRepository.findById(currentPickupLocationId);
+    const fromLocationName = currentLocation?.name ?? 'Unknown';
+    const toLocationName = targetLocation.name;
+
+    const updatedOrder = await this.ordersRepository.updatePickupLocation(
+      orderId,
+      dto.targetPickupLocationId,
+    );
+
+    if (!updatedOrder) {
+      throw new NotFoundException({
+        success: false,
+        error: { code: 'ORDER_NOT_FOUND', message: 'Order not found after redirect' },
+      });
+    }
+
+    const auditMessage = dto.reason
+      ? `Order redirected from ${fromLocationName} to ${toLocationName}. Reason: ${dto.reason}`
+      : `Order redirected from ${fromLocationName} to ${toLocationName}`;
+
+    await this.ordersRepository.createDeliveryStatus({
+      orderId,
+      status: DeliveryStatus.PENDING,
+      message: auditMessage,
+      updatedBy: adminId,
+    });
+
+    // Notify new location: WebSocket + in-app
+    await this.adminGateway.emitOrderCreated(dto.targetPickupLocationId, {
+      orderId,
+      orderNumber: order.orderNumber,
+      total: order.total,
+      itemCount: order.itemCount,
+    });
+
+    await this.notificationsService.notifyPickupLocationAdminsOrderRedirected(
+      dto.targetPickupLocationId,
+      order.orderNumber,
+      orderId,
+      fromLocationName,
+    );
+
+    // Notify old location: stats refresh + redirect event
+    const oldStats = await this.getOrderStats(currentPickupLocationId);
+    await this.adminGateway.emitOrderStatsUpdate(currentPickupLocationId, oldStats);
+    await this.adminGateway.emitToPickupLocation(
+      currentPickupLocationId,
+      'order_redirected',
+      {
+        orderId,
+        orderNumber: order.orderNumber,
+        toLocationName,
+        timestamp: new Date().toISOString(),
+      },
+    );
+
+    const orderDetails = await this.formatOrderDetails(updatedOrder);
+
+    return {
+      success: true,
+      message: 'Order redirected successfully',
+      data: orderDetails,
+    };
+  }
+
+  async getOrderHistory(pickupLocationId: string, orderId: string) {
+    const order = await this.ordersRepository.findById(orderId);
+
+    if (!order || !this.orderBelongsToPickupLocation(order, pickupLocationId)) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'ORDER_NOT_FOUND',
+          message: 'Order not found or does not belong to your pickup location',
+        },
+      });
+    }
+
+    const history =
+      await this.ordersRepository.findDeliveryStatusHistory(orderId);
+
+    return {
+      success: true,
+      data: {
+        history: history.map((entry) => {
+          const updatedBy = entry.updatedBy as any;
+          return {
+            status: entry.status,
+            message: entry.message,
+            updatedBy:
+              updatedBy?.firstName || updatedBy?.lastName
+                ? `${updatedBy.firstName ?? ''} ${updatedBy.lastName ?? ''}`.trim()
+                : undefined,
+            createdAt: entry.createdAt?.toISOString(),
+          };
+        }),
+      },
     };
   }
 }

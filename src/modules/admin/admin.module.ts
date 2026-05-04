@@ -32,6 +32,7 @@ import {
 } from './schemas/pickup-location-item-availability.schema';
 import { RegionsModule } from '../regions/regions.module';
 import { PickupLocationsModule } from '../pickup-locations/pickup-locations.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { PickupLocationsModule } from '../pickup-locations/pickup-locations.modu
     forwardRef(() => OrdersModule),
     RegionsModule,
     PickupLocationsModule,
+    NotificationsModule,
     forwardRef(() => SupportModule),
     forwardRef(() => FoodItemsModule),
     forwardRef(() => AuthModule),
