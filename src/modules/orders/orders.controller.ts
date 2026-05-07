@@ -64,10 +64,10 @@ export class CheckoutController {
     },
   })
   async validateCheckout(
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; isDemo?: boolean },
     @Body() dto: ValidateCheckoutDto,
   ) {
-    return this.ordersService.validateCheckout(user.id, dto);
+    return this.ordersService.validateCheckout(user.id, dto, user.isDemo ?? false);
   }
 }
 
@@ -90,10 +90,10 @@ export class OrdersController {
     description: 'Validation error or cart empty',
   })
   async placeOrder(
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; isDemo?: boolean },
     @Body() dto: PlaceOrderDto,
   ) {
-    return this.ordersService.placeOrder(user.id, dto);
+    return this.ordersService.placeOrder(user.id, dto, user.isDemo ?? false);
   }
 
   @Get()
@@ -185,10 +185,10 @@ export class OrdersController {
     description: 'Order not found',
   })
   async getOrderTracking(
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; isDemo?: boolean },
     @Param('orderId') orderId: string,
   ) {
-    return this.ordersService.getOrderTracking(user.id, orderId);
+    return this.ordersService.getOrderTracking(user.id, orderId, user.isDemo ?? false);
   }
 
   @Patch(':orderId/status')

@@ -2841,10 +2841,8 @@ export class AuthService {
     data: { email: string; isEmailVerified: boolean };
   }> {
     // Demo mode: skip OTP validation entirely
-    if (
-      process.env.NODE_ENV !== 'production' &&
-      userId === process.env.DEMO_USER_ID
-    ) {
+    const demoCheckUser = await this.authRepository.findUserById(userId);
+    if (demoCheckUser?.isDemo) {
       await this.authRepository.updateUser(userId, {
         email: dto.email,
         isEmailVerified: true,
@@ -3068,6 +3066,7 @@ export class AuthService {
       isEmailVerified: boolean;
       isActive: boolean;
       isOnboarded: boolean;
+      isDemo: boolean;
       createdAt: Date;
       lastLoginAt?: Date;
       pickupLocationId?: string;
@@ -3101,6 +3100,7 @@ export class AuthService {
         isEmailVerified: user.isEmailVerified,
         isActive: user.isActive,
         isOnboarded: userIsOnboardedForResponse(user),
+        isDemo: user.isDemo ?? false,
         createdAt: user.createdAt!,
         lastLoginAt: user.lastLoginAt,
         pickupLocationId: user.pickupLocationId
@@ -3346,10 +3346,8 @@ export class AuthService {
     otp: string,
   ): Promise<{ success: boolean; message: string }> {
     // Demo mode: skip OTP validation entirely
-    if (
-      process.env.NODE_ENV !== 'production' &&
-      userId === process.env.DEMO_USER_ID
-    ) {
+    const demoCheckUser = await this.authRepository.findUserById(userId);
+    if (demoCheckUser?.isDemo) {
       await this.authRepository.updateUser(userId, {
         phone: newPhone,
         isPhoneVerified: true,

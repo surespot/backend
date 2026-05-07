@@ -41,13 +41,14 @@ export class IntegrationsTestService {
       this.checkStorage(),
       this.checkRedis(),
       this.checkMail(),
+      this.checkPlaces(),
     ]);
 
     return results.map((result, index) => {
       if (result.status === 'fulfilled') {
         return result.value;
       }
-      const names = ['Paystack', 'SMS', 'Storage', 'Redis', 'Mail'];
+      const names = ['Paystack', 'SMS', 'Storage', 'Redis', 'Mail', 'Places'];
       return {
         name: names[index] ?? 'Unknown',
         configured: false,
@@ -436,6 +437,68 @@ export class IntegrationsTestService {
       const message = error instanceof Error ? error.message : String(error);
       return {
         name: 'Mail (SMTP)',
+        configured: true,
+        ok: false,
+        message,
+      };
+    }
+  }
+
+  /**
+   * Check Google Places API connectivity via read-only autocomplete request.
+   */
+  async checkPlaces(): Promise<IntegrationCheckResult> {
+    const apiKey = this.configService.get<string>('GOOGLE_PLACES_API_KEY')?.trim();
+    if (!apiKey) {
+      return {
+        name: 'Places (Google)',
+        configured: false,
+        ok: false,
+        message: 'GOOGLE_PLACES_API_KEY not configured',
+      };
+    }
+
+    try {
+      await axios.post(
+        'https://places.googleapis.com/v1/places:autocomplete',
+        { input: 'Lagos' },
+        {
+          timeout: 10000,
+          headers: {
+            'X-Goog-Api-Key': apiKey,
+            'X-Goog-FieldMask': 'suggestions.placePrediction.placeId',
+          },
+        },
+      );
+
+      return {
+        name: 'Places (Google)',
+        configured: true,
+        ok: true,
+        message: 'Connected',
+      };
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        const status = error.response?.status;
+        const providerMessage =
+          (error.response?.data as { error?: { message?: string } } | undefined)
+            ?.error?.message ??
+          error.message;
+
+        return {
+          name: 'Places (Google)',
+          configured: true,
+          ok: false,
+          message:
+            status === 403
+              ? 'Rejected by Google (check API key restrictions, billing, and Places API enablement)'
+              : `HTTP ${status ?? 'unknown'}: ${providerMessage}`,
+        };
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        name: 'Places (Google)',
         configured: true,
         ok: false,
         message,

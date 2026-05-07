@@ -268,6 +268,12 @@ export class AuthRepository {
       .exec();
   }
 
+  async clearDemoFlagFromAllUsers(): Promise<void> {
+    await this.userModel
+      .updateMany({ isDemo: true }, { $set: { isDemo: false } })
+      .exec();
+  }
+
   async unlinkUsersFromPickupLocation(
     pickupLocationId: string | Types.ObjectId,
   ): Promise<void> {

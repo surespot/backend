@@ -7,6 +7,8 @@ import {
   HttpCode,
   HttpStatus,
   NotFoundException,
+  Patch,
+  Body,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -14,14 +16,22 @@ import {
   ApiOperation,
   ApiResponse,
   ApiQuery,
+  ApiBody,
 } from '@nestjs/swagger';
+import { IsBoolean, IsOptional } from 'class-validator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
-import { UserRole } from '../auth/schemas/user.schema';
+import { User, UserRole } from '../auth/schemas/user.schema';
 import { AuthRepository } from '../auth/auth.repository';
 import { OrdersRepository } from '../orders/orders.repository';
 import { TransactionsService } from '../transactions/transactions.service';
+
+class UpdateUserDto {
+  @IsBoolean()
+  @IsOptional()
+  isDemo?: boolean;
+}
 
 @ApiTags('admin-users')
 @ApiBearerAuth()
@@ -99,6 +109,7 @@ export class AdminUsersController {
           avatar: u.avatar ?? null,
           role: u.role,
           isActive: u.isActive,
+          isDemo: u.isDemo ?? false,
           createdAt: u.createdAt,
         })),
         pagination: {
@@ -167,6 +178,7 @@ export class AdminUsersController {
           email: user.email,
           phone: user.phone,
           isActive: user.isActive,
+          isDemo: user.isDemo ?? false,
           createdAt: user.createdAt,
         },
         analytics: {
@@ -187,6 +199,43 @@ export class AdminUsersController {
           createdAt: order.createdAt,
           deliveredAt: order.deliveredAt,
         })),
+      },
+    };
+  }
+
+  @Patch(':id')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Update user fields (isDemo, etc.)' })
+  @ApiBody({ schema: { example: { isDemo: true } } })
+  @ApiResponse({ status: 200, description: 'User updated successfully' })
+  async updateUser(
+    @Param('id') userId: string,
+    @Body() dto: UpdateUserDto,
+  ) {
+    const user = await this.authRepository.findUserById(userId);
+
+    if (
+      !user ||
+      (user.role !== UserRole.USER && user.role !== UserRole.RIDER)
+    ) {
+      throw new NotFoundException('User not found');
+    }
+
+    const updates: Partial<User> = {};
+    if (typeof dto.isDemo === 'boolean') {
+      updates.isDemo = dto.isDemo;
+      if (dto.isDemo) {
+        await this.authRepository.clearDemoFlagFromAllUsers();
+      }
+    }
+
+    const updated = await this.authRepository.updateUser(userId, updates);
+
+    return {
+      success: true,
+      data: {
+        id: updated!._id.toString(),
+        isDemo: updated!.isDemo ?? false,
       },
     };
   }

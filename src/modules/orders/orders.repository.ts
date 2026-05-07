@@ -848,6 +848,7 @@ export class OrdersRepository {
     const matchStage: Record<string, unknown> = {
       createdAt: { $gte: startDate, $lte: endDate },
       paymentStatus: PaymentStatus.PAID,
+      paymentMethod: { $ne: 'demo' },
     };
 
     if (pickupLocationId) {
@@ -913,6 +914,7 @@ export class OrdersRepository {
       status: {
         $nin: [OrderStatus.DELIVERED, OrderStatus.CANCELLED],
       },
+      paymentMethod: { $ne: 'demo' },
     };
 
     if (pickupLocationId) {
@@ -933,6 +935,7 @@ export class OrdersRepository {
     const matchStage: Record<string, unknown> = {
       createdAt: { $gte: startDate, $lte: endDate },
       paymentStatus: PaymentStatus.PAID,
+      paymentMethod: { $ne: 'demo' },
     };
 
     if (pickupLocationId) {
@@ -968,6 +971,7 @@ export class OrdersRepository {
     const matchStage: Record<string, unknown> = {
       createdAt: { $gte: startDate, $lte: endDate },
       paymentStatus: PaymentStatus.PAID,
+      paymentMethod: { $ne: 'demo' },
     };
     if (pickupLocationId) matchStage.pickupLocationId = pickupLocationId;
 
@@ -995,6 +999,7 @@ export class OrdersRepository {
     const matchStage: Record<string, unknown> = {
       createdAt: { $gte: startDate, $lte: endDate },
       paymentStatus: PaymentStatus.PAID,
+      paymentMethod: { $ne: 'demo' },
     };
     if (pickupLocationId) matchStage.pickupLocationId = pickupLocationId;
 
@@ -1036,6 +1041,7 @@ export class OrdersRepository {
   ): Promise<Array<{ hour: number; count: number }>> {
     const matchStage: Record<string, unknown> = {
       createdAt: { $gte: dayStart, $lte: dayEnd },
+      paymentMethod: { $ne: 'demo' },
     };
 
     if (pickupLocationId) {
@@ -1078,6 +1084,7 @@ export class OrdersRepository {
   ): Promise<Array<{ status: string; count: number }>> {
     const matchStage: Record<string, unknown> = {
       createdAt: { $gte: startDate, $lte: endDate },
+      paymentMethod: { $ne: 'demo' },
     };
 
     if (pickupLocationId) {
@@ -1122,6 +1129,7 @@ export class OrdersRepository {
     // First get orders in the date range
     const orderMatchStage: Record<string, unknown> = {
       createdAt: { $gte: startDate, $lte: endDate },
+      paymentMethod: { $ne: 'demo' },
     };
 
     if (pickupLocationId) {
@@ -1213,6 +1221,7 @@ export class OrdersRepository {
 
     const query: Record<string, unknown> = {
       pickupLocationId: new Types.ObjectId(pickupLocationId),
+      paymentMethod: { $ne: 'demo' },
     };
 
     // Apply status filter
@@ -1285,7 +1294,7 @@ export class OrdersRepository {
   async getOrderCountsByStatus(
     pickupLocationId: Types.ObjectId | undefined,
   ): Promise<Record<OrderStatus, number>> {
-    const matchStage: Record<string, unknown> = {};
+    const matchStage: Record<string, unknown> = { paymentMethod: { $ne: 'demo' } };
     if (pickupLocationId) {
       matchStage.pickupLocationId = pickupLocationId;
     }
@@ -1335,6 +1344,7 @@ export class OrdersRepository {
     const matchStage: Record<string, unknown> = {
       createdAt: { $gte: today, $lt: tomorrow },
       status: { $ne: OrderStatus.CANCELLED },
+      paymentMethod: { $ne: 'demo' },
     };
 
     if (pickupLocationId) {

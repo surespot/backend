@@ -259,11 +259,8 @@ export class OrdersService {
     return `ORD-${year}-${sequence}`;
   }
 
-  private isDemoUser(userId: string): boolean {
-    const demoId = process.env.DEMO_USER_ID;
-    return (
-      process.env.NODE_ENV !== 'production' && !!demoId && userId === demoId
-    );
+  private isDemoUser(isDemo: boolean): boolean {
+    return isDemo === true;
   }
 
   private async advanceDemoOrderStatus(order: OrderDocument): Promise<void> {
@@ -310,7 +307,7 @@ export class OrdersService {
   /**
    * Validate checkout data
    */
-  async validateCheckout(userId: string, dto: ValidateCheckoutDto) {
+  async validateCheckout(userId: string, dto: ValidateCheckoutDto, isDemo = false) {
     const errors: Array<{ field: string; message: string }> = [];
     const warnings: Array<{ field: string; message: string }> = [];
 
@@ -435,7 +432,7 @@ export class OrdersService {
     } else {
       // Pickup - need pickup location
       // Demo mode: auto-assign first active location when none provided
-      if (!dto.pickupLocationId && this.isDemoUser(userId)) {
+      if (!dto.pickupLocationId && this.isDemoUser(isDemo)) {
         const fallback = await this.pickupLocationsRepository.findFirstActive();
         if (fallback)
           dto = { ...dto, pickupLocationId: fallback._id.toString() };
@@ -533,10 +530,10 @@ export class OrdersService {
       subtotal + extrasTotal + deliveryFee - discountAmount,
     );
 
-    const ridingMinutes = this.isDemoUser(userId)
+    const ridingMinutes = this.isDemoUser(isDemo)
       ? 0
       : Math.round(distanceKm * this.DELIVERY_TIME_PER_KM);
-    const totalMinutes = this.isDemoUser(userId)
+    const totalMinutes = this.isDemoUser(isDemo)
       ? 5
       : this.PREP_TIME_MINUTES + ridingMinutes;
     const estimatedDeliveryTime = new Date();
@@ -585,7 +582,7 @@ export class OrdersService {
    * fails before the order is created, this method will attempt to request a refund
    * from Paystack using the payment reference.
    */
-  async placeOrder(userId: string, dto: PlaceOrderDto) {
+  async placeOrder(userId: string, dto: PlaceOrderDto, isDemo = false) {
     let order: OrderDocument | null = null;
 
     try {
@@ -594,7 +591,7 @@ export class OrdersService {
       if (
         !resolvedPickupLocationId &&
         dto.deliveryType === DeliveryType.PICKUP &&
-        this.isDemoUser(userId)
+        this.isDemoUser(isDemo)
       ) {
         const fallback = await this.pickupLocationsRepository.findFirstActive();
         if (fallback) {
@@ -609,7 +606,7 @@ export class OrdersService {
         deliveryAddress: dto.deliveryAddress,
         pickupLocationId: resolvedPickupLocationId,
         promoCode: dto.promoCode,
-      });
+      }, isDemo);
 
       if (!validation.data.isValid) {
         throw new BadRequestException({
@@ -731,8 +728,8 @@ export class OrdersService {
               ),
               estimatedPreparationTime:
                 validation.data.estimatedPreparationTime,
-              paymentMethod: dto.paymentMethod,
-              paymentIntentId: dto.paymentIntentId,
+              paymentMethod: this.isDemoUser(isDemo) ? 'demo' : dto.paymentMethod,
+              paymentIntentId: this.isDemoUser(isDemo) ? undefined : dto.paymentIntentId,
               instructions: dto.instructions,
             },
             session,
@@ -845,9 +842,23 @@ export class OrdersService {
       // Note: Admin notification for confirmed orders is sent in updatePaymentStatusByReference
       // when payment is confirmed. We don't emit here to avoid duplicate notifications.
 
+      // Demo users bypass Paystack entirely — mark order paid + confirmed immediately
+      if (this.isDemoUser(isDemo)) {
+        await this.ordersRepository.updateOrder(activeOrder._id.toString(), {
+          paymentStatus: PaymentStatus.PAID,
+          status: OrderStatus.CONFIRMED,
+        });
+        const updatedOrder = await this.ordersRepository.findById(activeOrder._id.toString());
+        if (updatedOrder) {
+          order = updatedOrder;
+          activeOrder = updatedOrder;
+        }
+      }
+
       // If payment was already successful (webhook/verify ran before order creation),
       // verify and update payment status now
       if (
+        !this.isDemoUser(isDemo) &&
         activeOrder.paymentIntentId &&
         activeOrder.paymentStatus === PaymentStatus.PENDING
       ) {
@@ -1255,7 +1266,7 @@ export class OrdersService {
   /**
    * Get order tracking information
    */
-  async getOrderTracking(userId: string, orderId: string) {
+  async getOrderTracking(userId: string, orderId: string, isDemo = false) {
     let order = await this.ordersRepository.findById(orderId);
 
     if (!order) {
@@ -1279,7 +1290,7 @@ export class OrdersService {
       });
     }
 
-    if (this.isDemoUser(userId)) {
+    if (this.isDemoUser(isDemo)) {
       await this.advanceDemoOrderStatus(order);
       order = (await this.ordersRepository.findById(orderId))!;
     }

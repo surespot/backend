@@ -36,4 +36,16 @@ export class IntegrationsTestController {
       },
     };
   }
+
+  @Get('places')
+  @PublicInDevelopment()
+  @ApiOperation({
+    summary: 'Test Google Places integration',
+    description:
+      'Runs a read-only Google Places autocomplete probe and returns a sanitized pass/fail message. In NODE_ENV=development this route is public; otherwise admin JWT required.',
+  })
+  async checkPlaces() {
+    const result = await this.integrationsTestService.checkPlaces();
+    return { success: result.ok, result };
+  }
 }
