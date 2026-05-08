@@ -5,13 +5,13 @@ services:
     restart: unless-stopped
     ports:
       - '6380:6379'
-    command: redis-server --appendonly yes --requirepass surespot_redis_prod_password
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
     volumes:
       - redis_prod_data:/data
     networks:
       - surespot-prod-network
     healthcheck:
-      test: ['CMD', 'redis-cli', '-a', 'surespot_redis_prod_password', 'ping']
+      test: ['CMD', 'redis-cli', '-a', '${REDIS_PASSWORD}', 'ping']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -26,6 +26,19 @@ services:
     networks:
       - surespot-prod-network
 
+  seed-demo:
+    image: ${APP_IMAGE:-ghcr.io/surespot/backend:prod}
+    container_name: surespot-seed-demo-prod
+    restart: 'no'
+    env_file:
+      - .env.production
+    entrypoint: /app/node_modules/.bin/ts-node -r tsconfig-paths/register scripts/seed-demo-user.ts
+    networks:
+      - surespot-prod-network
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+
   app:
     image: ${APP_IMAGE:-ghcr.io/surespot/backend:prod}
     container_name: surespot-app-prod
@@ -39,12 +52,14 @@ services:
       PORT: 3000
       REDIS_HOST: redis-prod
       REDIS_PORT: 6379
-      REDIS_PASSWORD: surespot_redis_prod_password
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
       LOKI_URL: http://loki:3100
     depends_on:
       redis-prod:
         condition: service_healthy
       seed:
+        condition: service_completed_successfully
+      seed-demo:
         condition: service_completed_successfully
     networks:
       - surespot-prod-network

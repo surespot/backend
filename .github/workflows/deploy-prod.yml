@@ -79,7 +79,7 @@ jobs:
           port: ${{ secrets.VPS_SSH_PORT || '22' }}
           script: |
             set -e
-            cd /opt/surespot-backend
+            cd /opt/surespot-backend-prod
             git fetch origin
             git clean -fd
             git checkout -f main
