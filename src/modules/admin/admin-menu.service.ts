@@ -96,7 +96,7 @@ export class AdminMenuService {
   }
 
   async getMenuItems(
-    pickupLocationId: string,
+    pickupLocationId: string | null,
     filters: GetMenuItemsDto,
   ): Promise<{ success: true; data: { items: MenuItemResponseDto[] } }> {
     const type = filters.type ?? 'all';
@@ -129,14 +129,16 @@ export class AdminMenuService {
         itemType: 'extra' as const,
       })),
     ];
-    const stockMap = await this.adminMenuRepository.getStockStatusBatch(
-      pickupLocationId,
-      stockItems.map((s) => ({
-        itemId: s.itemId,
-        itemType: s.itemType,
-        name: '',
-      })),
-    );
+    const stockMap = pickupLocationId
+      ? await this.adminMenuRepository.getStockStatusBatch(
+          pickupLocationId,
+          stockItems.map((s) => ({
+            itemId: s.itemId,
+            itemType: s.itemType,
+            name: '',
+          })),
+        )
+      : new Map<string, boolean>();
 
     const list: MenuItemResponseDto[] = [];
 
@@ -169,7 +171,7 @@ export class AdminMenuService {
   }
 
   async getMenuItem(
-    pickupLocationId: string,
+    pickupLocationId: string | null,
     itemId: string,
   ): Promise<{ success: true; data: MenuItemResponseDto }> {
     let item: FoodItemDocument | FoodExtraDocument | null =
@@ -185,17 +187,19 @@ export class AdminMenuService {
         error: { code: 'MENU_ITEM_NOT_FOUND', message: 'Menu item not found' },
       });
     }
-    const inStock = await this.adminMenuRepository.getStockStatus(
-      pickupLocationId,
-      itemId,
-      itemType,
-    );
+    const inStock = pickupLocationId
+      ? await this.adminMenuRepository.getStockStatus(
+          pickupLocationId,
+          itemId,
+          itemType,
+        )
+      : true;
     const dto = this.toMenuItemResponse(item, itemType === 'extra', inStock);
     return { success: true, data: dto };
   }
 
   async createMenuItem(
-    _pickupLocationId: string,
+    _pickupLocationId: string | null,
     dto: CreateMenuItemDto,
     file?: Express.Multer.File,
   ): Promise<{ success: true; data: MenuItemResponseDto }> {
@@ -237,7 +241,7 @@ export class AdminMenuService {
   }
 
   async updateMenuItem(
-    pickupLocationId: string,
+    pickupLocationId: string | null,
     itemId: string,
     dto: UpdateMenuItemDto,
     file?: Express.Multer.File,
@@ -268,11 +272,13 @@ export class AdminMenuService {
         );
       }
       const updated = await this.foodItemsRepository.findById(itemId, true);
-      const inStock = await this.adminMenuRepository.getStockStatus(
-        pickupLocationId,
-        itemId,
-        'food',
-      );
+      const inStock = pickupLocationId
+        ? await this.adminMenuRepository.getStockStatus(
+            pickupLocationId,
+            itemId,
+            'food',
+          )
+        : true;
       return {
         success: true,
         data: this.toMenuItemResponse(updated!, false, inStock),
@@ -296,11 +302,13 @@ export class AdminMenuService {
         await this.foodItemsService.updateExtra(itemId, updateExtraDto);
       }
       const updated = await this.foodItemsRepository.findExtraById(itemId);
-      const inStock = await this.adminMenuRepository.getStockStatus(
-        pickupLocationId,
-        itemId,
-        'extra',
-      );
+      const inStock = pickupLocationId
+        ? await this.adminMenuRepository.getStockStatus(
+            pickupLocationId,
+            itemId,
+            'extra',
+          )
+        : true;
       return {
         success: true,
         data: this.toMenuItemResponse(updated!, true, inStock),
@@ -314,27 +322,35 @@ export class AdminMenuService {
   }
 
   async deleteMenuItem(
-    pickupLocationId: string,
+    pickupLocationId: string | null,
     itemId: string,
   ): Promise<{ success: true; message: string }> {
     const food = await this.foodItemsRepository.findById(itemId, false);
     if (food) {
       await this.foodItemsRepository.delete(itemId);
-      await this.adminMenuRepository.deleteStockStatus(
-        pickupLocationId,
-        itemId,
-        'food',
-      );
+      if (pickupLocationId) {
+        await this.adminMenuRepository.deleteStockStatus(
+          pickupLocationId,
+          itemId,
+          'food',
+        );
+      } else {
+        await this.adminMenuRepository.deleteAllStockStatusForItem(itemId, 'food');
+      }
       return { success: true, message: 'Food item deleted successfully' };
     }
     const extra = await this.foodItemsRepository.findExtraById(itemId);
     if (extra) {
       await this.foodItemsRepository.deleteExtra(itemId);
-      await this.adminMenuRepository.deleteStockStatus(
-        pickupLocationId,
-        itemId,
-        'extra',
-      );
+      if (pickupLocationId) {
+        await this.adminMenuRepository.deleteStockStatus(
+          pickupLocationId,
+          itemId,
+          'extra',
+        );
+      } else {
+        await this.adminMenuRepository.deleteAllStockStatusForItem(itemId, 'extra');
+      }
       return { success: true, message: 'Food extra deleted successfully' };
     }
     throw new NotFoundException({
@@ -390,7 +406,7 @@ export class AdminMenuService {
     };
   }
 
-  async getExtrasForAssignment(_pickupLocationId: string): Promise<{
+  async getExtrasForAssignment(_pickupLocationId: string | null): Promise<{
     success: true;
     data: Array<{ id: string; name: string; price: number }>;
   }> {

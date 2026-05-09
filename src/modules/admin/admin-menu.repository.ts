@@ -119,4 +119,14 @@ export class AdminMenuRepository {
       })
       .exec();
   }
+
+  async deleteAllStockStatusForItem(
+    itemId: string,
+    itemType: 'food' | 'extra',
+  ): Promise<void> {
+    this.validateObjectId(itemId, 'itemId');
+    await this.availabilityModel
+      .deleteMany({ itemId: new Types.ObjectId(itemId), itemType })
+      .exec();
+  }
 }
