@@ -79,7 +79,6 @@ jobs:
             set -e
             cd /opt/surespot-backend
             git fetch origin
-            git clean -fd
             git checkout -f dev
             git reset --hard origin/dev
             export APP_IMAGE=${{ env.REGISTRY }}/${{ github.repository }}:dev
