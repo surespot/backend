@@ -24,12 +24,16 @@ describe('DashboardService', () => {
       getOrderStats: jest.fn(),
       getActiveOrdersCount: jest.fn(),
       getDailyRevenue: jest.fn(),
+      getHourlyRevenue: jest.fn(),
+      getWeeklyRevenue: jest.fn(),
       getHourlyOrderCounts: jest.fn(),
       getOrderStatusBreakdown: jest.fn(),
       getMenuItemPerformance: jest.fn(),
     };
 
-    const mockFoodItemsRepository = {};
+    const mockFoodItemsRepository = {
+      getRecentReviewsForDashboard: jest.fn().mockResolvedValue([]),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -115,7 +119,28 @@ describe('DashboardService', () => {
   });
 
   describe('getProfit', () => {
-    it('should aggregate daily revenue into profit series', async () => {
+    it('should return hourly series for today period', async () => {
+      const hourlyRevenue = [
+        { hour: 9, revenue: 100000 },
+        { hour: 12, revenue: 120000 },
+        { hour: 18, revenue: 80000 },
+      ];
+
+      ordersRepository.getHourlyRevenue.mockResolvedValue(hourlyRevenue);
+
+      const result = await service.getProfit(
+        mockPickupLocationId,
+        mockDateRange,
+        'today' as any,
+      );
+
+      expect(result.totalProfit).toBe(300000);
+      expect(result.series).toHaveLength(3);
+      expect(result.series[0]).toEqual({ label: '9AM', profit: 100000 });
+      expect(result.series[1]).toEqual({ label: '12PM', profit: 120000 });
+    });
+
+    it('should return daily series for 7d period', async () => {
       const dailyRevenue = [
         { date: '2026-02-01', revenue: 100000 },
         { date: '2026-02-02', revenue: 120000 },
@@ -127,6 +152,7 @@ describe('DashboardService', () => {
       const result = await service.getProfit(
         mockPickupLocationId,
         mockDateRange,
+        '7d' as any,
       );
 
       expect(result.totalProfit).toBe(300000);
@@ -134,6 +160,28 @@ describe('DashboardService', () => {
       expect(result.series[0]).toEqual({
         label: expect.any(String),
         profit: 100000,
+      });
+    });
+
+    it('should return weekly series for 30d period', async () => {
+      const weeklyRevenue = [
+        { week: 5, weekStart: '2026-02-02', revenue: 500000 },
+        { week: 6, weekStart: '2026-02-09', revenue: 600000 },
+      ];
+
+      ordersRepository.getWeeklyRevenue.mockResolvedValue(weeklyRevenue);
+
+      const result = await service.getProfit(
+        mockPickupLocationId,
+        mockDateRange,
+        '30d' as any,
+      );
+
+      expect(result.totalProfit).toBe(1100000);
+      expect(result.series).toHaveLength(2);
+      expect(result.series[0]).toEqual({
+        label: expect.any(String),
+        profit: 500000,
       });
     });
   });
@@ -147,12 +195,20 @@ describe('DashboardService', () => {
 
       ordersRepository.getHourlyOrderCounts.mockResolvedValue(hourlyData);
 
+      const singleDayRange = {
+        start: new Date('2026-02-10T08:00:00'),
+        end: new Date('2026-02-10T20:00:00'),
+      };
+
       const result = await service.getOrderTraffic(
         mockPickupLocationId,
-        mockDateRange,
+        singleDayRange,
       );
 
-      expect(result.date).toBe('2026-02-10');
+      const dayStart = new Date(singleDayRange.start);
+      dayStart.setHours(0, 0, 0, 0);
+      const expectedDateLabel = dayStart.toISOString().split('T')[0];
+      expect(result.date).toBe(expectedDateLabel);
       expect(result.buckets).toHaveLength(24);
       expect(result.buckets[12]).toEqual({
         timeLabel: '12PM',
@@ -234,13 +290,18 @@ describe('DashboardService', () => {
   });
 
   describe('getCustomerRatings', () => {
-    it('should return empty reviews array (not implemented yet)', async () => {
+    it('should return reviews from food items repository', async () => {
+      foodItemsRepository.getRecentReviewsForDashboard.mockResolvedValue([]);
+
       const result = await service.getCustomerRatings(
         mockPickupLocationId,
         mockDateRange,
       );
 
       expect(result.reviews).toEqual([]);
+      expect(
+        foodItemsRepository.getRecentReviewsForDashboard,
+      ).toHaveBeenCalledWith(mockPickupLocationId, mockDateRange);
     });
   });
 
@@ -252,8 +313,8 @@ describe('DashboardService', () => {
         avgDeliveryTime: 35,
       });
       ordersRepository.getActiveOrdersCount.mockResolvedValue(10);
-      ordersRepository.getDailyRevenue.mockResolvedValue([
-        { date: '2026-02-10', revenue: 250000 },
+      ordersRepository.getHourlyRevenue.mockResolvedValue([
+        { hour: 12, revenue: 250000 },
       ]);
       ordersRepository.getHourlyOrderCounts.mockResolvedValue(
         Array.from({ length: 24 }, (_, i) => ({ hour: i, count: 2 })),

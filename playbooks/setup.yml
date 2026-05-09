@@ -1,0 +1,213 @@
+---
+- name: Setup Surespot VPS
+  hosts: surespot
+  become: true
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install dependencies
+      apt:
+        name: [curl, ufw, nginx, certbot, python3-certbot-nginx]
+        state: present
+
+    - name: Install Docker
+      shell: curl -fsSL https://get.docker.com | sh
+      args:
+        creates: /usr/bin/docker
+
+    - name: Add deploy user to docker group
+      user:
+        name: deploy
+        groups: docker
+        append: yes
+
+    - name: Create app directory
+      file:
+        path: /opt/surespot-backend
+        state: directory
+        owner: deploy
+        group: deploy
+        mode: '0755'
+
+    - name: Copy compose file
+      copy:
+        src: /mnt/c/Users/USER/Desktop/work/Freelance/surespot-backend/compose-prod.yml
+        dest: /opt/surespot-backend/compose-prod.yml
+        owner: deploy
+        group: deploy
+
+    - name: Copy monitoring configs
+      copy:
+        src: /mnt/c/Users/USER/Desktop/work/Freelance/surespot-backend/monitoring/
+        dest: /opt/surespot-backend/monitoring/
+        owner: deploy
+        group: deploy
+
+    - name: Configure UFW - allow SSH
+      ufw:
+        rule: allow
+        port: '22022'
+
+    - name: Configure UFW - allow HTTP
+      ufw:
+        rule: allow
+        port: '80'
+
+    - name: Configure UFW - allow HTTPS
+      ufw:
+        rule: allow
+        port: '443'
+
+    - name: Configure UFW - allow Grafana prod
+      ufw:
+        rule: allow
+        port: '3001'
+
+    - name: Configure UFW - allow Grafana dev
+      ufw:
+        rule: allow
+        port: '3002'
+
+    - name: Enable UFW
+      ufw:
+        state: enabled
+        policy: deny
+
+    - name: Write nginx config for api.surespot.ng (prod)
+      copy:
+        dest: /etc/nginx/sites-available/api.surespot.ng
+        content: |
+          server {
+              listen 80;
+              server_name api.surespot.ng;
+
+              location / {
+                  proxy_pass http://localhost:3000;
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade $http_upgrade;
+                  proxy_set_header Connection 'upgrade';
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+                  proxy_cache_bypass $http_upgrade;
+              }
+          }
+
+    - name: Write nginx config for dev.api.surespot.ng (dev)
+      copy:
+        dest: /etc/nginx/sites-available/dev.api.surespot.ng
+        content: |
+          server {
+              listen 80;
+              server_name dev.api.surespot.ng;
+
+              location / {
+                  proxy_pass http://localhost:4000;
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade $http_upgrade;
+                  proxy_set_header Connection 'upgrade';
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+                  proxy_cache_bypass $http_upgrade;
+              }
+          }
+
+    - name: Write nginx config for admin.surespot.ng (prod)
+      copy:
+        dest: /etc/nginx/sites-available/admin.surespot.ng
+        content: |
+          server {
+              listen 80;
+              server_name admin.surespot.ng;
+
+              location / {
+                  proxy_pass http://localhost:4000;
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade $http_upgrade;
+                  proxy_set_header Connection 'upgrade';
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+                  proxy_cache_bypass $http_upgrade;
+              }
+          }
+
+    - name: Write nginx config for dev.admin.surespot.ng (dev)
+      copy:
+        dest: /etc/nginx/sites-available/dev.admin.surespot.ng
+        content: |
+          server {
+              listen 80;
+              server_name dev.admin.surespot.ng;
+
+              location / {
+                  proxy_pass http://localhost:4001;
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade $http_upgrade;
+                  proxy_set_header Connection 'upgrade';
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+                  proxy_cache_bypass $http_upgrade;
+              }
+          }
+
+    - name: Enable nginx sites
+      file:
+        src: /etc/nginx/sites-available/{{ item }}
+        dest: /etc/nginx/sites-enabled/{{ item }}
+        state: link
+      loop:
+        - api.surespot.ng
+        - dev.api.surespot.ng
+        - admin.surespot.ng
+        - dev.admin.surespot.ng
+
+    - name: Remove nginx default site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Reload nginx
+      service:
+        name: nginx
+        state: reloaded
+
+    - name: Obtain SSL cert for api.surespot.ng
+      shell: |
+        certbot --nginx -d api.surespot.ng --non-interactive --agree-tos -m admin@surespot.ng --redirect
+      args:
+        creates: /etc/letsencrypt/live/api.surespot.ng/fullchain.pem
+
+    - name: Obtain SSL cert for dev.api.surespot.ng
+      shell: |
+        certbot --nginx -d dev.api.surespot.ng --non-interactive --agree-tos -m admin@surespot.ng --redirect
+      args:
+        creates: /etc/letsencrypt/live/dev.api.surespot.ng/fullchain.pem
+
+    - name: Obtain SSL cert for admin.surespot.ng
+      shell: |
+        certbot --nginx -d admin.surespot.ng --non-interactive --agree-tos -m admin@surespot.ng --redirect
+      args:
+        creates: /etc/letsencrypt/live/admin.surespot.ng/fullchain.pem
+
+    - name: Obtain SSL cert for dev.admin.surespot.ng
+      shell: |
+        certbot --nginx -d dev.admin.surespot.ng --non-interactive --agree-tos -m admin@surespot.ng --redirect
+      args:
+        creates: /etc/letsencrypt/live/dev.admin.surespot.ng/fullchain.pem
+
+    - name: Enable certbot auto-renewal timer
+      systemd:
+        name: certbot.timer
+        enabled: yes
+        state: started

@@ -3,12 +3,17 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PickupLocationsRepository } from './pickup-locations.repository';
 import { CreatePickupLocationDto } from './dto/create-pickup-location.dto';
 import { UpdatePickupLocationDto } from './dto/update-pickup-location.dto';
 import { FindNearestPickupLocationDto } from './dto/find-nearest-pickup-location.dto';
-import { PickupLocationDocument } from './schemas/pickup-location.schema';
+import {
+  isPopulatedRegionId,
+  PickupLocationDocument,
+  type RegionIdField,
+} from './schemas/pickup-location.schema';
 import { CreatePickupLocationForAdminDto } from './dto/create-pickup-location-for-admin.dto';
 import { AuthRepository } from '../auth/auth.repository';
 import { UserRole } from '../auth/schemas/user.schema';
@@ -54,6 +59,7 @@ export class PickupLocationsService {
       role: UserRole.PICKUP_ADMIN,
       isEmailVerified: true,
       isActive: true,
+      isOnboarded: true,
     });
 
     try {
@@ -171,9 +177,10 @@ export class PickupLocationsService {
       isActive: dto.isActive ?? true,
     });
 
-    // Attach the pickup location to the admin user
+    // Attach the pickup location to the admin user (super admin onboarding)
     const updatedAdminUser = await this.authRepository.updateUser(adminUserId, {
       pickupLocationId: pickupLocation._id,
+      isOnboarded: true,
     });
 
     if (!updatedAdminUser) {
@@ -259,6 +266,7 @@ export class PickupLocationsService {
     const updatedUser = await this.authRepository.updateUser(userId, {
       pickupLocationId: pickupLocation._id,
       role: newRole,
+      isOnboarded: true,
     });
 
     if (!updatedUser) {
@@ -342,14 +350,20 @@ export class PickupLocationsService {
       pickupLocation._id.toString(),
     );
 
-    const region = pickupLocation.regionId as
-      | { _id?: unknown; name?: string }
-      | null
-      | undefined;
-    const regionName =
-      region && typeof region === 'object' && 'name' in region
-        ? region.name
-        : undefined;
+    const { regionName } = this.getRegionIdApiFields(pickupLocation);
+
+    const linkedUsers = await this.authRepository.findUsersByPickupLocationId(
+      pickupLocation._id,
+    );
+    const linkedAdmins = linkedUsers.map((u) => ({
+      id: u._id.toString(),
+      firstName: u.firstName,
+      lastName: u.lastName,
+      email: u.email,
+      role: u.role,
+      phone: u.phone,
+      isActive: u.isActive,
+    }));
 
     return {
       success: true,
@@ -359,6 +373,10 @@ export class PickupLocationsService {
         regionName,
         totalOrders: stats.totalOrders,
         totalIncome: stats.totalIncome,
+        linkedAdmins,
+        pickupLocationAdmin: linkedAdmins.find(
+          (a) => a.role === UserRole.PICKUP_ADMIN,
+        ),
       },
     };
   }
@@ -441,6 +459,110 @@ export class PickupLocationsService {
     };
   }
 
+  async deactivatePickupLocation(
+    locationId: string,
+    requestingUser: { id: string; role: string; pickupLocationId?: string },
+  ) {
+    const location =
+      await this.pickupLocationsRepository.findById(locationId);
+    if (!location) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'PICKUP_LOCATION_NOT_FOUND',
+          message: 'Pickup location not found',
+        },
+      });
+    }
+
+    if (requestingUser.role === UserRole.PICKUP_ADMIN) {
+      if (requestingUser.pickupLocationId !== locationId) {
+        throw new ForbiddenException({
+          success: false,
+          error: {
+            code: 'FORBIDDEN',
+            message:
+              'You can only deactivate your own pickup location',
+          },
+        });
+      }
+    }
+
+    if (!location.isActive) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'ALREADY_INACTIVE',
+          message: 'Pickup location is already inactive',
+        },
+      });
+    }
+
+    await this.pickupLocationsRepository.update(locationId, {
+      isActive: false,
+    });
+    await this.authRepository.unlinkUsersFromPickupLocation(locationId);
+
+    return {
+      success: true,
+      message: 'Pickup location deactivated successfully',
+    };
+  }
+
+  async promoteUserToPickupAdmin(userId: string) {
+    const user = await this.authRepository.findUserById(userId);
+    if (!user) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'USER_NOT_FOUND',
+          message: 'User not found',
+        },
+      });
+    }
+
+    if (user.role !== UserRole.USER) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'INVALID_USER_ROLE',
+          message: `Only regular users can be promoted to pickup admin. This user has role: ${user.role}`,
+        },
+      });
+    }
+
+    const updated = await this.authRepository.updateUser(userId, {
+      role: UserRole.PICKUP_ADMIN,
+    });
+
+    if (!updated) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'USER_NOT_FOUND',
+          message: 'User not found after promotion',
+        },
+      });
+    }
+
+    return {
+      success: true,
+      message: 'User promoted to pickup admin successfully',
+      data: {
+        user: {
+          id: updated._id.toString(),
+          firstName: updated.firstName,
+          lastName: updated.lastName,
+          email: updated.email,
+          role: updated.role,
+          pickupLocationId: updated.pickupLocationId
+            ? updated.pickupLocationId.toString()
+            : undefined,
+        },
+      },
+    };
+  }
+
   async delete(id: string) {
     const deleted = await this.pickupLocationsRepository.delete(id);
 
@@ -471,16 +593,27 @@ export class PickupLocationsService {
     return code;
   }
 
+  private getRegionIdApiFields(loc: PickupLocationDocument): {
+    regionId: string;
+    regionName?: string;
+  } {
+    const rf: RegionIdField = loc.regionId;
+    if (isPopulatedRegionId(rf)) {
+      return { regionId: rf._id.toString(), regionName: rf.name };
+    }
+    return { regionId: rf.toString() };
+  }
+
   private formatPickupLocation(pickupLocation: PickupLocationDocument) {
-    const region = pickupLocation.regionId as any;
+    const { regionId, regionName } = this.getRegionIdApiFields(pickupLocation);
     return {
       id: pickupLocation._id.toString(),
       name: pickupLocation.name,
       address: pickupLocation.address,
       latitude: pickupLocation.location.coordinates[1], // GeoJSON: [lng, lat]
       longitude: pickupLocation.location.coordinates[0],
-      regionId: region?._id?.toString() || region?.toString(),
-      regionName: region?.name,
+      regionId,
+      regionName,
       isActive: pickupLocation.isActive,
       createdAt: pickupLocation.createdAt,
       updatedAt: pickupLocation.updatedAt,

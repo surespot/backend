@@ -63,9 +63,27 @@ export interface AuthResponse {
     email?: string;
     birthday?: string;
     avatar?: string;
+    isOnboarded: boolean;
     createdAt: Date;
   };
   tokens: TokenPair;
+}
+
+/**
+ * True when the user has finished onboarding. PICKUP_ADMIN: always. ADMIN (super
+ * admin): has a linked pickup location. Otherwise: DB flag and consumer legacy rule.
+ */
+function userIsOnboardedForResponse(user: UserDocument): boolean {
+  if (user.role === UserRole.PICKUP_ADMIN) {
+    return true;
+  }
+  if (user.role === UserRole.ADMIN) {
+    return Boolean(user.pickupLocationId);
+  }
+  if (user.isOnboarded === true) return true;
+  return Boolean(
+    user.birthday && !(user.firstName === 'New' && user.lastName === 'User'),
+  );
 }
 
 @Injectable()
@@ -146,6 +164,21 @@ export class AuthService {
     });
 
     try {
+      // Check if phone belongs to a recently deleted account
+      const deletedUser = await this.authRepository.findDeletedUserByPhone(
+        dto.phone,
+      );
+      if (deletedUser) {
+        throw new ConflictException({
+          success: false,
+          error: {
+            code: 'ACCOUNT_RECENTLY_DELETED',
+            message:
+              'This phone number is associated with a recently deleted account. Please wait a month before registering again.',
+          },
+        });
+      }
+
       // Check if phone already registered
       const existingUser = await this.authRepository.findUserByPhone(dto.phone);
       if (existingUser) {
@@ -503,7 +536,7 @@ export class AuthService {
   async sendEmailOtp(dto: SendEmailOtpDto): Promise<{
     success: boolean;
     message: string;
-    data: { expiresIn: number; retryAfter: number };
+    data: { expiresIn: number; retryAfter: number; emailSent: boolean };
   }> {
     const startTime = Date.now();
     const maskedEmail = this.maskEmail(dto.email);
@@ -515,6 +548,21 @@ export class AuthService {
     });
 
     try {
+      // Check if email belongs to a recently deleted account
+      const deletedUser = await this.authRepository.findDeletedUserByEmail(
+        dto.email,
+      );
+      if (deletedUser) {
+        throw new ConflictException({
+          success: false,
+          error: {
+            code: 'ACCOUNT_RECENTLY_DELETED',
+            message:
+              'This email address is associated with a recently deleted account. Please wait a month before registering again.',
+          },
+        });
+      }
+
       // Check if email already registered
       const existingUser = await this.authRepository.findUserByEmail(dto.email);
       if (existingUser) {
@@ -594,6 +642,7 @@ export class AuthService {
       );
 
       // Send OTP via email service
+      let mailSendDelivered = true;
       try {
         await this.mailService.sendOtpEmail({
           to: dto.email,
@@ -602,10 +651,13 @@ export class AuthService {
           expiresInMinutes: this.otpExpiryMinutes,
         });
       } catch (error) {
+        mailSendDelivered = false;
+        const mailErr = error instanceof Error ? error.message : String(error);
         this.logger.error(
-          `Failed to send email OTP to ${this.maskEmail(dto.email)}`,
+          `Failed to send email OTP to ${this.maskEmail(dto.email)}: ${mailErr}`,
           {
-            error: error instanceof Error ? error.message : String(error),
+            error: mailErr,
+            stack: error instanceof Error ? error.stack : undefined,
           },
         );
         // Don't throw - OTP is still saved, user can request resend
@@ -614,21 +666,38 @@ export class AuthService {
       const executionTime = Date.now() - startTime;
       const response = {
         success: true,
-        message: 'OTP sent successfully',
+        message: mailSendDelivered
+          ? 'OTP sent successfully'
+          : 'We could not send the email, but a verification code is ready. Check your email settings and try resend, or contact support if this persists.',
         data: {
           expiresIn: this.otpExpiryMinutes * 60,
           retryAfter: this.otpResendSeconds,
+          emailSent: mailSendDelivered,
         },
       };
 
-      this.logger.info('Email signup OTP sent successfully', {
-        context: 'AuthService',
-        method: 'sendEmailOtp',
-        email: maskedEmail,
-        expiresIn: `${this.otpExpiryMinutes * 60}s`,
-        retryAfter: `${this.otpResendSeconds}s`,
-        executionTime: `${executionTime}ms`,
-      });
+      if (mailSendDelivered) {
+        this.logger.info('Email signup OTP sent successfully', {
+          context: 'AuthService',
+          method: 'sendEmailOtp',
+          email: maskedEmail,
+          expiresIn: `${this.otpExpiryMinutes * 60}s`,
+          retryAfter: `${this.otpResendSeconds}s`,
+          executionTime: `${executionTime}ms`,
+        });
+      } else {
+        this.logger.warn(
+          'Email signup OTP: code stored but email not delivered',
+          {
+            context: 'AuthService',
+            method: 'sendEmailOtp',
+            email: maskedEmail,
+            expiresIn: `${this.otpExpiryMinutes * 60}s`,
+            retryAfter: `${this.otpResendSeconds}s`,
+            executionTime: `${executionTime}ms`,
+          },
+        );
+      }
 
       return response;
     } catch (error) {
@@ -818,7 +887,7 @@ export class AuthService {
   async resendEmailOtp(dto: ResendEmailOtpDto): Promise<{
     success: boolean;
     message: string;
-    data: { expiresIn: number; retryAfter: number };
+    data: { expiresIn: number; retryAfter: number; emailSent: boolean };
   }> {
     const startTime = Date.now();
     const maskedEmail = this.maskEmail(dto.email);
@@ -832,14 +901,28 @@ export class AuthService {
     try {
       const result = await this.sendEmailOtp({ email: dto.email });
       const executionTime = Date.now() - startTime;
-      this.logger.info('Email signup OTP resent successfully', {
-        context: 'AuthService',
-        method: 'resendEmailOtp',
-        email: maskedEmail,
-        expiresIn: `${result.data.expiresIn}s`,
-        retryAfter: `${result.data.retryAfter}s`,
-        executionTime: `${executionTime}ms`,
-      });
+      if (result.data.emailSent) {
+        this.logger.info('Email signup OTP resent successfully', {
+          context: 'AuthService',
+          method: 'resendEmailOtp',
+          email: maskedEmail,
+          expiresIn: `${result.data.expiresIn}s`,
+          retryAfter: `${result.data.retryAfter}s`,
+          executionTime: `${executionTime}ms`,
+        });
+      } else {
+        this.logger.warn(
+          'Email signup OTP resend: code updated but email not delivered',
+          {
+            context: 'AuthService',
+            method: 'resendEmailOtp',
+            email: maskedEmail,
+            expiresIn: `${result.data.expiresIn}s`,
+            retryAfter: `${result.data.retryAfter}s`,
+            executionTime: `${executionTime}ms`,
+          },
+        );
+      }
       return result;
     } catch (error) {
       const executionTime = Date.now() - startTime;
@@ -954,6 +1037,7 @@ export class AuthService {
     data: {
       userId: string;
       requiresProfileCompletion: boolean;
+      isOnboarded: boolean;
       tokens: TokenPair;
     };
   }> {
@@ -1110,6 +1194,7 @@ export class AuthService {
         data: {
           userId: user._id.toString(),
           requiresProfileCompletion: true,
+          isOnboarded: false,
           tokens,
         },
       };
@@ -1247,6 +1332,7 @@ export class AuthService {
           email: updatedUser.email,
           birthday: updatedUser.birthday?.toISOString().split('T')[0],
           avatar: updatedUser.avatar,
+          isOnboarded: userIsOnboardedForResponse(updatedUser),
           createdAt: updatedUser.createdAt!,
         },
         tokens,
@@ -1362,6 +1448,7 @@ export class AuthService {
         firstName: dto.firstName,
         lastName: dto.lastName,
         birthday: new Date(dto.birthday),
+        isOnboarded: true,
       });
 
       if (!updatedUser) {
@@ -1405,6 +1492,7 @@ export class AuthService {
             email: updatedUser.email,
             birthday: updatedUser.birthday?.toISOString().split('T')[0],
             avatar: updatedUser.avatar,
+            isOnboarded: userIsOnboardedForResponse(updatedUser),
             createdAt: updatedUser.createdAt!,
           },
           tokens,
@@ -1527,6 +1615,7 @@ export class AuthService {
           email: user.email,
           birthday: user.birthday?.toISOString().split('T')[0],
           avatar: user.avatar,
+          isOnboarded: userIsOnboardedForResponse(user),
           createdAt: user.createdAt!,
         },
         tokens,
@@ -1569,6 +1658,12 @@ export class AuthService {
           birthday: profile.birthday,
           isEmailVerified: !!profile.email,
           role: UserRole.USER,
+          isOnboarded: Boolean(
+            profile.birthday &&
+              profile.firstName &&
+              profile.lastName &&
+              !(profile.firstName === 'New' && profile.lastName === 'User'),
+          ),
         });
       }
     }
@@ -1611,6 +1706,7 @@ export class AuthService {
         email: user.email,
         birthday: user.birthday?.toISOString().split('T')[0],
         avatar: user.avatar,
+        isOnboarded: userIsOnboardedForResponse(user),
         createdAt: user.createdAt!,
       },
       tokens,
@@ -1683,6 +1779,7 @@ export class AuthService {
         user = await this.authRepository.createUser({
           appleId,
           email,
+          isOnboarded: false,
           firstName: fullName?.givenName ?? 'User',
           lastName: fullName?.familyName ?? '',
           isEmailVerified: !!email,
@@ -1732,6 +1829,7 @@ export class AuthService {
           email: user.email,
           birthday: user.birthday?.toISOString().split('T')[0],
           avatar: user.avatar,
+          isOnboarded: userIsOnboardedForResponse(user),
           createdAt: user.createdAt!,
         },
         tokens,
@@ -1830,6 +1928,19 @@ export class AuthService {
 
     if (tokenRecord && !tokenRecord.isRevoked) {
       await this.authRepository.revokeRefreshToken(tokenRecord._id);
+    }
+
+    if (dto.expoPushToken && tokenRecord?.userId) {
+      const user = await this.authRepository.findUserById(
+        tokenRecord.userId.toString(),
+      );
+      if (user?.expoPushTokens?.length) {
+        await this.authRepository.updateUser(tokenRecord.userId.toString(), {
+          expoPushTokens: user.expoPushTokens.filter(
+            (t) => t !== dto.expoPushToken,
+          ),
+        });
+      }
     }
 
     return {
@@ -2508,6 +2619,7 @@ export class AuthService {
           email: adminUser.email,
           birthday: adminUser.birthday?.toISOString().split('T')[0],
           avatar: adminUser.avatar,
+          isOnboarded: userIsOnboardedForResponse(adminUser),
           createdAt: adminUser.createdAt!,
         },
         tokens,
@@ -2728,6 +2840,20 @@ export class AuthService {
     message: string;
     data: { email: string; isEmailVerified: boolean };
   }> {
+    // Demo mode: skip OTP validation entirely
+    const demoCheckUser = await this.authRepository.findUserById(userId);
+    if (demoCheckUser?.isDemo) {
+      await this.authRepository.updateUser(userId, {
+        email: dto.email,
+        isEmailVerified: true,
+      });
+      return {
+        success: true,
+        message: 'Email verified and added to account successfully',
+        data: { email: dto.email, isEmailVerified: true },
+      };
+    }
+
     const startTime = Date.now();
     const maskedEmail = this.maskEmail(dto.email);
     const maskedOtp = this.maskOtp();
@@ -2939,6 +3065,8 @@ export class AuthService {
       isPhoneVerified: boolean;
       isEmailVerified: boolean;
       isActive: boolean;
+      isOnboarded: boolean;
+      isDemo: boolean;
       createdAt: Date;
       lastLoginAt?: Date;
       pickupLocationId?: string;
@@ -2971,10 +3099,12 @@ export class AuthService {
         isPhoneVerified: user.isPhoneVerified,
         isEmailVerified: user.isEmailVerified,
         isActive: user.isActive,
+        isOnboarded: userIsOnboardedForResponse(user),
+        isDemo: user.isDemo ?? false,
         createdAt: user.createdAt!,
         lastLoginAt: user.lastLoginAt,
         pickupLocationId: user.pickupLocationId
-          ? (user.pickupLocationId as Types.ObjectId).toString()
+          ? user.pickupLocationId.toString()
           : undefined,
       },
     };
@@ -3080,5 +3210,246 @@ export class AuthService {
         },
       });
     }
+  }
+
+  // ============ PROFILE UPDATE ============
+
+  async updateProfile(
+    userId: string,
+    dto: { firstName?: string; lastName?: string },
+  ): Promise<{
+    success: boolean;
+    message: string;
+    data: { firstName: string; lastName: string };
+  }> {
+    const updates: Partial<{ firstName: string; lastName: string }> = {};
+    if (dto.firstName !== undefined) updates.firstName = dto.firstName.trim();
+    if (dto.lastName !== undefined) updates.lastName = dto.lastName.trim();
+
+    if (Object.keys(updates).length === 0) {
+      throw new BadRequestException({
+        success: false,
+        error: { code: 'NO_CHANGES', message: 'No fields provided to update' },
+      });
+    }
+
+    const updated = await this.authRepository.updateUser(userId, updates);
+    if (!updated) {
+      throw new NotFoundException({
+        success: false,
+        error: { code: 'USER_NOT_FOUND', message: 'User not found' },
+      });
+    }
+
+    return {
+      success: true,
+      message: 'Profile updated successfully',
+      data: {
+        firstName: updated.firstName ?? '',
+        lastName: updated.lastName ?? '',
+      },
+    };
+  }
+
+  // ============ PHONE CHANGE FLOW ============
+
+  async changePhoneRequest(
+    userId: string,
+    newPhone: string,
+  ): Promise<{
+    success: boolean;
+    message: string;
+    data: { expiresIn: number; retryAfter: number };
+  }> {
+    // Ensure new number isn't already taken
+    const existing = await this.authRepository.findUserByPhone(newPhone);
+    if (existing) {
+      throw new ConflictException({
+        success: false,
+        error: {
+          code: 'PHONE_TAKEN',
+          message: 'This phone number is already associated with an account',
+        },
+      });
+    }
+
+    // Rate-limit check
+    const latestOtp = await this.authRepository.findLatestOtpCode(
+      newPhone,
+      OtpPurpose.PHONE_CHANGE,
+    );
+    if (latestOtp?.createdAt) {
+      const elapsed = (Date.now() - latestOtp.createdAt.getTime()) / 1000;
+      if (elapsed < this.otpResendSeconds) {
+        throw new BadRequestException({
+          success: false,
+          error: {
+            code: 'OTP_RATE_LIMITED',
+            message: 'Please wait before requesting another OTP',
+            details: { retryAfter: Math.ceil(this.otpResendSeconds - elapsed) },
+          },
+        });
+      }
+    }
+
+    const otpCode = this.generateOtpCode();
+    const expiresAt = new Date(Date.now() + this.otpExpiryMinutes * 60 * 1000);
+
+    await this.authRepository.invalidateOtpCodes(
+      newPhone,
+      OtpPurpose.PHONE_CHANGE,
+    );
+    await this.authRepository.createOtpCode(
+      newPhone,
+      otpCode,
+      OtpPurpose.PHONE_CHANGE,
+      expiresAt,
+    );
+
+    const maskedPhone = this.maskPhone(newPhone);
+    try {
+      await this.smsService.sendOtp(newPhone, {
+        otpCode,
+        purpose: 'PHONE_CHANGE',
+        expiresInMinutes: this.otpExpiryMinutes,
+      });
+      this.logger.info('Phone change OTP sent', {
+        context: 'AuthService',
+        method: 'changePhoneRequest',
+        phone: maskedPhone,
+      });
+    } catch (smsError) {
+      this.logger.error('Failed to send phone change OTP', {
+        context: 'AuthService',
+        method: 'changePhoneRequest',
+        phone: maskedPhone,
+        error: smsError instanceof Error ? smsError.message : String(smsError),
+      });
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`Phone change OTP for ${newPhone}: ${otpCode}`);
+      }
+    }
+
+    return {
+      success: true,
+      message: `OTP sent to ${maskedPhone}`,
+      data: {
+        expiresIn: this.otpExpiryMinutes * 60,
+        retryAfter: this.otpResendSeconds,
+      },
+    };
+  }
+
+  async changePhoneVerify(
+    userId: string,
+    newPhone: string,
+    otp: string,
+  ): Promise<{ success: boolean; message: string }> {
+    // Demo mode: skip OTP validation entirely
+    const demoCheckUser = await this.authRepository.findUserById(userId);
+    if (demoCheckUser?.isDemo) {
+      await this.authRepository.updateUser(userId, {
+        phone: newPhone,
+        isPhoneVerified: true,
+      });
+      return { success: true, message: 'Phone number updated successfully' };
+    }
+
+    const otpRecord = await this.authRepository.findLatestOtpCode(
+      newPhone,
+      OtpPurpose.PHONE_CHANGE,
+    );
+
+    if (!otpRecord) {
+      throw new BadRequestException({
+        success: false,
+        error: { code: 'OTP_INVALID', message: 'Invalid or expired OTP' },
+      });
+    }
+
+    if (otpRecord.attempts >= this.maxOtpAttempts) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'OTP_MAX_ATTEMPTS',
+          message: 'Maximum OTP verification attempts exceeded',
+        },
+      });
+    }
+
+    if (otpRecord.code !== otp) {
+      await this.authRepository.incrementOtpAttempts(otpRecord._id);
+      throw new BadRequestException({
+        success: false,
+        error: { code: 'OTP_INVALID', message: 'Invalid OTP code' },
+      });
+    }
+
+    if (otpRecord.expiresAt < new Date()) {
+      throw new BadRequestException({
+        success: false,
+        error: { code: 'OTP_EXPIRED', message: 'OTP has expired' },
+      });
+    }
+
+    // Final check — number still available (race condition guard)
+    const existing = await this.authRepository.findUserByPhone(newPhone);
+    if (existing) {
+      throw new ConflictException({
+        success: false,
+        error: {
+          code: 'PHONE_TAKEN',
+          message: 'This phone number is already associated with an account',
+        },
+      });
+    }
+
+    await this.authRepository.markOtpAsVerified(otpRecord._id);
+    await this.authRepository.updateUser(userId, {
+      phone: newPhone,
+      isPhoneVerified: true,
+    });
+
+    return { success: true, message: 'Phone number updated successfully' };
+  }
+
+  async deleteAccount(
+    userId: string,
+  ): Promise<{ success: boolean; message: string }> {
+    const user = await this.authRepository.findUserById(userId);
+    if (!user) {
+      throw new NotFoundException({
+        success: false,
+        error: { code: 'USER_NOT_FOUND', message: 'User not found' },
+      });
+    }
+
+    await this.authRepository.softDeleteUser(userId);
+    await this.authRepository.revokeAllUserTokens(new Types.ObjectId(userId));
+    await this.authRepository.updateUser(userId, { expoPushTokens: [] });
+
+    if (user.email) {
+      try {
+        await this.mailService.sendNewsletterEmail({
+          to: user.email,
+          firstName: user.firstName ?? 'there',
+          subject: 'Your SureSpot account has been deleted',
+          body: 'Your account has been successfully deleted. Your personal data will be permanently removed within 30 days. If this was a mistake, please contact our support team.',
+        });
+      } catch (err) {
+        this.logger.warn('Failed to send account deletion email', {
+          context: 'AuthService',
+          method: 'deleteAccount',
+          userId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    return {
+      success: true,
+      message:
+        'Account deleted successfully. Your data will be permanently removed within 30 days.',
+    };
   }
 }

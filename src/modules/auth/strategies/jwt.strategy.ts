@@ -69,6 +69,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       pickupLocationId: user.pickupLocationId
         ? user.pickupLocationId.toString()
         : undefined,
+      isDemo: user.isDemo ?? false,
     };
   }
 }

@@ -47,6 +47,9 @@ import { ConfigService } from '@nestjs/config';
     BullModule.registerQueue({
       name: 'notifications',
     }),
+    BullModule.registerQueue({
+      name: 'newsletters',
+    }),
   ],
   exports: [BullModule],
 })

@@ -19,14 +19,14 @@ export class SmsMessageBuilderService {
       purposeText = `for ${this.formatPurpose(purpose)}`;
     }
 
-    return `Your SureSpot verification code ${purposeText} is ${otpCode}. It expires in ${expiresInMinutes} minutes. Do not share this code with anyone.`;
+    return `[Surespot Eatery] Your verification code ${purposeText} is ${otpCode}. It expires in ${expiresInMinutes} minutes. Do not share this code with anyone.`;
   }
 
   /**
    * Build order ready notification
    */
   buildOrderReadyMessage(orderNumber: string): string {
-    return `Your order is ready, and a rider is on their way to the restaurant to pick up your meal.\n\nOrder #${orderNumber}\n\nThank you for choosing SureSpot!`;
+    return `[Surespot Eatery] Your order is ready, and a rider is on their way to the restaurant to pick up your meal.\n\nOrder #${orderNumber}`;
   }
 
   /**
@@ -34,14 +34,14 @@ export class SmsMessageBuilderService {
    */
   buildOrderPickedUpMessage(orderNumber: string, riderName?: string): string {
     const rider = riderName || 'NAME OF RIDER';
-    return `Your meal has been picked up, ${rider} is bringing it to you.\n\nOrder #${orderNumber}\n\nThank you for choosing SureSpot!`;
+    return `[Surespot Eatery] Your meal has been picked up, ${rider} is bringing it to you.\n\nOrder #${orderNumber}`;
   }
 
   /**
    * Build order delivered notification
    */
   buildOrderDeliveredMessage(orderNumber: string): string {
-    return `Your order has been delivered.\n\nOrder #${orderNumber}\n\nThank you for choosing SureSpot!`;
+    return `[Surespot Eatery] Your order has been delivered.\n\nOrder #${orderNumber}`;
   }
 
   /**

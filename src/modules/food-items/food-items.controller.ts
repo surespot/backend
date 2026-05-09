@@ -33,6 +33,7 @@ import { UpdateFoodItemExtrasDto } from './dto/update-food-item-extras.dto';
 import { CreateFoodInteractionDto } from './dto/create-food-interaction.dto';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Public } from '../auth/decorators/public.decorator';
@@ -100,12 +101,12 @@ class GetViewedFoodItemsDto {
 @ApiTags('food-items')
 @Controller('food-items')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
 export class FoodItemsController {
   constructor(private readonly foodItemsService: FoodItemsService) {}
 
   @Get()
   @HttpCode(HttpStatus.OK)
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({
     summary: 'Get all food items with filtering and pagination',
   })
@@ -180,6 +181,7 @@ export class FoodItemsController {
 
   @Get('search')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({ summary: 'Search food items with advanced filtering' })
   @ApiResponse({
     status: 200,
@@ -198,6 +200,7 @@ export class FoodItemsController {
 
   @Get('liked')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
   @ApiOperation({
     summary: 'Get all liked food items for the authenticated user',
   })
@@ -274,6 +277,7 @@ export class FoodItemsController {
 
   @Get('viewed')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
   @ApiOperation({
     summary: 'Get recently viewed food items for the authenticated user',
   })
@@ -421,6 +425,7 @@ export class FoodItemsController {
 
   @Get(':id')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({ summary: 'Get food item details by ID or slug' })
   @ApiParam({
     name: 'id',
@@ -819,6 +824,7 @@ export class FoodItemsController {
 
   @Post(':id/interactions')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Toggle interaction (VIEW or LIKE) on a food item' })
   @ApiParam({
     name: 'id',
@@ -858,6 +864,7 @@ export class FoodItemsController {
 
   @Post(':id/reviews')
   @HttpCode(HttpStatus.CREATED)
+  @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Create a review for a food item' })
   @ApiParam({
     name: 'id',

@@ -118,9 +118,8 @@ export class NotificationsService {
         const user = await this.authRepository.findUserById(userId);
         if (user && user.phone) {
           await this.smsService.sendSms({
-            from: 'SureSpot',
             to: user.phone,
-            body: `${title}\n\n${message}`,
+            body: `[Surespot Eatery] ${title}\n\n${message}`,
           });
           this.logger.debug(
             `SMS notification sent to user ${userId} for notification ${notification.id}`,
@@ -461,6 +460,10 @@ export class NotificationsService {
     orderNumber: string,
     orderId: string,
     isPickup: boolean,
+    pickupLocationName?: string,
+    pickupLocationAddress?: string,
+    pickupLocationLatitude?: number,
+    pickupLocationLongitude?: number,
   ): Promise<void> {
     const message = isPickup
       ? `Your order ${orderNumber} is ready for pickup.`
@@ -471,7 +474,15 @@ export class NotificationsService {
       NotificationType.ORDER_READY,
       'Order Ready',
       message,
-      { orderId, orderNumber, isPickup },
+      {
+        orderId,
+        orderNumber,
+        isPickup,
+        ...(pickupLocationName != null && { pickupLocationName }),
+        ...(pickupLocationAddress != null && { pickupLocationAddress }),
+        ...(pickupLocationLatitude != null && { pickupLocationLatitude }),
+        ...(pickupLocationLongitude != null && { pickupLocationLongitude }),
+      },
       [NotificationChannel.IN_APP, NotificationChannel.SMS],
     );
   }
@@ -756,6 +767,42 @@ export class NotificationsService {
     );
     this.logger.log(
       `Order-picked-up notifications sent to ${userIds.length} pickup location admin(s) for order ${orderNumber}`,
+    );
+  }
+
+  async notifyPickupLocationAdminsOrderRedirected(
+    targetPickupLocationId: string,
+    orderNumber: string,
+    orderId: string,
+    fromLocationName: string,
+  ): Promise<void> {
+    const userIds =
+      await this.authRepository.findUserIdsByPickupLocationId(
+        targetPickupLocationId,
+      );
+    if (userIds.length === 0) return;
+    const channels = [NotificationChannel.IN_APP];
+    const message = `Order ${orderNumber} has been redirected to your location from ${fromLocationName}.`;
+    await Promise.all(
+      userIds.map((userId) =>
+        this.queueNotification(
+          userId,
+          NotificationType.ORDER_CONFIRMED,
+          'Order Redirected to You',
+          message,
+          {
+            orderId,
+            orderNumber,
+            fromLocationName,
+            pickupLocationId: targetPickupLocationId,
+            source: 'order_redirect',
+          },
+          channels,
+        ),
+      ),
+    );
+    this.logger.log(
+      `Redirect notifications sent to ${userIds.length} admin(s) at target location for order ${orderNumber}`,
     );
   }
 

@@ -4,6 +4,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  Patch,
   Post,
   UseGuards,
 } from '@nestjs/common';
@@ -72,6 +73,24 @@ export class AdminUsersController {
     @Body() dto: CreatePickupLocationForAdminDto,
   ) {
     return this.pickupLocationsService.createForExistingAdmin(userId, dto);
+  }
+
+  @Patch(':userId/promote')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Promote a regular user to pickup admin (Super admin only). Does not assign a pickup location.',
+  })
+  @ApiParam({
+    name: 'userId',
+    description: 'ID of the user to promote',
+    example: '507f1f77bcf86cd799439011',
+  })
+  @ApiResponse({ status: 200, description: 'User promoted to pickup admin successfully' })
+  @ApiResponse({ status: 400, description: 'User is not a regular user (already has an admin role)' })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  async promoteToPickupAdmin(@Param('userId') userId: string) {
+    return this.pickupLocationsService.promoteUserToPickupAdmin(userId);
   }
 
   @Post(':userId/pickup-location/:pickupLocationId')

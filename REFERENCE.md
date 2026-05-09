@@ -171,6 +171,7 @@ This section provides technical context for the backend API that powers the Sure
 
 ### Technology Stack
 
+
 - **Framework:** NestJS (Node.js)
 - **Database:** MongoDB with Mongoose ODM
 - **Authentication:** JWT (JSON Web Tokens) with Passport.js

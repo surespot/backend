@@ -3,9 +3,16 @@ import { ConfigService } from '@nestjs/config';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { v2 as cloudinary } from 'cloudinary';
-import { S3Client, ListBucketsCommand } from '@aws-sdk/client-s3';
+import { randomUUID } from 'crypto';
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+} from '@aws-sdk/client-s3';
 import * as nodemailer from 'nodemailer';
 import axios from 'axios';
+import { existsSync, readdirSync } from 'fs';
+import { join } from 'path';
 
 export interface IntegrationCheckResult {
   name: string;
@@ -34,13 +41,14 @@ export class IntegrationsTestService {
       this.checkStorage(),
       this.checkRedis(),
       this.checkMail(),
+      this.checkPlaces(),
     ]);
 
     return results.map((result, index) => {
       if (result.status === 'fulfilled') {
         return result.value;
       }
-      const names = ['Paystack', 'SMS', 'Storage', 'Redis', 'Mail'];
+      const names = ['Paystack', 'SMS', 'Storage', 'Redis', 'Mail', 'Places'];
       return {
         name: names[index] ?? 'Unknown',
         configured: false,
@@ -117,7 +125,6 @@ export class IntegrationsTestService {
   async checkSms(): Promise<IntegrationCheckResult> {
     const provider =
       this.configService.get<'bulksms' | 'termii'>('SMS_PROVIDER') ?? 'bulksms';
-
     if (provider === 'termii') {
       const apiKey = this.configService.get<string>('TERMII_API_KEY');
       const baseUrl =
@@ -250,10 +257,12 @@ export class IntegrationsTestService {
       }
     }
 
-    // S3
+    // S3 — put + delete a tiny object in the configured bucket (same auth path as uploads)
     const accessKey = this.configService.get<string>('AWS_ACCESS_KEY_ID');
     const secretKey = this.configService.get<string>('AWS_SECRET_ACCESS_KEY');
     const region = this.configService.get<string>('AWS_REGION') ?? 'us-east-1';
+    const bucket =
+      this.configService.get<string>('S3_BUCKET_NAME') ?? 'surespot-uploads';
 
     if (!accessKey || !secretKey) {
       return {
@@ -270,13 +279,28 @@ export class IntegrationsTestService {
         credentials: { accessKeyId: accessKey, secretAccessKey: secretKey },
       });
 
-      await client.send(new ListBucketsCommand({}));
+      const key = `surespot/_integrations_health/${randomUUID()}.txt`;
+      await client.send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          Body: 'ok',
+          ContentType: 'text/plain',
+        }),
+      );
+      await client.send(
+        new DeleteObjectCommand({
+          Bucket: bucket,
+          Key: key,
+        }),
+      );
 
       return {
         name: 'Storage (S3)',
         configured: true,
         ok: true,
-        message: 'Connected',
+        message: 'Connected (write + delete ok)',
+        details: { bucket, region },
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -285,6 +309,7 @@ export class IntegrationsTestService {
         configured: true,
         ok: false,
         message,
+        details: { bucket, region },
       };
     }
   }
@@ -338,6 +363,60 @@ export class IntegrationsTestService {
     }
 
     try {
+      let templateDir = join(
+        process.cwd(),
+        'dist',
+        'modules',
+        'mail',
+        'templates',
+      );
+      if (!existsSync(join(templateDir, 'otp.hbs'))) {
+        const fallback = join(
+          process.cwd(),
+          'src',
+          'modules',
+          'mail',
+          'templates',
+        );
+        if (existsSync(join(fallback, 'otp.hbs'))) {
+          templateDir = fallback;
+        }
+      }
+
+      if (!existsSync(templateDir)) {
+        return {
+          name: 'Mail (SMTP)',
+          configured: true,
+          ok: false,
+          message: `Mail templates directory not found: ${templateDir}`,
+        };
+      }
+
+      const templateFiles = readdirSync(templateDir).filter((f) =>
+        f.endsWith('.hbs'),
+      );
+      const requiredTemplates = [
+        'otp.hbs',
+        'order-delivered.hbs',
+        'payment-success.hbs',
+        'payment-failed.hbs',
+        'refund-needs-attention.hbs',
+        'newsletter.hbs',
+        'bug-report.hbs',
+      ];
+      const missingTemplates = requiredTemplates.filter(
+        (file) => !templateFiles.includes(file),
+      );
+      if (missingTemplates.length > 0) {
+        return {
+          name: 'Mail (SMTP)',
+          configured: true,
+          ok: false,
+          message: `Missing mail template(s): ${missingTemplates.join(', ')}`,
+          details: { templateDir, templateFiles },
+        };
+      }
+
       const transporter = nodemailer.createTransport({
         host,
         port,
@@ -352,11 +431,74 @@ export class IntegrationsTestService {
         configured: true,
         ok: true,
         message: 'Connected',
+        details: { templateDir, templateCount: templateFiles.length },
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return {
         name: 'Mail (SMTP)',
+        configured: true,
+        ok: false,
+        message,
+      };
+    }
+  }
+
+  /**
+   * Check Google Places API connectivity via read-only autocomplete request.
+   */
+  async checkPlaces(): Promise<IntegrationCheckResult> {
+    const apiKey = this.configService.get<string>('GOOGLE_PLACES_API_KEY')?.trim();
+    if (!apiKey) {
+      return {
+        name: 'Places (Google)',
+        configured: false,
+        ok: false,
+        message: 'GOOGLE_PLACES_API_KEY not configured',
+      };
+    }
+
+    try {
+      await axios.post(
+        'https://places.googleapis.com/v1/places:autocomplete',
+        { input: 'Lagos' },
+        {
+          timeout: 10000,
+          headers: {
+            'X-Goog-Api-Key': apiKey,
+            'X-Goog-FieldMask': 'suggestions.placePrediction.placeId',
+          },
+        },
+      );
+
+      return {
+        name: 'Places (Google)',
+        configured: true,
+        ok: true,
+        message: 'Connected',
+      };
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        const status = error.response?.status;
+        const providerMessage =
+          (error.response?.data as { error?: { message?: string } } | undefined)
+            ?.error?.message ??
+          error.message;
+
+        return {
+          name: 'Places (Google)',
+          configured: true,
+          ok: false,
+          message:
+            status === 403
+              ? 'Rejected by Google (check API key restrictions, billing, and Places API enablement)'
+              : `HTTP ${status ?? 'unknown'}: ${providerMessage}`,
+        };
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        name: 'Places (Google)',
         configured: true,
         ok: false,
         message,

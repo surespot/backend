@@ -2,6 +2,8 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
+  Delete,
   Body,
   Headers,
   HttpCode,
@@ -53,6 +55,9 @@ import { VerifyAdminLoginCodeDto } from './dto/verify-admin-login-code.dto';
 import { VerifyBootstrapCodeDto } from './dto/verify-bootstrap-code.dto';
 import { CreateAdminBootstrapDto } from './dto/create-admin-bootstrap.dto';
 import { AppleSignInDto } from './dto/apple-sign-in.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
+import { ChangePhoneRequestDto } from './dto/change-phone-request.dto';
+import { ChangePhoneVerifyDto } from './dto/change-phone-verify.dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -909,5 +914,100 @@ export class AuthController {
     }
 
     return this.authService.uploadProfilePicture(user.id, file);
+  }
+
+  @Patch('profile')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update first name and/or last name' })
+  @ApiResponse({
+    status: 200,
+    description: 'Profile updated successfully',
+    schema: {
+      example: {
+        success: true,
+        message: 'Profile updated successfully',
+        data: { firstName: 'Emeka', lastName: 'Okafor' },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'No fields provided' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  async updateProfile(
+    @CurrentUser() user: { id: string },
+    @Body() dto: UpdateProfileDto,
+  ) {
+    return this.authService.updateProfile(user.id, dto);
+  }
+
+  @Post('phone/change-request')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Request OTP to verify a new phone number' })
+  @ApiResponse({
+    status: 200,
+    description: 'OTP sent to new phone number',
+    schema: {
+      example: {
+        success: true,
+        message: 'OTP sent to +234901***320',
+        data: { expiresIn: 300, retryAfter: 60 },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Rate limited' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 409, description: 'Phone number already in use' })
+  async changePhoneRequest(
+    @CurrentUser() user: { id: string },
+    @Body() dto: ChangePhoneRequestDto,
+  ) {
+    return this.authService.changePhoneRequest(user.id, dto.newPhone);
+  }
+
+  @Post('phone/change-verify')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Verify OTP and apply new phone number' })
+  @ApiResponse({
+    status: 200,
+    description: 'Phone number updated successfully',
+    schema: {
+      example: { success: true, message: 'Phone number updated successfully' },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Invalid or expired OTP' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 409, description: 'Phone number already in use' })
+  async changePhoneVerify(
+    @CurrentUser() user: { id: string },
+    @Body() dto: ChangePhoneVerifyDto,
+  ) {
+    return this.authService.changePhoneVerify(user.id, dto.newPhone, dto.otp);
+  }
+
+  @Delete('account')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Delete own account' })
+  @ApiResponse({
+    status: 200,
+    description: 'Account deleted successfully',
+    schema: {
+      example: {
+        success: true,
+        message:
+          'Account deleted successfully. Your data will be permanently removed within 30 days.',
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  async deleteAccount(@CurrentUser() user: { id: string }) {
+    return this.authService.deleteAccount(user.id);
   }
 }

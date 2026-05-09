@@ -11,6 +11,7 @@ export interface PushNotificationOptions {
   sound?: 'default' | null;
   priority?: 'default' | 'normal' | 'high';
   badge?: number;
+  channelId?: string;
 }
 
 @Injectable()
@@ -25,6 +26,9 @@ export class PushNotificationService {
   ) {
     this.accessToken = this.configService.get<string>('EXPO_ACCESS_TOKEN');
     this.expo = new Expo({ accessToken: this.accessToken });
+    this.logger.log(
+      `PushNotificationService initialized. EXPO_ACCESS_TOKEN ${this.accessToken ? 'is set' : 'is NOT set — pushes will likely fail'}`,
+    );
   }
 
   /**
@@ -34,14 +38,25 @@ export class PushNotificationService {
     userId: string,
     options: PushNotificationOptions,
   ): Promise<boolean> {
+    this.logger.log(
+      `[sendToUser] Starting push for userId=${userId}, title="${options.title}"`,
+    );
     try {
       const user = await this.authRepository.findUserById(userId);
-      if (!user || !user.expoPushTokens || user.expoPushTokens.length === 0) {
-        this.logger.debug(
-          `No push tokens found for user ${userId}, notification not sent`,
+      if (!user) {
+        this.logger.warn(`[sendToUser] User ${userId} not found in DB`);
+        return false;
+      }
+      if (!user.expoPushTokens || user.expoPushTokens.length === 0) {
+        this.logger.warn(
+          `[sendToUser] User ${userId} has no expoPushTokens stored`,
         );
         return false;
       }
+
+      this.logger.log(
+        `[sendToUser] User ${userId} has ${user.expoPushTokens.length} token(s): ${JSON.stringify(user.expoPushTokens)}`,
+      );
 
       // Filter out invalid tokens
       const validTokens = user.expoPushTokens.filter((token) =>
@@ -49,9 +64,15 @@ export class PushNotificationService {
       );
 
       if (validTokens.length === 0) {
-        this.logger.warn(`No valid push tokens found for user ${userId}`);
+        this.logger.warn(
+          `[sendToUser] All tokens for user ${userId} failed Expo.isExpoPushToken() validation`,
+        );
         return false;
       }
+
+      this.logger.log(
+        `[sendToUser] ${validTokens.length}/${user.expoPushTokens.length} tokens valid for user ${userId}`,
+      );
 
       // Create push messages
       const messages: ExpoPushMessage[] = validTokens.map((token) => ({
@@ -62,21 +83,29 @@ export class PushNotificationService {
         sound: options.sound ?? 'default',
         priority: options.priority ?? 'default',
         badge: options.badge,
+        channelId: options.channelId ?? 'default',
       }));
 
       // Send notifications in chunks (Expo allows up to 100 at a time)
       const chunks = this.expo.chunkPushNotifications(messages);
+      this.logger.log(
+        `[sendToUser] Sending ${messages.length} message(s) in ${chunks.length} chunk(s) for user ${userId}`,
+      );
       const tickets: ExpoPushTicket[] = [];
 
       for (const chunk of chunks) {
         try {
           const ticketChunk = await this.expo.sendPushNotificationsAsync(chunk);
+          this.logger.log(
+            `[sendToUser] Chunk response for user ${userId}: ${JSON.stringify(ticketChunk)}`,
+          );
           tickets.push(...ticketChunk);
         } catch (error) {
           this.logger.error(
-            `Error sending push notification chunk for user ${userId}`,
+            `[sendToUser] Error sending push chunk for user ${userId}`,
             {
               error: error instanceof Error ? error.message : String(error),
+              stack: error instanceof Error ? error.stack : undefined,
             },
           );
         }
@@ -87,7 +116,7 @@ export class PushNotificationService {
       tickets.forEach((ticket, index) => {
         if (ticket.status === 'error') {
           errors.push(
-            `Token ${validTokens[index]}: ${ticket.message || 'Unknown error'}`,
+            `Token ${validTokens[index]}: ${ticket.message || 'Unknown error'} (details: ${JSON.stringify(ticket.details)})`,
           );
 
           // If token is invalid, remove it from user's tokens
@@ -98,18 +127,23 @@ export class PushNotificationService {
       });
 
       if (errors.length > 0) {
-        this.logger.warn(`Some push notifications failed for user ${userId}`, {
-          errors,
-        });
+        this.logger.warn(
+          `[sendToUser] Some push notifications failed for user ${userId}`,
+          { errors },
+        );
+      } else {
+        this.logger.log(
+          `[sendToUser] All tickets OK for user ${userId} (${tickets.length} ticket(s))`,
+        );
       }
 
       this.logger.log(
-        `Push notification sent to user ${userId} via ${validTokens.length} device(s)`,
+        `[sendToUser] Done for user ${userId} — ${tickets.length} ticket(s) received`,
       );
 
       return true;
     } catch (error) {
-      this.logger.error(`Error sending push notification to user ${userId}`, {
+      this.logger.error(`[sendToUser] Unhandled error for user ${userId}`, {
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
       });
@@ -179,6 +213,23 @@ export class PushNotificationService {
         orderId,
         orderNumber,
         total,
+      },
+      priority: 'high',
+    });
+  }
+
+  async sendOrderReady(
+    userId: string,
+    orderNumber: string,
+    orderId: string,
+  ): Promise<boolean> {
+    return this.sendToUser(userId, {
+      title: 'Order Ready',
+      body: `Your order ${orderNumber} is ready and a rider is on the way to pick it up!`,
+      data: {
+        type: NotificationType.ORDER_READY,
+        orderId,
+        orderNumber,
       },
       priority: 'high',
     });

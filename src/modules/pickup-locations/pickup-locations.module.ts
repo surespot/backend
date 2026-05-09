@@ -18,7 +18,7 @@ import { AdminOnboardingController } from './admin-onboarding.controller';
       { name: PickupLocation.name, schema: PickupLocationSchema },
     ]),
     forwardRef(() => AuthModule),
-    MailModule,
+    forwardRef(() => MailModule),
   ],
   controllers: [
     PickupLocationsController,

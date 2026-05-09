@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Model, Types, ClientSession } from 'mongoose';
 import { InjectConnection } from '@nestjs/mongoose';
 import { Connection } from 'mongoose';
 import {
@@ -46,6 +46,10 @@ export class OrdersRepository {
     @InjectConnection() private connection: Connection,
   ) {}
 
+  async startSession(): Promise<ClientSession> {
+    return this.connection.startSession();
+  }
+
   private validateObjectId(id: string, fieldName: string): void {
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException({
@@ -60,38 +64,41 @@ export class OrdersRepository {
 
   // ============ Order Operations ============
 
-  async createOrder(data: {
-    orderNumber: string;
-    userId: string;
-    deliveryType: DeliveryType;
-    subtotal: number;
-    extrasTotal: number;
-    deliveryFee: number;
-    discountAmount: number;
-    discountPercent?: number;
-    promoCode?: string;
-    promotionId?: string;
-    total: number;
-    itemCount: number;
-    extrasCount: number;
-    deliveryAddress?: {
-      id?: string;
-      address: string;
-      street?: string;
-      city?: string;
-      state?: string;
-      country?: string;
-      coordinates?: { latitude: number; longitude: number };
+  async createOrder(
+    data: {
+      orderNumber: string;
+      userId: string;
+      deliveryType: DeliveryType;
+      subtotal: number;
+      extrasTotal: number;
+      deliveryFee: number;
+      discountAmount: number;
+      discountPercent?: number;
+      promoCode?: string;
+      promotionId?: string;
+      total: number;
+      itemCount: number;
+      extrasCount: number;
+      deliveryAddress?: {
+        id?: string;
+        address: string;
+        street?: string;
+        city?: string;
+        state?: string;
+        country?: string;
+        coordinates?: { latitude: number; longitude: number };
+        instructions?: string;
+        contactPhone?: string;
+      };
+      pickupLocationId?: string;
+      estimatedDeliveryTime?: Date;
+      estimatedPreparationTime?: number;
+      paymentMethod?: string;
+      paymentIntentId?: string;
       instructions?: string;
-      contactPhone?: string;
-    };
-    pickupLocationId?: string;
-    estimatedDeliveryTime?: Date;
-    estimatedPreparationTime?: number;
-    paymentMethod?: string;
-    paymentIntentId?: string;
-    instructions?: string;
-  }): Promise<OrderDocument> {
+    },
+    session?: ClientSession,
+  ): Promise<OrderDocument> {
     this.validateObjectId(data.userId, 'userId');
 
     const orderData: Record<string, unknown> = {
@@ -118,11 +125,9 @@ export class OrdersRepository {
     };
 
     // Generate a 4-digit delivery confirmation code for door-delivery orders
-    if (data.deliveryType === DeliveryType.DOOR_DELIVERY) {
-      orderData.deliveryConfirmationCode = Math.floor(
-        1000 + Math.random() * 9000,
-      ).toString();
-    }
+    orderData.deliveryConfirmationCode = Math.floor(
+      1000 + Math.random() * 9000,
+    ).toString();
 
     if (data.promotionId) {
       orderData.promotionId = new Types.ObjectId(data.promotionId);
@@ -134,7 +139,7 @@ export class OrdersRepository {
     }
 
     const order = new this.orderModel(orderData);
-    return order.save();
+    return order.save(session ? { session } : {});
   }
 
   async findById(id: string): Promise<OrderDocument | null> {
@@ -341,6 +346,7 @@ export class OrdersRepository {
       refundId: number;
       hasBeenRefunded: boolean;
     }>,
+    session?: ClientSession,
   ): Promise<OrderDocument | null> {
     this.validateObjectId(id, 'orderId');
 
@@ -365,8 +371,25 @@ export class OrdersRepository {
       updateData.transactionId = new Types.ObjectId(data.transactionId);
     }
 
+    const options = session ? { new: true, session } : { new: true };
     return this.orderModel
-      .findByIdAndUpdate(id, { $set: updateData }, { new: true })
+      .findByIdAndUpdate(id, { $set: updateData }, options)
+      .populate('pickupLocationId')
+      .exec();
+  }
+
+  async updatePickupLocation(
+    orderId: string,
+    newPickupLocationId: string,
+  ): Promise<OrderDocument | null> {
+    this.validateObjectId(orderId, 'orderId');
+    this.validateObjectId(newPickupLocationId, 'pickupLocationId');
+    return this.orderModel
+      .findByIdAndUpdate(
+        orderId,
+        { $set: { pickupLocationId: new Types.ObjectId(newPickupLocationId) } },
+        { new: true },
+      )
       .populate('pickupLocationId')
       .exec();
   }
@@ -461,6 +484,54 @@ export class OrdersRepository {
         hasPrev: page > 1,
       },
     };
+  }
+
+  /**
+   * Find recent orders for a user (for analytics)
+   */
+  async findRecentUserOrders(
+    userId: string,
+    limit: number,
+  ): Promise<OrderDocument[]> {
+    this.validateObjectId(userId, 'userId');
+
+    return this.orderModel
+      .find({ userId: new Types.ObjectId(userId) })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .populate('pickupLocationId')
+      .exec();
+  }
+
+  /**
+   * Find distinct user IDs who have placed orders at a pickup location.
+   * Used for newsletter audience "pickup-locations".
+   */
+  async findDistinctUserIdsByPickupLocationId(
+    pickupLocationId: string | Types.ObjectId,
+  ): Promise<string[]> {
+    const id =
+      typeof pickupLocationId === 'string'
+        ? new Types.ObjectId(pickupLocationId)
+        : pickupLocationId;
+    const userIds = await this.orderModel
+      .distinct('userId', { pickupLocationId: id })
+      .exec();
+    return userIds.map((oid) => (oid as Types.ObjectId).toString());
+  }
+
+  /**
+   * Find orders by multiple pickup locations (for newsletter targeting)
+   */
+  async findOrdersByPickupLocations(
+    pickupLocationIds: string[],
+  ): Promise<Array<{ userId: Types.ObjectId }>> {
+    const objectIds = pickupLocationIds.map((id) => new Types.ObjectId(id));
+    return this.orderModel
+      .find({ pickupLocationId: { $in: objectIds } })
+      .select('userId')
+      .lean()
+      .exec() as Promise<Array<{ userId: Types.ObjectId }>>;
   }
 
   /**
@@ -588,19 +659,22 @@ export class OrdersRepository {
 
   // ============ Order Item Operations ============
 
-  async createOrderItem(data: {
-    orderId: string;
-    foodItemId: string;
-    name: string;
-    description: string;
-    slug: string;
-    price: number;
-    currency: string;
-    imageUrl: string;
-    quantity: number;
-    estimatedTime: { min: number; max: number };
-    lineTotal: number;
-  }): Promise<OrderItemDocument> {
+  async createOrderItem(
+    data: {
+      orderId: string;
+      foodItemId: string;
+      name: string;
+      description: string;
+      slug: string;
+      price: number;
+      currency: string;
+      imageUrl: string;
+      quantity: number;
+      estimatedTime: { min: number; max: number };
+      lineTotal: number;
+    },
+    session?: ClientSession,
+  ): Promise<OrderItemDocument> {
     this.validateObjectId(data.orderId, 'orderId');
     this.validateObjectId(data.foodItemId, 'foodItemId');
 
@@ -617,7 +691,7 @@ export class OrdersRepository {
       estimatedTime: data.estimatedTime,
       lineTotal: data.lineTotal,
     });
-    return orderItem.save();
+    return orderItem.save(session ? { session } : {});
   }
 
   async findOrderItemsByOrderId(orderId: string): Promise<OrderItemDocument[]> {
@@ -660,16 +734,19 @@ export class OrdersRepository {
 
   // ============ Order Extra Operations ============
 
-  async createOrderExtra(data: {
-    orderItemId: string;
-    foodExtraId: string;
-    name: string;
-    description?: string;
-    imageUrl?: string;
-    price: number;
-    currency: string;
-    quantity: number;
-  }): Promise<OrderExtraDocument> {
+  async createOrderExtra(
+    data: {
+      orderItemId: string;
+      foodExtraId: string;
+      name: string;
+      description?: string;
+      imageUrl?: string;
+      price: number;
+      currency: string;
+      quantity: number;
+    },
+    session?: ClientSession,
+  ): Promise<OrderExtraDocument> {
     this.validateObjectId(data.orderItemId, 'orderItemId');
     this.validateObjectId(data.foodExtraId, 'foodExtraId');
 
@@ -683,7 +760,7 @@ export class OrdersRepository {
       currency: data.currency,
       quantity: data.quantity,
     });
-    return orderExtra.save();
+    return orderExtra.save(session ? { session } : {});
   }
 
   async findOrderExtrasByOrderItemId(
@@ -697,14 +774,17 @@ export class OrdersRepository {
 
   // ============ Order Delivery Status Operations ============
 
-  async createDeliveryStatus(data: {
-    orderId: string;
-    status: DeliveryStatus;
-    message?: string;
-    updatedBy?: string;
-    latitude?: number;
-    longitude?: number;
-  }): Promise<OrderDeliveryStatusDocument> {
+  async createDeliveryStatus(
+    data: {
+      orderId: string;
+      status: DeliveryStatus;
+      message?: string;
+      updatedBy?: string;
+      latitude?: number;
+      longitude?: number;
+    },
+    session?: ClientSession,
+  ): Promise<OrderDeliveryStatusDocument> {
     this.validateObjectId(data.orderId, 'orderId');
 
     const statusData: Record<string, unknown> = {
@@ -726,7 +806,7 @@ export class OrdersRepository {
     }
 
     const deliveryStatus = new this.orderDeliveryStatusModel(statusData);
-    return deliveryStatus.save();
+    return deliveryStatus.save(session ? { session } : {});
   }
 
   async findDeliveryStatusHistory(
@@ -768,6 +848,7 @@ export class OrdersRepository {
     const matchStage: Record<string, unknown> = {
       createdAt: { $gte: startDate, $lte: endDate },
       paymentStatus: PaymentStatus.PAID,
+      paymentMethod: { $ne: 'demo' },
     };
 
     if (pickupLocationId) {
@@ -833,6 +914,7 @@ export class OrdersRepository {
       status: {
         $nin: [OrderStatus.DELIVERED, OrderStatus.CANCELLED],
       },
+      paymentMethod: { $ne: 'demo' },
     };
 
     if (pickupLocationId) {
@@ -853,6 +935,7 @@ export class OrdersRepository {
     const matchStage: Record<string, unknown> = {
       createdAt: { $gte: startDate, $lte: endDate },
       paymentStatus: PaymentStatus.PAID,
+      paymentMethod: { $ne: 'demo' },
     };
 
     if (pickupLocationId) {
@@ -880,6 +963,74 @@ export class OrdersRepository {
     }));
   }
 
+  async getHourlyRevenue(
+    pickupLocationId: Types.ObjectId | undefined,
+    startDate: Date,
+    endDate: Date,
+  ): Promise<Array<{ hour: number; revenue: number }>> {
+    const matchStage: Record<string, unknown> = {
+      createdAt: { $gte: startDate, $lte: endDate },
+      paymentStatus: PaymentStatus.PAID,
+      paymentMethod: { $ne: 'demo' },
+    };
+    if (pickupLocationId) matchStage.pickupLocationId = pickupLocationId;
+
+    const results = await this.orderModel
+      .aggregate<{ _id: number; revenue: number }>([
+        { $match: matchStage },
+        {
+          $group: {
+            _id: { $hour: '$createdAt' },
+            revenue: { $sum: '$total' },
+          },
+        },
+        { $sort: { _id: 1 } },
+      ])
+      .exec();
+
+    return results.map((r) => ({ hour: r._id, revenue: r.revenue }));
+  }
+
+  async getWeeklyRevenue(
+    pickupLocationId: Types.ObjectId | undefined,
+    startDate: Date,
+    endDate: Date,
+  ): Promise<Array<{ week: number; weekStart: string; revenue: number }>> {
+    const matchStage: Record<string, unknown> = {
+      createdAt: { $gte: startDate, $lte: endDate },
+      paymentStatus: PaymentStatus.PAID,
+      paymentMethod: { $ne: 'demo' },
+    };
+    if (pickupLocationId) matchStage.pickupLocationId = pickupLocationId;
+
+    const results = await this.orderModel
+      .aggregate<{
+        _id: { week: number; year: number };
+        weekStart: Date;
+        revenue: number;
+      }>([
+        { $match: matchStage },
+        {
+          $group: {
+            _id: {
+              year: { $isoWeekYear: '$createdAt' },
+              week: { $isoWeek: '$createdAt' },
+            },
+            weekStart: { $min: '$createdAt' },
+            revenue: { $sum: '$total' },
+          },
+        },
+        { $sort: { '_id.year': 1, '_id.week': 1 } },
+      ])
+      .exec();
+
+    return results.map((r) => ({
+      week: r._id.week,
+      weekStart: r.weekStart.toISOString().split('T')[0],
+      revenue: r.revenue,
+    }));
+  }
+
   /**
    * Get hourly order counts for a specific day
    */
@@ -890,6 +1041,7 @@ export class OrdersRepository {
   ): Promise<Array<{ hour: number; count: number }>> {
     const matchStage: Record<string, unknown> = {
       createdAt: { $gte: dayStart, $lte: dayEnd },
+      paymentMethod: { $ne: 'demo' },
     };
 
     if (pickupLocationId) {
@@ -932,6 +1084,7 @@ export class OrdersRepository {
   ): Promise<Array<{ status: string; count: number }>> {
     const matchStage: Record<string, unknown> = {
       createdAt: { $gte: startDate, $lte: endDate },
+      paymentMethod: { $ne: 'demo' },
     };
 
     if (pickupLocationId) {
@@ -976,6 +1129,7 @@ export class OrdersRepository {
     // First get orders in the date range
     const orderMatchStage: Record<string, unknown> = {
       createdAt: { $gte: startDate, $lte: endDate },
+      paymentMethod: { $ne: 'demo' },
     };
 
     if (pickupLocationId) {
@@ -1067,6 +1221,7 @@ export class OrdersRepository {
 
     const query: Record<string, unknown> = {
       pickupLocationId: new Types.ObjectId(pickupLocationId),
+      paymentMethod: { $ne: 'demo' },
     };
 
     // Apply status filter
@@ -1139,7 +1294,7 @@ export class OrdersRepository {
   async getOrderCountsByStatus(
     pickupLocationId: Types.ObjectId | undefined,
   ): Promise<Record<OrderStatus, number>> {
-    const matchStage: Record<string, unknown> = {};
+    const matchStage: Record<string, unknown> = { paymentMethod: { $ne: 'demo' } };
     if (pickupLocationId) {
       matchStage.pickupLocationId = pickupLocationId;
     }
@@ -1189,6 +1344,7 @@ export class OrdersRepository {
     const matchStage: Record<string, unknown> = {
       createdAt: { $gte: today, $lt: tomorrow },
       status: { $ne: OrderStatus.CANCELLED },
+      paymentMethod: { $ne: 'demo' },
     };
 
     if (pickupLocationId) {

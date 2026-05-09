@@ -5,6 +5,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { IS_PUBLIC_IN_DEVELOPMENT_KEY } from '../decorators/public.decorator';
 import { ROLES_KEY } from '../decorators/roles.decorator';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { UserRole } from '../schemas/user.schema';
@@ -14,6 +15,14 @@ export class RolesGuard implements CanActivate {
   constructor(private readonly reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
+    const isPublicInDevelopment = this.reflector.getAllAndOverride<boolean>(
+      IS_PUBLIC_IN_DEVELOPMENT_KEY,
+      [context.getHandler(), context.getClass()],
+    );
+    if (isPublicInDevelopment && process.env.NODE_ENV === 'development') {
+      return true;
+    }
+
     const requiredRoles = this.reflector.getAllAndOverride<UserRole[]>(
       ROLES_KEY,
       [context.getHandler(), context.getClass()],

@@ -101,6 +101,27 @@ export class RidersRepository {
     return this.riderProfileModel.findOne({ userId: userIdObjectId }).exec();
   }
 
+  async anonymizeByUserId(userId: string | Types.ObjectId): Promise<void> {
+    const userIdObjectId =
+      typeof userId === 'string' ? new Types.ObjectId(userId) : userId;
+    await this.riderProfileModel
+      .findOneAndUpdate(
+        { userId: userIdObjectId },
+        {
+          $set: {
+            firstName: null,
+            lastName: null,
+            phone: null,
+            email: null,
+            dateOfBirth: null,
+            address: null,
+            nin: null,
+          },
+        },
+      )
+      .exec();
+  }
+
   async updateProfile(
     id: string | Types.ObjectId,
     updates: Partial<RiderProfile>,
@@ -108,6 +129,16 @@ export class RidersRepository {
   ): Promise<RiderProfileDocument | null> {
     return this.riderProfileModel
       .findByIdAndUpdate(id, { $set: updates }, { new: true, session })
+      .exec();
+  }
+
+  async incrementProfile(
+    id: string | Types.ObjectId,
+    increments: Partial<Record<keyof RiderProfile, number>>,
+    session?: ClientSession,
+  ): Promise<RiderProfileDocument | null> {
+    return this.riderProfileModel
+      .findByIdAndUpdate(id, { $inc: increments }, { new: true, session })
       .exec();
   }
 
@@ -204,6 +235,32 @@ export class RidersRepository {
         { new: true, upsert: true, session },
       )
       .exec();
+  }
+
+  /**
+   * Find rider profiles with email for newsletter (all riders or by region).
+   */
+  async findNewsletterRecipients(
+    regionId?: string | Types.ObjectId,
+  ): Promise<Array<{ email: string; firstName: string }>> {
+    const query: Record<string, unknown> = {
+      email: { $exists: true, $ne: '' },
+    };
+    if (regionId) {
+      query.regionId =
+        typeof regionId === 'string' ? new Types.ObjectId(regionId) : regionId;
+    }
+    const profiles = await this.riderProfileModel
+      .find(query)
+      .select('email firstName')
+      .lean()
+      .exec();
+    return profiles
+      .filter((p) => p.email)
+      .map((p) => ({
+        email: p.email as string,
+        firstName: (p.firstName as string) || 'there',
+      }));
   }
 
   // ============ CODE EXISTENCE CHECK ============

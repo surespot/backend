@@ -346,7 +346,7 @@ export class FoodItemsService {
     };
   }
 
-  async getCategories(includeCount = false, includeImage = false) {
+  async getCategories(includeCount = false) {
     const categories: CategoryResponse[] = [
       {
         name: FoodCategory.FOOD,
@@ -390,14 +390,6 @@ export class FoodItemsService {
       const counts = await this.foodItemsRepository.getCategoryItemCounts();
       categories.forEach((category) => {
         category.itemCount = counts[category.name] || 0;
-      });
-    }
-
-    // Add category images if requested
-    if (includeImage) {
-      categories.forEach((category) => {
-        // Placeholder image URLs - can be configured via environment or database
-        category.imageUrl = `https://cdn.surespot.app/categories/${category.slug}.png`;
       });
     }
 

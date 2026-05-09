@@ -488,6 +488,14 @@ export class NotificationsProcessor extends WorkerHost {
         );
         break;
 
+      case NotificationType.ORDER_READY:
+        success = await this.pushService.sendOrderReady(
+          user.userId,
+          orderNumber,
+          orderId,
+        );
+        break;
+
       case NotificationType.ORDER_DELIVERED:
         success = await this.pushService.sendOrderDelivered(
           user.userId,

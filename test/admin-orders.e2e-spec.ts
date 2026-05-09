@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
-import * as request from 'supertest';
+import request from 'supertest';
+import * as bcrypt from 'bcrypt';
 import { AppModule } from '../src/app.module';
 import { OrdersRepository } from '../src/modules/orders/orders.repository';
 import { AuthRepository } from '../src/modules/auth/auth.repository';
@@ -13,6 +14,8 @@ import {
   PaymentStatus,
 } from '../src/modules/orders/schemas/order.schema';
 import { Types } from 'mongoose';
+
+const E2E_PLAIN_PASSWORD = 'E2eTestPass123!';
 
 describe('Admin Orders (e2e)', () => {
   let app: INestApplication;
@@ -29,6 +32,7 @@ describe('Admin Orders (e2e)', () => {
   let customerUser: any;
   let testOrder: any;
   let riderProfile: any;
+  let e2ePasswordHash: string;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -44,6 +48,8 @@ describe('Admin Orders (e2e)', () => {
       }),
     );
     await app.init();
+
+    e2ePasswordHash = await bcrypt.hash(E2E_PLAIN_PASSWORD, 10);
 
     ordersRepository = moduleFixture.get<OrdersRepository>(OrdersRepository);
     authRepository = moduleFixture.get<AuthRepository>(AuthRepository);
@@ -62,11 +68,9 @@ describe('Admin Orders (e2e)', () => {
       pickupLocation = await pickupLocationsRepository.create({
         name: 'Test Pickup Location',
         address: '123 Test Street',
-        location: {
-          type: 'Point',
-          coordinates: [3.3792, 6.5244],
-        },
-        regionId: new Types.ObjectId(),
+        latitude: 6.5244,
+        longitude: 3.3792,
+        regionId: new Types.ObjectId().toString(),
         isActive: true,
       });
 
@@ -80,7 +84,7 @@ describe('Admin Orders (e2e)', () => {
         lastName: 'Admin',
         email: 'pickupadmin@test.com',
         phone: '+2348012345678',
-        password: 'hashedpassword',
+        password: e2ePasswordHash,
         role: UserRole.PICKUP_ADMIN,
         pickupLocationId: pickupLocation._id,
         isEmailVerified: true,
@@ -95,11 +99,11 @@ describe('Admin Orders (e2e)', () => {
         .post('/auth/login')
         .send({
           identifier: 'pickupadmin@test.com',
-          password: 'hashedpassword',
+          password: E2E_PLAIN_PASSWORD,
         });
 
       if (loginRes.body.success) {
-        pickupAdminToken = loginRes.body.data.accessToken;
+        pickupAdminToken = loginRes.body.data.tokens.accessToken;
       }
     });
 
@@ -109,7 +113,7 @@ describe('Admin Orders (e2e)', () => {
         lastName: 'Admin',
         email: 'superadmin@test.com',
         phone: '+2348087654321',
-        password: 'hashedpassword',
+        password: e2ePasswordHash,
         role: UserRole.ADMIN,
         pickupLocationId: pickupLocation._id,
         isEmailVerified: true,
@@ -123,11 +127,11 @@ describe('Admin Orders (e2e)', () => {
         .post('/auth/login')
         .send({
           identifier: 'superadmin@test.com',
-          password: 'hashedpassword',
+          password: E2E_PLAIN_PASSWORD,
         });
 
       if (loginRes.body.success) {
-        superAdminToken = loginRes.body.data.accessToken;
+        superAdminToken = loginRes.body.data.tokens.accessToken;
       }
     });
 
@@ -137,7 +141,7 @@ describe('Admin Orders (e2e)', () => {
         lastName: 'Customer',
         email: 'customer@test.com',
         phone: '+2348011111111',
-        password: 'hashedpassword',
+        password: e2ePasswordHash,
         role: UserRole.USER,
         isEmailVerified: true,
         isActive: true,
@@ -152,7 +156,7 @@ describe('Admin Orders (e2e)', () => {
         lastName: 'Rider',
         email: 'rider@test.com',
         phone: '+2348022222222',
-        password: 'hashedpassword',
+        password: e2ePasswordHash,
         role: UserRole.RIDER,
         isEmailVerified: true,
         isActive: true,
@@ -206,9 +210,13 @@ describe('Admin Orders (e2e)', () => {
         foodItemId: new Types.ObjectId().toString(),
         name: 'Jollof Rice',
         description: 'Tasty jollof rice',
+        slug: 'jollof-rice',
         price: 250000,
-        quantity: 2,
+        currency: 'NGN',
         imageUrl: 'https://example.com/jollof.jpg',
+        quantity: 2,
+        estimatedTime: { min: 15, max: 30 },
+        lineTotal: 500000,
       });
 
       expect(testOrder).toBeDefined();
@@ -228,7 +236,7 @@ describe('Admin Orders (e2e)', () => {
         lastName: 'Location',
         email: 'nolocation@test.com',
         phone: '+2348033333333',
-        password: 'hashedpassword',
+        password: e2ePasswordHash,
         role: UserRole.ADMIN,
         isEmailVerified: true,
         isActive: true,
@@ -239,10 +247,10 @@ describe('Admin Orders (e2e)', () => {
         .post('/auth/login')
         .send({
           identifier: 'nolocation@test.com',
-          password: 'hashedpassword',
+          password: E2E_PLAIN_PASSWORD,
         });
 
-      const token = loginRes.body.data?.accessToken;
+      const token = loginRes.body.data?.tokens?.accessToken;
 
       const res = await request(app.getHttpServer())
         .get('/admin/orders')
@@ -335,11 +343,9 @@ describe('Admin Orders (e2e)', () => {
       const otherLocation = await pickupLocationsRepository.create({
         name: 'Other Pickup Location',
         address: '789 Other Street',
-        location: {
-          type: 'Point',
-          coordinates: [3.3792, 6.5244],
-        },
-        regionId: new Types.ObjectId(),
+        latitude: 6.5244,
+        longitude: 3.3792,
+        regionId: new Types.ObjectId().toString(),
         isActive: true,
       });
 
@@ -506,11 +512,9 @@ describe('Admin Orders (e2e)', () => {
       const otherLocation = await pickupLocationsRepository.create({
         name: 'Other Pickup Location',
         address: '999 Other Street',
-        location: {
-          type: 'Point',
-          coordinates: [3.3792, 6.5244],
-        },
-        regionId: new Types.ObjectId(),
+        latitude: 6.5244,
+        longitude: 3.3792,
+        regionId: new Types.ObjectId().toString(),
         isActive: true,
       });
 
@@ -519,7 +523,7 @@ describe('Admin Orders (e2e)', () => {
         lastName: 'Admin',
         email: 'otheradmin@test.com',
         phone: '+2348044444444',
-        password: 'hashedpassword',
+        password: e2ePasswordHash,
         role: UserRole.PICKUP_ADMIN,
         pickupLocationId: otherLocation._id,
         isEmailVerified: true,
@@ -531,10 +535,10 @@ describe('Admin Orders (e2e)', () => {
         .post('/auth/login')
         .send({
           identifier: 'otheradmin@test.com',
-          password: 'hashedpassword',
+          password: E2E_PLAIN_PASSWORD,
         });
 
-      const otherToken = loginRes.body.data.accessToken;
+      const otherToken = loginRes.body.data.tokens.accessToken;
 
       // Get orders - should not include orders from first location
       const res = await request(app.getHttpServer())

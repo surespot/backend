@@ -685,30 +685,40 @@ export class TransactionsService {
   ): Promise<void> {
     const reference = data.reference as string;
 
-    const transaction = await this.transactionsRepository.updateByReference(
-      reference,
-      TransactionStatus.SUCCESS,
-      {
-        providerResponse: data,
-        paidAt: new Date(),
-      },
-    );
+    const session = await this.transactionsRepository.startSession();
+    let transaction: Awaited<
+      ReturnType<typeof this.transactionsRepository.updateByReference>
+    > = null;
+    try {
+      await session.withTransaction(async () => {
+        transaction = await this.transactionsRepository.updateByReference(
+          reference,
+          TransactionStatus.SUCCESS,
+          { providerResponse: data, paidAt: new Date() },
+          session,
+        );
+
+        if (transaction) {
+          await this.ordersService.updatePaymentStatusByReference(
+            reference,
+            PaymentStatus.PAID,
+            undefined,
+            session,
+          );
+        }
+      });
+    } catch (error) {
+      this.logger.error(
+        `Failed to process charge.success webhook for reference ${reference}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+      throw error;
+    } finally {
+      await session.endSession();
+    }
 
     if (transaction) {
       this.logger.log(`Transaction ${reference} marked as successful`);
-
-      // Update order payment status if order exists
-      try {
-        await this.ordersService.updatePaymentStatusByReference(
-          reference,
-          PaymentStatus.PAID,
-        );
-      } catch (error) {
-        // Order might not exist yet, that's okay
-        this.logger.warn(
-          `Could not update order payment status for reference ${reference}: ${error}`,
-        );
-      }
     }
   }
 

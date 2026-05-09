@@ -63,11 +63,21 @@ export class User {
   @Prop({ default: true })
   isActive: boolean;
 
+  /** Set true when the user completes consumer onboarding (e.g. profile/complete). */
+  @Prop({ default: false })
+  isOnboarded: boolean;
+
+  @Prop({ default: false })
+  isDemo: boolean;
+
   @Prop()
   lastLoginAt?: Date;
 
   @Prop()
   deletedAt?: Date;
+
+  @Prop()
+  anonymizedAt?: Date;
 
   @Prop({ type: [String], default: [] })
   expoPushTokens?: string[];

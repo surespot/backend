@@ -6,8 +6,10 @@ import * as crypto from 'crypto';
 const ALGORITHM = 'aes-256-gcm';
 
 function getKey(): Buffer {
-  const secret = process.env.NIN_ENCRYPTION_KEY || 'surespot-nin-fallback-key';
-  // Derive a 32-byte key from the secret
+  const secret = process.env.NIN_ENCRYPTION_KEY;
+  if (!secret) {
+    throw new Error('NIN_ENCRYPTION_KEY environment variable is not set');
+  }
   return crypto.createHash('sha256').update(secret).digest();
 }
 

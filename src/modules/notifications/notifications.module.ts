@@ -40,7 +40,7 @@ import { PickupLocationsModule } from '../pickup-locations/pickup-locations.modu
       name: 'notifications',
     }),
     forwardRef(() => AuthModule),
-    MailModule,
+    forwardRef(() => MailModule),
     SmsModule,
     forwardRef(() => OrdersModule),
     forwardRef(() => PickupLocationsModule),

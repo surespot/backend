@@ -33,8 +33,16 @@ export class AuthRepository {
     return this.userModel.findOne({ phone, deletedAt: null }).exec();
   }
 
+  async findDeletedUserByPhone(phone: string): Promise<UserDocument | null> {
+    return this.userModel.findOne({ phone, deletedAt: { $ne: null } }).exec();
+  }
+
   async findUserByEmail(email: string): Promise<UserDocument | null> {
     return this.userModel.findOne({ email, deletedAt: null }).exec();
+  }
+
+  async findDeletedUserByEmail(email: string): Promise<UserDocument | null> {
+    return this.userModel.findOne({ email, deletedAt: { $ne: null } }).exec();
   }
 
   async findUserById(
@@ -47,6 +55,22 @@ export class AuthRepository {
     pickupLocationId: string | Types.ObjectId,
   ): Promise<UserDocument | null> {
     return this.userModel.findOne({ pickupLocationId, deletedAt: null }).exec();
+  }
+
+  /**
+   * All non-deleted users linked to a pickup (e.g. pickup admin, super admin attached to location).
+   */
+  async findUsersByPickupLocationId(
+    pickupLocationId: string | Types.ObjectId,
+  ): Promise<UserDocument[]> {
+    const id =
+      typeof pickupLocationId === 'string'
+        ? new Types.ObjectId(pickupLocationId)
+        : pickupLocationId;
+    return this.userModel
+      .find({ pickupLocationId: id, deletedAt: null })
+      .select('firstName lastName email role phone isActive')
+      .exec();
   }
 
   /**
@@ -82,7 +106,7 @@ export class AuthRepository {
       .select('_id')
       .lean()
       .exec();
-    return users.map((u) => (u._id as Types.ObjectId).toString());
+    return users.map((u) => u._id.toString());
   }
 
   async findUserByGoogleId(googleId: string): Promise<UserDocument | null> {
@@ -91,6 +115,96 @@ export class AuthRepository {
 
   async findUserByAppleId(appleId: string): Promise<UserDocument | null> {
     return this.userModel.findOne({ appleId, deletedAt: null }).exec();
+  }
+
+  /**
+   * Find users with email for newsletter (by role).
+   */
+  async findNewsletterRecipientsByRole(
+    role: UserRole,
+  ): Promise<Array<{ email: string; firstName: string }>> {
+    const users = await this.userModel
+      .find({
+        role,
+        email: { $exists: true, $ne: '' },
+        deletedAt: null,
+      })
+      .select('email firstName')
+      .lean()
+      .exec();
+    return users
+      .filter((u) => u.email)
+      .map((u) => ({
+        email: u.email as string,
+        firstName: (u.firstName as string) || 'there',
+      }));
+  }
+
+  /**
+   * Find users with email by IDs (for newsletter by pickup location).
+   */
+  async findNewsletterRecipientsByIds(
+    userIds: (string | Types.ObjectId)[],
+  ): Promise<Array<{ email: string; firstName: string }>> {
+    if (userIds.length === 0) return [];
+    const ids = userIds.map((id) =>
+      typeof id === 'string' ? new Types.ObjectId(id) : id,
+    );
+    const users = await this.userModel
+      .find({
+        _id: { $in: ids },
+        email: { $exists: true, $ne: '' },
+        deletedAt: null,
+      })
+      .select('email firstName')
+      .lean()
+      .exec();
+    return users
+      .filter((u) => u.email)
+      .map((u) => ({
+        email: u.email as string,
+        firstName: (u.firstName as string) || 'there',
+      }));
+  }
+
+  /**
+   * Find all active admin user IDs (for broadcasting admin notifications).
+   */
+  async findActiveAdminIds(): Promise<string[]> {
+    const admins = await this.userModel
+      .find({
+        role: UserRole.ADMIN,
+        isActive: true,
+        deletedAt: null,
+      })
+      .select('_id')
+      .lean()
+      .exec();
+    return admins.map((u) => u._id.toString());
+  }
+
+  /**
+   * Find users with pagination and query filter
+   */
+  async findUsersWithPagination(
+    query: Record<string, unknown>,
+    page: number,
+    limit: number,
+  ): Promise<UserDocument[]> {
+    const skip = (page - 1) * limit;
+    return this.userModel
+      .find(query)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .exec();
+  }
+
+  /**
+   * Count users with query filter
+   */
+  async countUsers(query: Record<string, unknown>): Promise<number> {
+    return this.userModel.countDocuments(query).exec();
   }
 
   /**
@@ -106,7 +220,7 @@ export class AuthRepository {
       .select('_id')
       .lean()
       .exec();
-    return users.map((u) => (u._id as Types.ObjectId).toString());
+    return users.map((u) => u._id.toString());
   }
 
   async findUserByEmailOrPhone(
@@ -150,6 +264,54 @@ export class AuthRepository {
     await this.userModel
       .findByIdAndUpdate(userId, {
         $set: { deletedAt: new Date(), isActive: false },
+      })
+      .exec();
+  }
+
+  async clearDemoFlagFromAllUsers(): Promise<void> {
+    await this.userModel
+      .updateMany({ isDemo: true }, { $set: { isDemo: false } })
+      .exec();
+  }
+
+  async unlinkUsersFromPickupLocation(
+    pickupLocationId: string | Types.ObjectId,
+  ): Promise<void> {
+    const id =
+      typeof pickupLocationId === 'string'
+        ? new Types.ObjectId(pickupLocationId)
+        : pickupLocationId;
+    await this.userModel
+      .updateMany(
+        { pickupLocationId: id, deletedAt: null },
+        { $unset: { pickupLocationId: '' } },
+      )
+      .exec();
+  }
+
+  async findUsersToAnonymize(): Promise<UserDocument[]> {
+    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    return this.userModel
+      .find({ deletedAt: { $lte: cutoff }, anonymizedAt: null })
+      .exec();
+  }
+
+  async anonymizeUser(userId: string | Types.ObjectId): Promise<void> {
+    await this.userModel
+      .findByIdAndUpdate(userId, {
+        $set: {
+          firstName: 'Deleted',
+          lastName: 'User',
+          email: null,
+          phone: null,
+          password: null,
+          avatar: null,
+          googleId: null,
+          appleId: null,
+          birthday: null,
+          expoPushTokens: [],
+          anonymizedAt: new Date(),
+        },
       })
       .exec();
   }

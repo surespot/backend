@@ -8,7 +8,29 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Run tests
+        run: npm test -- --passWithNoTests
+
   build-and-deploy:
+    needs: validate
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -52,14 +74,17 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          port: ${{ secrets.VPS_SSH_PORT || '22' }}
           script: |
             set -e
             cd /opt/surespot-backend
+            git fetch origin
+            git clean -fd
+            git checkout -f dev
+            git reset --hard origin/dev
             export APP_IMAGE=${{ env.REGISTRY }}/${{ github.repository }}:dev
             docker compose -f compose-dev-deploy.yml pull
             docker compose -f compose-dev-deploy.yml up -d
-            docker image prune -f
 
       - name: Health check
         uses: appleboy/ssh-action@v1.0.3
@@ -67,6 +92,17 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          port: ${{ secrets.VPS_SSH_PORT || '22' }}
           script: |
-            curl -sf http://localhost:4000/docs || exit 1
+            echo "Waiting for app to be healthy..."
+            for i in $(seq 1 24); do
+              if curl -sf http://localhost:4000/health; then
+                echo "App is healthy"
+                docker image prune -f
+                exit 0
+              fi
+              echo "Attempt $i/24 failed, retrying in 5s..."
+              sleep 5
+            done
+            echo "Health check failed after 2 minutes"
+            exit 1

@@ -8,6 +8,7 @@ export enum OtpPurpose {
   PASSWORD_RESET = 'password_reset',
   EMAIL_VERIFICATION = 'email_verification',
   ADMIN_LOGIN = 'admin_login',
+  PHONE_CHANGE = 'phone_change',
 }
 
 @Schema({ timestamps: true })

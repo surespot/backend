@@ -40,7 +40,7 @@ import { TransactionsModule } from '../transactions/transactions.module';
     }),
     forwardRef(() => AuthModule),
     SmsModule,
-    MailModule,
+    forwardRef(() => MailModule),
     RegionsModule,
     forwardRef(() => OrdersModule),
     TransactionsModule,

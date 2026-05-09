@@ -1,10 +1,18 @@
-import { Module } from '@nestjs/common';
+import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
-import { ThrottlerModule, ThrottlerModuleOptions } from '@nestjs/throttler';
+import {
+  ThrottlerModule,
+  ThrottlerModuleOptions,
+  ThrottlerGuard,
+} from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
 import { WinstonModule } from 'nest-winston';
 import * as winston from 'winston';
+import LokiTransport from 'winston-loki';
+import { getCorrelationId } from './common/correlation/correlation.context';
+import { PrometheusModule } from '@willsoto/nestjs-prometheus';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { StorageModule } from './common/storage/storage.module';
@@ -25,13 +33,20 @@ import { ChatModule } from './modules/chat/chat.module';
 import { SupportModule } from './modules/support/support.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { IntegrationsTestModule } from './modules/integrations-test/integrations-test.module';
+import { HealthModule } from './modules/health/health.module';
+import { PlacesModule } from './modules/places/places.module';
+import { CorrelationMiddleware } from './common/correlation/correlation.middleware';
+import { HttpMetricsMiddleware } from './common/metrics/http-metrics.middleware';
 
 @Module({
   imports: [
     // Environment configuration
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: '.env.development',
+      envFilePath:
+        process.env.NODE_ENV === 'production'
+          ? '.env.production'
+          : '.env.development',
     }),
 
     // Database (MongoDB)
@@ -87,12 +102,40 @@ import { IntegrationsTestModule } from './modules/integrations-test/integrations
                       ? JSON.stringify(context)
                       : '';
                 const contextPart = contextString ? ` [${contextString}]` : '';
-                return `${timestamp} [${level}]${contextPart} ${message}`;
+                const correlationId = getCorrelationId();
+                const correlationPart = correlationId
+                  ? ` rid:${correlationId}`
+                  : '';
+                return `${timestamp} [${level}]${contextPart}${correlationPart} ${message}`;
               },
             ),
           ),
         }),
+        // Ship logs to Loki when configured (production)
+        ...(process.env.LOKI_URL
+          ? [
+              new LokiTransport({
+                host: process.env.LOKI_URL,
+                labels: {
+                  app: 'surespot-backend',
+                  env: process.env.NODE_ENV ?? 'development',
+                },
+                format: winston.format.combine(
+                  winston.format.timestamp(),
+                  winston.format.json(),
+                ),
+                onConnectionError: (err) =>
+                  console.error('Loki connection error:', err),
+              }),
+            ]
+          : []),
       ],
+    }),
+
+    // Metrics (Prometheus)
+    PrometheusModule.register({
+      defaultMetrics: { enabled: true },
+      path: '/metrics',
     }),
 
     // Storage (Cloudinary or S3 - switchable via STORAGE_PROVIDER)
@@ -151,8 +194,24 @@ import { IntegrationsTestModule } from './modules/integrations-test/integrations
 
     // Integrations test (admin-only connectivity checks)
     IntegrationsTestModule,
+
+    // Health checks
+    HealthModule,
+
+    // Google Places proxy (keeps API key server-side)
+    PlacesModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+  ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(CorrelationMiddleware, HttpMetricsMiddleware).forRoutes('*');
+  }
+}

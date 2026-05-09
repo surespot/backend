@@ -3,6 +3,26 @@ import { HydratedDocument, Types } from 'mongoose';
 
 export type PickupLocationDocument = HydratedDocument<PickupLocation>;
 
+/** `regionId` after `.populate('regionId', ...)` (see repository queries). */
+export type PopulatedRegionRef = {
+  _id: Types.ObjectId;
+  name?: string;
+};
+
+export type RegionIdField = Types.ObjectId | PopulatedRegionRef;
+
+export function isPopulatedRegionId(
+  ref: RegionIdField,
+): ref is PopulatedRegionRef {
+  if (ref === null || typeof ref !== 'object') {
+    return false;
+  }
+  if (!('_id' in ref)) {
+    return false;
+  }
+  return (ref as { _id: unknown })._id instanceof Types.ObjectId;
+}
+
 @Schema({ timestamps: true })
 export class PickupLocation {
   @Prop({ required: true })

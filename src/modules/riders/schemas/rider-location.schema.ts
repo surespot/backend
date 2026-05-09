@@ -14,8 +14,8 @@ export class RiderLocation {
   })
   riderProfileId: Types.ObjectId;
 
-  @Prop({ required: true })
-  streetAddress: string;
+  @Prop({ required: false })
+  streetAddress?: string;
 
   @Prop({
     type: {
@@ -36,8 +36,8 @@ export class RiderLocation {
   @Prop({ required: false })
   state?: string;
 
-  @Prop({ required: true })
-  country: string;
+  @Prop({ required: false })
+  country?: string;
 
   @Prop({ required: false, type: String })
   regionId?: string;

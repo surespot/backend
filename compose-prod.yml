@@ -5,16 +5,39 @@ services:
     restart: unless-stopped
     ports:
       - '6380:6379'
-    command: redis-server --appendonly yes --requirepass surespot_redis_prod_password
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
     volumes:
       - redis_prod_data:/data
     networks:
       - surespot-prod-network
     healthcheck:
-      test: ['CMD', 'redis-cli', '-a', 'surespot_redis_prod_password', 'ping']
+      test: ['CMD', 'redis-cli', '-a', '${REDIS_PASSWORD}', 'ping']
       interval: 10s
       timeout: 5s
       retries: 5
+
+  seed:
+    image: ${APP_IMAGE:-ghcr.io/surespot/backend:prod}
+    container_name: surespot-seed-prod
+    restart: 'no'
+    env_file:
+      - .env.production
+    entrypoint: /app/node_modules/.bin/ts-node -r tsconfig-paths/register scripts/seed.ts
+    networks:
+      - surespot-prod-network
+
+  seed-demo:
+    image: ${APP_IMAGE:-ghcr.io/surespot/backend:prod}
+    container_name: surespot-seed-demo-prod
+    restart: 'no'
+    env_file:
+      - .env.production
+    entrypoint: /app/node_modules/.bin/ts-node -r tsconfig-paths/register scripts/seed-demo-user.ts
+    networks:
+      - surespot-prod-network
+    depends_on:
+      seed:
+        condition: service_completed_successfully
 
   app:
     image: ${APP_IMAGE:-ghcr.io/surespot/backend:prod}
@@ -29,15 +52,66 @@ services:
       PORT: 3000
       REDIS_HOST: redis-prod
       REDIS_PORT: 6379
-      REDIS_PASSWORD: surespot_redis_prod_password
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      LOKI_URL: http://loki:3100
     depends_on:
       redis-prod:
         condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+      seed-demo:
+        condition: service_completed_successfully
+    networks:
+      - surespot-prod-network
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: surespot-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=15d'
+    networks:
+      - surespot-prod-network
+
+  loki:
+    image: grafana/loki:latest
+    container_name: surespot-loki
+    restart: unless-stopped
+    volumes:
+      - loki_data:/loki
+    networks:
+      - surespot-prod-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: surespot-grafana
+    restart: unless-stopped
+    ports:
+      - '3001:3000'
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-changeme}
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+      - loki
     networks:
       - surespot-prod-network
 
 volumes:
   redis_prod_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  loki_data:
+    driver: local
+  grafana_data:
     driver: local
 
 networks:

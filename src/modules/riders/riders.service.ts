@@ -22,6 +22,7 @@ import {
   QueryRiderProfilesDto,
   InitiateRiderRegistrationDto,
   CompleteRiderRegistrationDto,
+  AdminUpdateRiderProfileDto,
 } from './dto';
 import {
   RiderProfileDocument,
@@ -389,6 +390,54 @@ export class RidersService {
   }
 
   /**
+   * Edit rider profile fields (Admin only)
+   */
+  async adminUpdateRiderProfile(id: string, dto: AdminUpdateRiderProfileDto) {
+    const profile = await this.ridersRepository.findById(id);
+    if (!profile) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'RIDER_PROFILE_NOT_FOUND',
+          message: 'Rider profile not found',
+        },
+      });
+    }
+
+    if (dto.regionId) {
+      const region = await this.regionsRepository.findById(dto.regionId);
+      if (!region) {
+        throw new NotFoundException({
+          success: false,
+          error: {
+            code: 'REGION_NOT_FOUND',
+            message: 'Region not found',
+          },
+        });
+      }
+    }
+
+    const updates: Partial<Record<string, unknown>> = {};
+    if (dto.firstName !== undefined) updates.firstName = dto.firstName;
+    if (dto.lastName !== undefined) updates.lastName = dto.lastName;
+    if (dto.phone !== undefined) updates.phone = dto.phone;
+    if (dto.dateOfBirth !== undefined)
+      updates.dateOfBirth = new Date(dto.dateOfBirth);
+    if (dto.regionId !== undefined)
+      updates.regionId = new Types.ObjectId(dto.regionId);
+
+    const updated = await this.ridersRepository.updateProfile(id, updates);
+
+    this.logger.log(`Rider ${id} profile updated by admin`);
+
+    return {
+      success: true,
+      message: 'Rider profile updated successfully',
+      data: this.formatProfile(updated!, false),
+    };
+  }
+
+  /**
    * Suspend rider (Admin only). Suspended riders cannot log in.
    */
   async suspendRider(id: string) {
@@ -720,13 +769,14 @@ export class RidersService {
     const todayEnd = new Date();
     todayEnd.setHours(23, 59, 59, 999);
 
-    const [todayStats, todayTransactionStats] = await Promise.all([
+    const [todayStats, todayTransactionStats, user] = await Promise.all([
       this.ordersRepository.getTodayStatsForRider(profile._id.toString()),
       this.transactionsRepository.getRiderTransactionStats(
         profile._id.toString(),
         todayStart,
         todayEnd,
       ),
+      this.authRepository.findUserById(userId),
     ]);
 
     // Calculate distance covered in kilometers
@@ -767,6 +817,7 @@ export class RidersService {
       message: 'Rider profile retrieved successfully',
       data: {
         ...formattedProfile,
+        avatar: user?.avatar ?? null,
         stats,
       },
     };
@@ -854,7 +905,7 @@ export class RidersService {
   private async sendRegistrationCode(
     profile: RiderProfileDocument,
   ): Promise<void> {
-    const message = `Welcome to SureSpot! Your rider registration code is: ${profile.registrationCode}. Use this code in the SureSpot Riders app to complete your registration. Do not share this code with anyone.`;
+    const message = `[Surespot Eatery] Your rider registration code is: ${profile.registrationCode}. Use this code in the SureSpot Riders app to complete your registration. Do not share this code with anyone.`;
 
     const deliveryPromises: Promise<unknown>[] = [];
 
@@ -863,7 +914,6 @@ export class RidersService {
       deliveryPromises.push(
         this.smsService
           .sendSms({
-            from: 'SureSpot',
             to: profile.phone,
             body: message,
           })

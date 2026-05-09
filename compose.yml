@@ -1,8 +1,29 @@
 services:
+  mongodb-keyfile-setup:
+    image: mongo:8.0
+    container_name: surespot-mongodb-keyfile-setup
+    restart: 'no'
+    volumes:
+      - mongodb_keyfile:/keyfile
+    entrypoint: >
+      bash -c "
+      if [ ! -f /keyfile/mongodb-keyfile ]; then
+        openssl rand -base64 756 > /keyfile/mongodb-keyfile;
+        chmod 400 /keyfile/mongodb-keyfile;
+        chown 999:999 /keyfile/mongodb-keyfile;
+        echo 'Keyfile generated successfully';
+      else
+        echo 'Keyfile already exists';
+      fi
+      "
+    networks:
+      - surespot-network
+
   mongodb:
     image: mongo:8.0
     container_name: surespot-mongodb
     restart: unless-stopped
+    command: mongod --replSet rs0 --bind_ip_all --keyFile /data/mongodb-keyfile
     ports:
       - '27017:27017'
     environment:
@@ -12,13 +33,61 @@ services:
     volumes:
       - mongodb_data:/data/db
       - mongodb_config:/data/configdb
+      - mongodb_keyfile:/data:ro
+    depends_on:
+      mongodb-keyfile-setup:
+        condition: service_completed_successfully
     networks:
       - surespot-network
     healthcheck:
-      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/surespot --quiet
-      interval: 10s
+      test: |
+        mongosh --username surespot --password surespot_dev_password --authenticationDatabase admin --quiet --eval "
+        try {
+          var status = rs.status();
+          if (status.ok === 1 && status.members && status.members.length > 0) {
+            quit(0);
+          }
+        } catch(e) {
+          if (e.codeName === 'NotYetInitialized') {
+            quit(1);
+          }
+        }
+        quit(1);
+        "
+      interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 30
+      start_period: 10s
+
+  mongodb-init:
+    image: mongo:8.0
+    container_name: surespot-mongodb-init
+    restart: 'no'
+    depends_on:
+      mongodb-keyfile-setup:
+        condition: service_completed_successfully
+      mongodb:
+        condition: service_started
+    networks:
+      - surespot-network
+    entrypoint: >
+      bash -c "
+      sleep 5 &&
+      mongosh --host mongodb --username surespot --password surespot_dev_password --authenticationDatabase admin --eval '
+      try {
+        rs.status();
+        print(\"Replica set already initialized\");
+      } catch(e) {
+        if (e.codeName === \"NotYetInitialized\") {
+          rs.initiate({
+            _id: \"rs0\",
+            members: [{ _id: 0, host: \"127.0.0.1:27017\" }]
+          });
+          print(\"Replica set initialized\");
+        }
+      }
+      '
+      "
 
   redis:
     image: redis:latest
@@ -32,20 +101,70 @@ services:
     networks:
       - surespot-network
     healthcheck:
-      test: ['CMD', 'redis-cli', '--raw', 'incr', 'ping']
+      test: ['CMD', 'redis-cli', '-a', 'surespot_redis_password', 'ping']
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # prometheus:
+  #   image: prom/prometheus:latest
+  #   container_name: surespot-prometheus
+  #   restart: unless-stopped
+  #   ports:
+  #     - '9090:9090'
+  #   extra_hosts:
+  #     - 'host.docker.internal:host-gateway'
+  #   volumes:
+  #     - ./monitoring/prometheus-local.yml:/etc/prometheus/prometheus.yml:ro
+  #     - prometheus_data:/prometheus
+  #   networks:
+  #     - surespot-network
+
+  # loki:
+  #   image: grafana/loki:latest
+  #   container_name: surespot-loki
+  #   restart: unless-stopped
+  #   ports:
+  #     - '3100:3100'
+  #   volumes:
+  #     - loki_data:/loki
+  #   networks:
+  #     - surespot-network
+
+  # grafana:
+  #   image: grafana/grafana:latest
+  #   container_name: surespot-grafana
+  #   restart: unless-stopped
+  #   ports:
+  #     - '3001:3000'
+  #   environment:
+  #     GF_SECURITY_ADMIN_PASSWORD: changeme
+  #     GF_USERS_ALLOW_SIGN_UP: 'false'
+  #   volumes:
+  #     - grafana_data:/var/lib/grafana
+  #     - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+  #   depends_on:
+  #     - prometheus
+  #     - loki
+  #   networks:
+  #     - surespot-network
 
 volumes:
   mongodb_data:
     driver: local
   mongodb_config:
     driver: local
+  mongodb_keyfile:
+    driver: local
   redis_data:
     driver: local
+  # prometheus_data:
+  #   driver: local
+  # loki_data:
+  #   driver: local
+  # grafana_data:
+  #   driver: local
 
 networks:
   surespot-network:
     driver: bridge
-

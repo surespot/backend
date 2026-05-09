@@ -186,4 +186,11 @@ export class SavedLocationsRepository {
       )
       .exec();
   }
+
+  async deleteAllByUserId(userId: string): Promise<void> {
+    this.validateObjectId(userId, 'userId');
+    await this.savedLocationModel
+      .deleteMany({ userId: new Types.ObjectId(userId) })
+      .exec();
+  }
 }

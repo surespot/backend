@@ -1,15 +1,21 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import request from 'supertest';
+import * as bcrypt from 'bcrypt';
+import { Types } from 'mongoose';
 import { AppModule } from '../src/app.module';
 import { UserRole } from '../src/modules/auth/schemas/user.schema';
+import { AuthRepository } from '../src/modules/auth/auth.repository';
+import { PickupLocationsRepository } from '../src/modules/pickup-locations/pickup-locations.repository';
+
+const E2E_PLAIN_PASSWORD = 'E2eTestPass123!';
 
 describe('Admin Dashboard (e2e)', () => {
   let app: INestApplication;
   let adminToken: string;
   let pickupAdminToken: string;
   let userToken: string;
-  let pickupLocationId: string;
+  let adminNoLocationToken: string;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -25,9 +31,78 @@ describe('Admin Dashboard (e2e)', () => {
     );
     await app.init();
 
-    // Setup: Create test users and get tokens
-    // Note: In a real test, you'd want to use test database and seed data
-    // For this example, we're showing the structure
+    const passwordHash = await bcrypt.hash(E2E_PLAIN_PASSWORD, 10);
+    const authRepository = moduleFixture.get<AuthRepository>(AuthRepository);
+    const pickupLocationsRepository =
+      moduleFixture.get<PickupLocationsRepository>(PickupLocationsRepository);
+
+    const pickupLocation = await pickupLocationsRepository.create({
+      name: 'Dashboard E2E Pickup',
+      address: '1 Dashboard St',
+      latitude: 6.5244,
+      longitude: 3.3792,
+      regionId: new Types.ObjectId().toString(),
+      isActive: true,
+    });
+
+    await authRepository.createUser({
+      firstName: 'Dash',
+      lastName: 'Customer',
+      email: 'dash-customer@test.com',
+      phone: '+2348099900001',
+      password: passwordHash,
+      role: UserRole.USER,
+      isEmailVerified: true,
+      isActive: true,
+    });
+
+    await authRepository.createUser({
+      firstName: 'Dash',
+      lastName: 'PickupAdmin',
+      email: 'dash-pickup-admin@test.com',
+      phone: '+2348099900002',
+      password: passwordHash,
+      role: UserRole.PICKUP_ADMIN,
+      pickupLocationId: pickupLocation._id,
+      isEmailVerified: true,
+      isActive: true,
+    });
+
+    await authRepository.createUser({
+      firstName: 'Dash',
+      lastName: 'Admin',
+      email: 'dash-admin@test.com',
+      phone: '+2348099900003',
+      password: passwordHash,
+      role: UserRole.ADMIN,
+      pickupLocationId: pickupLocation._id,
+      isEmailVerified: true,
+      isActive: true,
+    });
+
+    await authRepository.createUser({
+      firstName: 'Dash',
+      lastName: 'AdminNoLoc',
+      email: 'dash-admin-noloc@test.com',
+      phone: '+2348099900004',
+      password: passwordHash,
+      role: UserRole.ADMIN,
+      isEmailVerified: true,
+      isActive: true,
+    });
+
+    async function login(identifier: string): Promise<string> {
+      const res = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ identifier, password: E2E_PLAIN_PASSWORD });
+      expect(res.body.success).toBe(true);
+      return res.body.data.tokens.accessToken as string;
+    }
+
+    userToken = await login('dash-customer@test.com');
+    pickupAdminToken = await login('dash-pickup-admin@test.com');
+    adminToken = await login('dash-admin@test.com');
+    adminNoLocationToken = await login('dash-admin-noloc@test.com');
   });
 
   afterAll(async () => {
@@ -80,10 +155,9 @@ describe('Admin Dashboard (e2e)', () => {
     });
 
     it('should reject admin without assigned pickup location', () => {
-      // Assuming adminTokenNoLocation is a token for admin without pickupLocationId
       return request(app.getHttpServer())
         .get('/admin/dashboard/overview')
-        .set('Authorization', `Bearer ${adminToken}`)
+        .set('Authorization', `Bearer ${adminNoLocationToken}`)
         .query({ period: 'today' })
         .expect(403)
         .expect((res) => {

@@ -28,11 +28,11 @@ export class RiderLocationRepository {
   async createOrUpdate(
     riderProfileId: string,
     data: {
-      streetAddress: string;
+      streetAddress?: string;
       latitude: number;
       longitude: number;
       state?: string;
-      country: string;
+      country?: string;
       regionId?: string;
     },
   ): Promise<RiderLocationDocument> {

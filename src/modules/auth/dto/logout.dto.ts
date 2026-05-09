@@ -1,5 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsString, IsNotEmpty, IsOptional } from 'class-validator';
 
 export class LogoutDto {
   @ApiProperty({
@@ -9,4 +9,12 @@ export class LogoutDto {
   @IsString()
   @IsNotEmpty()
   refreshToken: string;
+
+  @ApiPropertyOptional({
+    example: 'ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]',
+    description: 'Expo push token of the device logging out',
+  })
+  @IsOptional()
+  @IsString()
+  expoPushToken?: string;
 }

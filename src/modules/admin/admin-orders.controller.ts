@@ -18,6 +18,7 @@ import { UserRole } from '../auth/schemas/user.schema';
 import { AdminOrdersService } from './admin-orders.service';
 import { AdminGetOrdersDto } from './dto/admin-get-orders.dto';
 import { AdminUpdateOrderStatusDto } from './dto/admin-update-order-status.dto';
+import { AdminRedirectOrderDto } from './dto/admin-redirect-order.dto';
 
 type CurrentUserType = {
   id: string;
@@ -67,6 +68,42 @@ export class AdminOrdersController {
     return this.adminOrdersService.getOrders(user.pickupLocationId, query);
   }
 
+  @Get('location/:pickupLocationId/stats')
+  @ApiOperation({ summary: 'Get order stats for a specific pickup location' })
+  @ApiResponse({ status: 200, description: 'Stats retrieved successfully' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  async getOrderStatsForLocation(
+    @Param('pickupLocationId') locationId: string,
+    @CurrentUser() user: CurrentUserType,
+  ) {
+    if (
+      user.role === UserRole.PICKUP_ADMIN &&
+      user.pickupLocationId !== locationId
+    ) {
+      throw new ForbiddenException({
+        success: false,
+        error: {
+          code: 'FORBIDDEN',
+          message: 'You can only view stats for your own pickup location.',
+        },
+      });
+    }
+
+    const stats = await this.adminOrdersService.getOrderStats(locationId);
+    return { success: true, data: stats };
+  }
+
+  @Get('location/:pickupLocationId')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'Get all orders for a specific pickup location (super admin only)' })
+  @ApiResponse({ status: 200, description: 'Orders retrieved successfully' })
+  async getOrdersForLocation(
+    @Param('pickupLocationId') locationId: string,
+    @Query() query: AdminGetOrdersDto,
+  ) {
+    return this.adminOrdersService.getOrders(locationId, query);
+  }
+
   @Get(':orderId')
   @ApiOperation({
     summary: 'Get order details for admin',
@@ -89,8 +126,8 @@ export class AdminOrdersController {
     @Param('orderId') orderId: string,
     @CurrentUser() user: CurrentUserType,
   ) {
-    // Ensure user has a pickup location
-    if (!user.pickupLocationId) {
+    // Super admins can view any order; pickup admins are scoped to their location
+    if (user.role !== UserRole.ADMIN && !user.pickupLocationId) {
       throw new ForbiddenException({
         success: false,
         error: {
@@ -101,8 +138,11 @@ export class AdminOrdersController {
       });
     }
 
+    const pickupLocationId =
+      user.role === UserRole.ADMIN ? null : user.pickupLocationId!;
+
     const result = await this.adminOrdersService.getOrderById(
-      user.pickupLocationId,
+      pickupLocationId,
       orderId,
     );
 
@@ -164,6 +204,62 @@ export class AdminOrdersController {
       dto,
       user.id,
     );
+  }
+
+  @Patch(':orderId/redirect')
+  @ApiOperation({ summary: 'Redirect order to another pickup location' })
+  @ApiResponse({ status: 200, description: 'Order redirected successfully' })
+  @ApiResponse({ status: 400, description: 'Order cannot be redirected (already preparing or beyond)' })
+  @ApiResponse({ status: 403, description: 'Forbidden - no pickup location assigned' })
+  @ApiResponse({ status: 404, description: 'Order or target pickup location not found' })
+  async redirectOrder(
+    @Param('orderId') orderId: string,
+    @Body() dto: AdminRedirectOrderDto,
+    @CurrentUser() user: CurrentUserType,
+  ) {
+    if (!user.pickupLocationId) {
+      throw new ForbiddenException({
+        success: false,
+        error: {
+          code: 'NO_PICKUP_LOCATION',
+          message:
+            'Your account is not linked to a pickup location. Please contact support.',
+        },
+      });
+    }
+
+    return this.adminOrdersService.redirectOrder(
+      user.pickupLocationId,
+      orderId,
+      dto,
+      user.id,
+    );
+  }
+
+  @Get(':orderId/history')
+  @ApiOperation({ summary: 'Get order status history / audit trail' })
+  @ApiResponse({ status: 200, description: 'Order history retrieved successfully' })
+  @ApiResponse({ status: 403, description: 'Forbidden - no pickup location assigned' })
+  @ApiResponse({ status: 404, description: 'Order not found' })
+  async getOrderHistory(
+    @Param('orderId') orderId: string,
+    @CurrentUser() user: CurrentUserType,
+  ) {
+    if (user.role !== UserRole.ADMIN && !user.pickupLocationId) {
+      throw new ForbiddenException({
+        success: false,
+        error: {
+          code: 'NO_PICKUP_LOCATION',
+          message:
+            'Your account is not linked to a pickup location. Please contact support.',
+        },
+      });
+    }
+
+    const pickupLocationId =
+      user.role === UserRole.ADMIN ? null : user.pickupLocationId!;
+
+    return this.adminOrdersService.getOrderHistory(pickupLocationId, orderId);
   }
 
   @Get('stats/overview')

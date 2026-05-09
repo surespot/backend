@@ -146,4 +146,11 @@ export class PickupLocationsRepository {
     const result = await this.pickupLocationModel.findByIdAndDelete(id).exec();
     return !!result;
   }
+
+  async findFirstActive(): Promise<PickupLocationDocument | null> {
+    return this.pickupLocationModel
+      .findOne({ isActive: true })
+      .populate('regionId', 'name')
+      .exec();
+  }
 }

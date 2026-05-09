@@ -16,6 +16,8 @@ import { SupportModule } from '../support/support.module';
 import { AdminSupportController } from '../support/admin-support.controller';
 import { AdminSupportService } from '../support/admin-support.service';
 import { AdminRefundsController } from './admin-refunds.controller';
+import { AdminNewslettersController } from './admin-newsletters.controller';
+import { AdminUsersController } from './admin-users.controller';
 import { AuthModule } from '../auth/auth.module';
 import { TransactionsModule } from '../transactions/transactions.module';
 import { RidersModule } from '../riders/riders.module';
@@ -28,15 +30,21 @@ import {
   PickupLocationItemAvailability,
   PickupLocationItemAvailabilitySchema,
 } from './schemas/pickup-location-item-availability.schema';
+import { RegionsModule } from '../regions/regions.module';
+import { PickupLocationsModule } from '../pickup-locations/pickup-locations.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
     TransactionsModule,
     forwardRef(() => OrdersModule),
+    RegionsModule,
+    PickupLocationsModule,
+    NotificationsModule,
     forwardRef(() => SupportModule),
     forwardRef(() => FoodItemsModule),
     forwardRef(() => AuthModule),
-    MailModule,
+    forwardRef(() => MailModule),
     forwardRef(() => RidersModule),
     JwtModule.registerAsync({
       inject: [ConfigService],
@@ -58,6 +66,8 @@ import {
     AdminMenuController,
     AdminSupportController,
     AdminRefundsController,
+    AdminNewslettersController,
+    AdminUsersController,
   ],
   providers: [
     DashboardService,

@@ -277,6 +277,16 @@ export class CartRepository {
     return result.deletedCount;
   }
 
+  async deleteCartByUserId(userId: string): Promise<void> {
+    this.validateObjectId(userId, 'userId');
+    const cart = await this.cartModel
+      .findOne({ userId: new Types.ObjectId(userId) })
+      .exec();
+    if (cart) {
+      await this.deleteAllCartItems(cart._id.toString());
+    }
+  }
+
   // ============ Cart Extra Operations ============
 
   async findExtrasByCartItemId(

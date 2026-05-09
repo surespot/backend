@@ -6,6 +6,7 @@ export interface CurrentUser {
   email?: string;
   phone?: string;
   pickupLocationId?: string;
+  isDemo?: boolean;
 }
 
 export const CurrentUser = createParamDecorator(
