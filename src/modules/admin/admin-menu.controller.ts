@@ -76,8 +76,7 @@ export class AdminMenuController {
     @CurrentUser() user: CurrentUserType,
     @Query() filters: GetMenuItemsDto,
   ) {
-    const pickupLocationId = this.ensurePickupLocation(user);
-    return this.adminMenuService.getMenuItems(pickupLocationId, filters);
+    return this.adminMenuService.getMenuItems(user.pickupLocationId ?? null, filters);
   }
 
   @Get('items/:id')
@@ -89,8 +88,7 @@ export class AdminMenuController {
     @CurrentUser() user: CurrentUserType,
     @Param('id') itemId: string,
   ) {
-    const pickupLocationId = this.ensurePickupLocation(user);
-    return this.adminMenuService.getMenuItem(pickupLocationId, itemId);
+    return this.adminMenuService.getMenuItem(user.pickupLocationId ?? null, itemId);
   }
 
   @Post('items')
@@ -126,8 +124,7 @@ export class AdminMenuController {
     @Body() dto: CreateMenuItemDto,
     @UploadedFile() image?: Express.Multer.File,
   ) {
-    const pickupLocationId = this.ensurePickupLocation(user);
-    return this.adminMenuService.createMenuItem(pickupLocationId, dto, image);
+    return this.adminMenuService.createMenuItem(user.pickupLocationId ?? null, dto, image);
   }
 
   @Patch('items/:id')
@@ -144,9 +141,8 @@ export class AdminMenuController {
     @Body() dto: UpdateMenuItemDto,
     @UploadedFile() image?: Express.Multer.File,
   ) {
-    const pickupLocationId = this.ensurePickupLocation(user);
     return this.adminMenuService.updateMenuItem(
-      pickupLocationId,
+      user.pickupLocationId ?? null,
       itemId,
       dto,
       image,
@@ -164,8 +160,7 @@ export class AdminMenuController {
     @CurrentUser() user: CurrentUserType,
     @Param('id') itemId: string,
   ) {
-    const pickupLocationId = this.ensurePickupLocation(user);
-    return this.adminMenuService.deleteMenuItem(pickupLocationId, itemId);
+    return this.adminMenuService.deleteMenuItem(user.pickupLocationId ?? null, itemId);
   }
 
   @Patch('items/:id/stock')
@@ -208,8 +203,7 @@ export class AdminMenuController {
   @ApiResponse({ status: 200, description: 'Extras retrieved successfully' })
   @ApiResponse({ status: 403, description: 'Forbidden - no pickup location' })
   async getExtras(@CurrentUser() user: CurrentUserType) {
-    const pickupLocationId = this.ensurePickupLocation(user);
-    return this.adminMenuService.getExtrasForAssignment(pickupLocationId);
+    return this.adminMenuService.getExtrasForAssignment(user.pickupLocationId ?? null);
   }
 
   @Post('upload')
