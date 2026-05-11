@@ -67,6 +67,7 @@ export interface AuthResponse {
     createdAt: Date;
   };
   tokens: TokenPair;
+  signupVerificationToken?: string;
 }
 
 /**
@@ -1817,6 +1818,14 @@ export class AuthService {
 
     const tokens = await this.generateTokenPair(user._id.toString(), user.role);
 
+    let signupVerificationToken: string | undefined;
+    if (!user.isOnboarded && user.email) {
+      signupVerificationToken = this.jwtService.sign(
+        { email: user.email, purpose: 'email_verification' },
+        { expiresIn: '1h' },
+      );
+    }
+
     return {
       success: true,
       message: 'Sign in with Apple successful',
@@ -1833,6 +1842,7 @@ export class AuthService {
           createdAt: user.createdAt!,
         },
         tokens,
+        signupVerificationToken,
       },
     };
   }
