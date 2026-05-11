@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>You've Been Assigned as Admin</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+      background-color: #FFF8E7;
+    }
+    .container {
+      background-color: #FFFFFF;
+      border-radius: 8px;
+      padding: 40px;
+      box-shadow: 0 2px 8px rgba(212, 175, 55, 0.15);
+      border-top: 4px solid #D4AF37;
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 30px;
+    }
+    .logo {
+      font-size: 28px;
+      font-weight: bold;
+      color: #D4AF37;
+      margin-bottom: 10px;
+    }
+    .title {
+      font-size: 24px;
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 10px;
+    }
+    .content {
+      margin-bottom: 30px;
+    }
+    .location-box {
+      background: linear-gradient(135deg, #FFF8E7 0%, #FAF0E6 100%);
+      border: 2px solid #D4AF37;
+      border-radius: 8px;
+      padding: 20px 24px;
+      margin: 24px 0;
+    }
+    .location-name {
+      font-size: 20px;
+      font-weight: 700;
+      color: #D4AF37;
+      margin-bottom: 4px;
+    }
+    .location-address {
+      font-size: 14px;
+      color: #666;
+    }
+    .info {
+      background-color: #FFF8E7;
+      border-left: 4px solid #F4D03F;
+      padding: 15px;
+      margin: 20px 0;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    .button-wrap {
+      text-align: center;
+      margin: 32px 0 16px;
+    }
+    .button {
+      display: inline-block;
+      padding: 14px 32px;
+      background-color: #D4AF37;
+      color: #FFFFFF !important;
+      text-decoration: none;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 16px;
+    }
+    .footer {
+      text-align: center;
+      margin-top: 30px;
+      padding-top: 20px;
+      border-top: 1px solid #F5F5DC;
+      color: #666;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo">Surespot Eatery</div>
+      <h1 class="title">You're now a Pickup Location Admin</h1>
+    </div>
+
+    <div class="content">
+      <p>Hi {{firstName}},</p>
+      <p>You've been assigned as admin for the following pickup location:</p>
+
+      <div class="location-box">
+        <div class="location-name">{{locationName}}</div>
+        <div class="location-address">{{locationAddress}}</div>
+      </div>
+
+      <p>You can now log in to the admin dashboard to manage orders, menu items, and more for your location.</p>
+
+      <div class="info">
+        <strong>Sign in with:</strong> the email or phone number associated with your account.<br>
+        If you haven't set a password yet, use the <strong>OTP login</strong> option on the sign-in page.
+      </div>
+
+      <div class="button-wrap">
+        <a href="{{dashboardUrl}}" class="button">Go to Admin Dashboard</a>
+      </div>
+
+      <p>If the button doesn't work, copy and paste this link into your browser:</p>
+      <p style="word-break: break-all; font-size: 13px; color: #888;">{{dashboardUrl}}</p>
+    </div>
+
+    <div class="footer">
+      <p>If you weren't expecting this, please contact your super admin.</p>
+      <p>&copy; {{currentYear}} SureSpot. All rights reserved.</p>
+    </div>
+  </div>
+</body>
+</html>

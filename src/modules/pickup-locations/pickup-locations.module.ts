@@ -11,6 +11,7 @@ import { AuthModule } from '../auth/auth.module';
 import { MailModule } from '../mail/mail.module';
 import { AdminUsersController } from './admin-users.controller';
 import { AdminOnboardingController } from './admin-onboarding.controller';
+import { AdminPickupLocationsController } from './admin-pickup-locations.controller';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { AdminOnboardingController } from './admin-onboarding.controller';
     PickupLocationsController,
     AdminUsersController,
     AdminOnboardingController,
+    AdminPickupLocationsController,
   ],
   providers: [PickupLocationsService, PickupLocationsRepository],
   exports: [PickupLocationsService, PickupLocationsRepository],

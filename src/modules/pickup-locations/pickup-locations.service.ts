@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   BadRequestException,
   ConflictException,
@@ -26,6 +27,8 @@ import { OrderStatus, PaymentStatus } from '../orders/schemas/order.schema';
 
 @Injectable()
 export class PickupLocationsService {
+  private readonly logger = new Logger(PickupLocationsService.name);
+
   constructor(
     private readonly pickupLocationsRepository: PickupLocationsRepository,
     private readonly authRepository: AuthRepository,
@@ -129,6 +132,25 @@ export class PickupLocationsService {
    * Create a new pickup location and attach it to an existing
    * super-admin user so they can also see stats for their own location.
    */
+  async createStandalone(dto: CreatePickupLocationForAdminDto) {
+    const pickupLocation = await this.pickupLocationsRepository.create({
+      name: dto.name,
+      address: dto.address,
+      latitude: dto.latitude,
+      longitude: dto.longitude,
+      regionId: dto.regionId,
+      isActive: dto.isActive ?? true,
+    });
+
+    return {
+      success: true,
+      message: 'Pickup location created successfully',
+      data: {
+        pickupLocation: this.formatPickupLocation(pickupLocation),
+      },
+    };
+  }
+
   async createForExistingAdmin(
     adminUserId: string,
     dto: CreatePickupLocationForAdminDto,
@@ -277,6 +299,25 @@ export class PickupLocationsService {
           message: 'User not found after assigning pickup location',
         },
       });
+    }
+
+    // Notify the user by email that they've been assigned to a pickup location
+    if (updatedUser.email) {
+      const dashboardUrl =
+        this.configService.get<string>('ADMIN_DASHBOARD_URL') ?? '';
+      this.mailService
+        .sendPickupLocationAssignedEmail({
+          to: updatedUser.email,
+          firstName: updatedUser.firstName ?? 'Admin',
+          locationName: pickupLocation.name,
+          locationAddress: pickupLocation.address,
+          dashboardUrl,
+        })
+        .catch((err) => {
+          this.logger.warn(
+            `Failed to send pickup location assigned email to ${updatedUser.email}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
     }
 
     return {
