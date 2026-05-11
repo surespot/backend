@@ -59,9 +59,9 @@ export class PickupLocationsController {
   @Get()
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.PICKUP_ADMIN)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Get all pickup locations (Admin only)' })
+  @ApiOperation({ summary: 'Get all pickup locations (Admin or Pickup Admin)' })
   @ApiResponse({
     status: 200,
     description: 'Pickup locations retrieved successfully',
@@ -117,10 +117,10 @@ export class PickupLocationsController {
   @Get(':id')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.PICKUP_ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Get a specific pickup location by ID (Admin only)',
+    summary: 'Get a specific pickup location by ID (Admin or Pickup Admin)',
   })
   @ApiResponse({
     status: 200,
