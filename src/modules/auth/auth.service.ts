@@ -1462,7 +1462,7 @@ export class AuthService {
       const updatedUser = await this.authRepository.updateUser(user._id, {
         firstName: dto.firstName,
         lastName: dto.lastName,
-        birthday: new Date(dto.birthday),
+        ...(dto.birthday ? { birthday: new Date(dto.birthday) } : {}),
         isOnboarded: true,
       });
 
