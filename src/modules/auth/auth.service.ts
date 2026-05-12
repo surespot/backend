@@ -1646,6 +1646,19 @@ export class AuthService {
     let user = await this.authRepository.findUserByGoogleId(profile.googleId);
 
     if (!user) {
+      if (profile.email) {
+        const deletedUser = await this.authRepository.findDeletedUserByEmail(profile.email);
+        if (deletedUser) {
+          throw new ConflictException({
+            success: false,
+            error: {
+              code: 'ACCOUNT_RECENTLY_DELETED',
+              message: 'This email address is associated with a recently deleted account. Please wait a month before registering again.',
+            },
+          });
+        }
+      }
+
       // Optional: link existing account if email matches
       if (profile.email) {
         const existingByEmail = await this.authRepository.findUserByEmail(
