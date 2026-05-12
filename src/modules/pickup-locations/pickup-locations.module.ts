@@ -9,6 +9,7 @@ import {
 } from './schemas/pickup-location.schema';
 import { AuthModule } from '../auth/auth.module';
 import { MailModule } from '../mail/mail.module';
+import { SmsModule } from '../sms/sms.module';
 import { AdminUsersController } from './admin-users.controller';
 import { AdminOnboardingController } from './admin-onboarding.controller';
 import { AdminPickupLocationsController } from './admin-pickup-locations.controller';
@@ -20,6 +21,7 @@ import { AdminPickupLocationsController } from './admin-pickup-locations.control
     ]),
     forwardRef(() => AuthModule),
     forwardRef(() => MailModule),
+    SmsModule,
   ],
   controllers: [
     PickupLocationsController,
