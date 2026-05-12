@@ -28,7 +28,8 @@ export class CompleteProfileDto {
     description: 'User birthday in ISO 8601 format (YYYY-MM-DD)',
   })
   @IsDateString()
-  birthday: string;
+  @IsOptional()
+  birthday?: string;
 
   @ApiProperty({
     example: '+2349014226320',

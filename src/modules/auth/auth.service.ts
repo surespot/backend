@@ -199,6 +199,13 @@ export class AuthService {
           error: {
             code: 'PHONE_ALREADY_REGISTERED',
             message: 'This phone number is already registered',
+            details: {
+              authMethods: [
+                ...(existingUser.googleId ? ['google'] : []),
+                ...(existingUser.appleId ? ['apple'] : []),
+                ...(existingUser.password ? ['password'] : []),
+              ],
+            },
           },
         });
       }
@@ -583,6 +590,13 @@ export class AuthService {
           error: {
             code: 'EMAIL_ALREADY_REGISTERED',
             message: 'This email address is already registered',
+            details: {
+              authMethods: [
+                ...(existingUser.googleId ? ['google'] : []),
+                ...(existingUser.appleId ? ['apple'] : []),
+                ...(existingUser.password ? ['password'] : []),
+              ],
+            },
           },
         });
       }
@@ -1448,7 +1462,7 @@ export class AuthService {
       const updatedUser = await this.authRepository.updateUser(user._id, {
         firstName: dto.firstName,
         lastName: dto.lastName,
-        birthday: new Date(dto.birthday),
+        ...(dto.birthday ? { birthday: new Date(dto.birthday) } : {}),
         isOnboarded: true,
       });
 
@@ -1632,6 +1646,19 @@ export class AuthService {
     let user = await this.authRepository.findUserByGoogleId(profile.googleId);
 
     if (!user) {
+      if (profile.email) {
+        const deletedUser = await this.authRepository.findDeletedUserByEmail(profile.email);
+        if (deletedUser) {
+          throw new ConflictException({
+            success: false,
+            error: {
+              code: 'ACCOUNT_RECENTLY_DELETED',
+              message: 'This email address is associated with a recently deleted account. Please wait a month before registering again.',
+            },
+          });
+        }
+      }
+
       // Optional: link existing account if email matches
       if (profile.email) {
         const existingByEmail = await this.authRepository.findUserByEmail(
@@ -1698,6 +1725,14 @@ export class AuthService {
 
     const tokens = await this.generateTokenPair(user._id.toString(), user.role);
 
+    let signupVerificationToken: string | undefined;
+    if (!userIsOnboardedForResponse(user) && user.email) {
+      signupVerificationToken = this.jwtService.sign(
+        { email: user.email, purpose: 'email_verification' },
+        { expiresIn: '1h' },
+      );
+    }
+
     return {
       user: {
         id: user._id.toString(),
@@ -1711,6 +1746,7 @@ export class AuthService {
         createdAt: user.createdAt!,
       },
       tokens,
+      signupVerificationToken,
     };
   }
 

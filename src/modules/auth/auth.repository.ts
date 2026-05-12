@@ -167,6 +167,52 @@ export class AuthRepository {
       }));
   }
 
+  async findAdminUsers(
+    page: number,
+    limit: number,
+  ): Promise<{ users: UserDocument[]; total: number }> {
+    const skip = (page - 1) * limit;
+    const query = {
+      role: { $in: [UserRole.ADMIN, UserRole.PICKUP_ADMIN] },
+      deletedAt: null,
+    };
+    const [users, total] = await Promise.all([
+      this.userModel
+        .find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .exec(),
+      this.userModel.countDocuments(query).exec(),
+    ]);
+    return { users, total };
+  }
+
+  async findAdminsWithoutPickupLocation(
+    page: number,
+    limit: number,
+  ): Promise<{ users: UserDocument[]; total: number }> {
+    const skip = (page - 1) * limit;
+    const query = {
+      role: { $in: [UserRole.ADMIN, UserRole.PICKUP_ADMIN] },
+      $or: [
+        { pickupLocationId: { $exists: false } },
+        { pickupLocationId: null },
+      ],
+      deletedAt: null,
+    };
+    const [users, total] = await Promise.all([
+      this.userModel
+        .find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .exec(),
+      this.userModel.countDocuments(query).exec(),
+    ]);
+    return { users, total };
+  }
+
   /**
    * Find all active admin user IDs (for broadcasting admin notifications).
    */

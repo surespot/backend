@@ -124,6 +124,100 @@ export class AdminUsersController {
     };
   }
 
+  @Get('admins')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'List all admins and pickup admins' })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiResponse({ status: 200, description: 'Admins retrieved successfully' })
+  async listAdmins(
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '20',
+  ) {
+    const pageNum = Math.max(1, parseInt(page) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 20));
+
+    const { users, total } = await this.authRepository.findAdminUsers(
+      pageNum,
+      limitNum,
+    );
+
+    const totalPages = Math.ceil(total / limitNum);
+
+    return {
+      success: true,
+      data: {
+        admins: users.map((u) => ({
+          id: u._id.toString(),
+          firstName: u.firstName,
+          lastName: u.lastName,
+          email: u.email,
+          phone: u.phone,
+          role: u.role,
+          isActive: u.isActive,
+          pickupLocationId: u.pickupLocationId?.toString() ?? null,
+          createdAt: u.createdAt,
+        })),
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total,
+          totalPages,
+          hasNext: pageNum < totalPages,
+          hasPrev: pageNum > 1,
+        },
+      },
+    };
+  }
+
+  @Get('admins/unassigned')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'List admins and pickup admins without an assigned pickup location',
+  })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiResponse({ status: 200, description: 'Unassigned admins retrieved successfully' })
+  async listUnassignedAdmins(
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '20',
+  ) {
+    const pageNum = Math.max(1, parseInt(page) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 20));
+
+    const { users, total } =
+      await this.authRepository.findAdminsWithoutPickupLocation(
+        pageNum,
+        limitNum,
+      );
+
+    const totalPages = Math.ceil(total / limitNum);
+
+    return {
+      success: true,
+      data: {
+        admins: users.map((u) => ({
+          id: u._id.toString(),
+          firstName: u.firstName,
+          lastName: u.lastName,
+          email: u.email,
+          phone: u.phone,
+          role: u.role,
+          isActive: u.isActive,
+          createdAt: u.createdAt,
+        })),
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total,
+          totalPages,
+          hasNext: pageNum < totalPages,
+          hasPrev: pageNum > 1,
+        },
+      },
+    };
+  }
+
   @Get(':id/analytics')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Get detailed user analytics' })

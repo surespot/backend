@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   BadRequestException,
   ConflictException,
@@ -19,6 +20,7 @@ import { AuthRepository } from '../auth/auth.repository';
 import { UserRole } from '../auth/schemas/user.schema';
 import { OtpPurpose } from '../auth/schemas/otp-code.schema';
 import { MailService } from '../mail/mail.service';
+import { SmsService } from '../sms/sms.service';
 import { ConfigService } from '@nestjs/config';
 import { InjectConnection } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
@@ -26,10 +28,13 @@ import { OrderStatus, PaymentStatus } from '../orders/schemas/order.schema';
 
 @Injectable()
 export class PickupLocationsService {
+  private readonly logger = new Logger(PickupLocationsService.name);
+
   constructor(
     private readonly pickupLocationsRepository: PickupLocationsRepository,
     private readonly authRepository: AuthRepository,
     private readonly mailService: MailService,
+    private readonly smsService: SmsService,
     private readonly configService: ConfigService,
     @InjectConnection() private readonly connection: Connection,
   ) {}
@@ -129,6 +134,25 @@ export class PickupLocationsService {
    * Create a new pickup location and attach it to an existing
    * super-admin user so they can also see stats for their own location.
    */
+  async createStandalone(dto: CreatePickupLocationForAdminDto) {
+    const pickupLocation = await this.pickupLocationsRepository.create({
+      name: dto.name,
+      address: dto.address,
+      latitude: dto.latitude,
+      longitude: dto.longitude,
+      regionId: dto.regionId,
+      isActive: dto.isActive ?? true,
+    });
+
+    return {
+      success: true,
+      message: 'Pickup location created successfully',
+      data: {
+        pickupLocation: this.formatPickupLocation(pickupLocation),
+      },
+    };
+  }
+
   async createForExistingAdmin(
     adminUserId: string,
     dto: CreatePickupLocationForAdminDto,
@@ -277,6 +301,34 @@ export class PickupLocationsService {
           message: 'User not found after assigning pickup location',
         },
       });
+    }
+
+    if (updatedUser.email) {
+      const dashboardUrl =
+        this.configService.get<string>('ADMIN_DASHBOARD_URL') ?? '';
+      this.mailService
+        .sendPickupLocationAssignedEmail({
+          to: updatedUser.email,
+          firstName: updatedUser.firstName ?? 'Admin',
+          locationName: pickupLocation.name,
+          locationAddress: pickupLocation.address,
+          dashboardUrl,
+        })
+        .catch((err) => {
+          this.logger.warn(
+            `Failed to send pickup location assigned email to ${updatedUser.email}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+    } else if (updatedUser.phone) {
+      const firstName = updatedUser.firstName ?? 'Admin';
+      const message = `Hi ${firstName}, you've been assigned as admin for ${pickupLocation.name} on Surespot. Log in to the admin dashboard to get started.`;
+      this.smsService
+        .sendSms({ to: updatedUser.phone, body: message })
+        .catch((err) => {
+          this.logger.warn(
+            `Failed to send pickup location assigned SMS to ${updatedUser.phone}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
     }
 
     return {
