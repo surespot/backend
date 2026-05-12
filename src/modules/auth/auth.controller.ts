@@ -114,13 +114,16 @@ export class AuthController {
     if (!profile) {
       return res.redirect(`${redirectBase}/auth/error?code=GOOGLE_AUTH_FAILED`);
     }
-    const { tokens } = await this.authService.validateGoogleUser(profile);
+    const { tokens, signupVerificationToken } = await this.authService.validateGoogleUser(profile);
     const redirectUrl = redirectBase;
     const params = new URLSearchParams({
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
       expiresIn: String(tokens.expiresIn),
     });
+    if (signupVerificationToken) {
+      params.set('signupVerificationToken', signupVerificationToken);
+    }
     return res.redirect(`${redirectUrl}/auth/google/callback?${params}`);
   }
 
