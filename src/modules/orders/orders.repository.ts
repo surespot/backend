@@ -435,6 +435,18 @@ export class OrdersRepository {
     return updatedOrder;
   }
 
+  async unassignRiderFromOrder(orderId: string): Promise<OrderDocument | null> {
+    this.validateObjectId(orderId, 'orderId');
+    return this.orderModel
+      .findByIdAndUpdate(
+        orderId,
+        { $unset: { assignedRiderId: '', assignedAt: '', assignedBy: '' } },
+        { new: true },
+      )
+      .populate('pickupLocationId')
+      .exec();
+  }
+
   /**
    * Find orders assigned to a specific rider
    */
@@ -1364,5 +1376,42 @@ export class OrdersRepository {
       .exec();
 
     return results.length > 0 ? results[0].total : 0;
+  }
+
+  // ============ Demo Order Helpers ============
+
+  async findDemoReadyOrders(customerUserId: string): Promise<OrderDocument[]> {
+    this.validateObjectId(customerUserId, 'customerUserId');
+    return this.orderModel
+      .find({
+        userId: new Types.ObjectId(customerUserId),
+        status: OrderStatus.READY,
+        assignedRiderId: null,
+      })
+      .populate('pickupLocationId')
+      .exec();
+  }
+
+  async patchDemoOrder(
+    id: string,
+    data: {
+      status?: OrderStatus;
+      paymentStatus?: PaymentStatus;
+      paymentMethod?: string;
+      deliveryConfirmationCode?: string;
+    },
+  ): Promise<void> {
+    this.validateObjectId(id, 'orderId');
+    await this.orderModel.findByIdAndUpdate(id, { $set: data }).exec();
+  }
+
+  async deleteDemoOrdersBefore(customerUserId: string, before: Date): Promise<number> {
+    this.validateObjectId(customerUserId, 'customerUserId');
+    const result = await this.orderModel.deleteMany({
+      userId: new Types.ObjectId(customerUserId),
+      status: { $in: [OrderStatus.DELIVERED, OrderStatus.CANCELLED] },
+      createdAt: { $lt: before },
+    }).exec();
+    return result.deletedCount ?? 0;
   }
 }

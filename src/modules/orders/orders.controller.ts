@@ -230,10 +230,10 @@ export class OrdersController {
     description: 'Forbidden - Rider access required',
   })
   async getRiderEligibleOrders(
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; isDemo?: boolean },
     @Query() filter: GetRiderOrdersDto,
   ) {
-    return this.ordersService.getRiderEligibleOrders(user.id, filter);
+    return this.ordersService.getRiderEligibleOrders(user.id, filter, user.isDemo ?? false);
   }
 
   @Post('rider/accept')
@@ -310,17 +310,33 @@ export class OrdersController {
     description: 'Invalid order status or order not assigned',
   })
   async markOrderAsPickedUp(
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; isDemo?: boolean },
     @Param('orderId') orderId: string,
     @Body() dto: MarkOrderPickedUpDto,
   ) {
     return this.ordersService.markOrderAsPickedUp(
       orderId,
       user.id,
+      user.isDemo ?? false,
       dto.message,
       dto.latitude,
       dto.longitude,
     );
+  }
+
+  @Post('rider/:orderId/drop')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.RIDER)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Drop an accepted order before pickup (Rider only)' })
+  @ApiResponse({ status: 200, description: 'Order dropped successfully' })
+  @ApiResponse({ status: 403, description: 'Order not assigned to this rider' })
+  @ApiResponse({ status: 400, description: 'Order already picked up' })
+  async dropOrder(
+    @CurrentUser() user: { id: string },
+    @Param('orderId') orderId: string,
+  ) {
+    return this.ordersService.dropOrder(orderId, user.id);
   }
 
   @Post('rider/:orderId/delivered')

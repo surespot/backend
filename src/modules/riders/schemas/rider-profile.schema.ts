@@ -66,6 +66,9 @@ export class RiderProfile {
   })
   registrationCode: string;
 
+  @Prop({ default: false })
+  isDemo: boolean;
+
   @Prop({ type: Number, default: 0 })
   totalDistanceToday: number; // in meters
 

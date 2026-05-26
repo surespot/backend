@@ -1023,6 +1023,7 @@ export class RidersService {
       schedule: profile.schedule,
       rating: profile.rating,
       status: profile.status,
+      isDemo: profile.isDemo ?? false,
       ...(!mask && { registrationCode: profile.registrationCode }),
       createdAt: profile.createdAt,
       updatedAt: profile.updatedAt,

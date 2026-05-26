@@ -6,6 +6,7 @@ import { RidersService } from './riders.service';
 import { RidersRepository } from './riders.repository';
 import { RidersScheduler } from './riders.scheduler';
 import { RidersProcessor } from './riders.processor';
+import { DemoOrdersScheduler } from './demo-orders.scheduler';
 import { RiderLocationController } from './rider-location.controller';
 import { RiderLocationService } from './rider-location.service';
 import { RiderLocationRepository } from './rider-location.repository';
@@ -27,6 +28,7 @@ import { MailModule } from '../mail/mail.module';
 import { RegionsModule } from '../regions/regions.module';
 import { OrdersModule } from '../orders/orders.module';
 import { TransactionsModule } from '../transactions/transactions.module';
+import { PickupLocationsModule } from '../pickup-locations/pickup-locations.module';
 
 @Module({
   imports: [
@@ -44,6 +46,7 @@ import { TransactionsModule } from '../transactions/transactions.module';
     RegionsModule,
     forwardRef(() => OrdersModule),
     TransactionsModule,
+    PickupLocationsModule,
   ],
   controllers: [RidersController, RiderLocationController],
   providers: [
@@ -53,6 +56,7 @@ import { TransactionsModule } from '../transactions/transactions.module';
     RidersProcessor,
     RiderLocationService,
     RiderLocationRepository,
+    DemoOrdersScheduler,
   ],
   exports: [RidersService, RidersRepository, RiderLocationRepository],
 })

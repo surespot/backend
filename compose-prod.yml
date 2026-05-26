@@ -39,6 +39,19 @@ services:
       seed:
         condition: service_completed_successfully
 
+  seed-demo-rider:
+    image: ${APP_IMAGE:-ghcr.io/surespot/backend:prod}
+    container_name: surespot-seed-demo-rider-prod
+    restart: 'no'
+    env_file:
+      - .env.production
+    entrypoint: /app/node_modules/.bin/ts-node -r tsconfig-paths/register scripts/seed-demo-rider.ts
+    networks:
+      - surespot-prod-network
+    depends_on:
+      seed-demo:
+        condition: service_completed_successfully
+
   app:
     image: ${APP_IMAGE:-ghcr.io/surespot/backend:prod}
     container_name: surespot-app-prod
@@ -60,6 +73,8 @@ services:
       seed:
         condition: service_completed_successfully
       seed-demo:
+        condition: service_completed_successfully
+      seed-demo-rider:
         condition: service_completed_successfully
     networks:
       - surespot-prod-network

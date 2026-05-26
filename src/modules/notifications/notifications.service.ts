@@ -694,6 +694,64 @@ export class NotificationsService {
     );
   }
 
+  async notifySuperadminsNewPickupOrderConfirmed(
+    pickupLocationId: string,
+    orderId: string,
+    orderNumber: string,
+    total: number,
+  ): Promise<void> {
+    const [superadmins, pickupAdmins, orderItems, pickupLocation] =
+      await Promise.all([
+        this.authRepository.findActiveSuperadminsWithPhones(),
+        this.authRepository.findPickupAdminsByLocationId(pickupLocationId),
+        this.ordersRepository.findOrderItemsByOrderId(orderId),
+        this.pickupLocationsService
+          .findOne(pickupLocationId)
+          .catch(() => null),
+      ]);
+
+    if (superadmins.length === 0) return;
+
+    const locationName = pickupLocation?.name ?? 'Unknown Location';
+
+    const itemLines = orderItems
+      .map(
+        (item) =>
+          `- ${item.name} x${item.quantity} (₦${((item.price * item.quantity) / 100).toLocaleString('en-NG')})`,
+      )
+      .join('\n');
+
+    const adminLines =
+      pickupAdmins.length > 0
+        ? pickupAdmins
+            .map((a) => `${a.firstName} ${a.lastName} (${a.phone})`)
+            .join(', ')
+        : 'No admin assigned';
+
+    const body =
+      `New confirmed pickup order at ${locationName}\n\n` +
+      `Order: ${orderNumber}\n` +
+      `${itemLines}\n` +
+      `Total Paid: ₦${(total / 100).toLocaleString('en-NG')}\n\n` +
+      `Pickup Admin: ${adminLines}`;
+
+    await Promise.all(
+      superadmins.map((admin) =>
+        this.smsService
+          .sendSms({ to: admin.phone, body: `[Surespot Eatery] ${body}` })
+          .catch((err) => {
+            this.logger.warn(
+              `Failed to send new-pickup-order SMS to superadmin ${admin.id}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }),
+      ),
+    );
+
+    this.logger.log(
+      `New-pickup-order SMS sent to ${superadmins.length} superadmin(s) for order ${orderNumber}`,
+    );
+  }
+
   /**
    * Notify the pickup location's admins when a rider is assigned to an order (IN_APP).
    */

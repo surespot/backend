@@ -64,6 +64,7 @@ export interface AuthResponse {
     birthday?: string;
     avatar?: string;
     isOnboarded: boolean;
+    isDemo?: boolean;
     createdAt: Date;
   };
   tokens: TokenPair;
@@ -1631,6 +1632,7 @@ export class AuthService {
           birthday: user.birthday?.toISOString().split('T')[0],
           avatar: user.avatar,
           isOnboarded: userIsOnboardedForResponse(user),
+          isDemo: user.isDemo ?? false,
           createdAt: user.createdAt!,
         },
         tokens,

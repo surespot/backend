@@ -229,6 +229,55 @@ export class AuthRepository {
     return admins.map((u) => u._id.toString());
   }
 
+  async findActiveSuperadminsWithPhones(): Promise<
+    { id: string; firstName: string; lastName: string; phone: string }[]
+  > {
+    const admins = await this.userModel
+      .find({
+        role: UserRole.ADMIN,
+        isActive: true,
+        deletedAt: null,
+        phone: { $exists: true, $ne: null },
+      })
+      .select('_id firstName lastName phone')
+      .lean()
+      .exec();
+    return admins
+      .filter((u) => u.phone)
+      .map((u) => ({
+        id: u._id.toString(),
+        firstName: u.firstName ?? '',
+        lastName: u.lastName ?? '',
+        phone: u.phone!,
+      }));
+  }
+
+  async findPickupAdminsByLocationId(
+    pickupLocationId: string | Types.ObjectId,
+  ): Promise<{ firstName: string; lastName: string; phone: string }[]> {
+    const id =
+      typeof pickupLocationId === 'string'
+        ? new Types.ObjectId(pickupLocationId)
+        : pickupLocationId;
+    const users = await this.userModel
+      .find({
+        pickupLocationId: id,
+        isActive: true,
+        deletedAt: null,
+        phone: { $exists: true, $ne: null },
+      })
+      .select('firstName lastName phone')
+      .lean()
+      .exec();
+    return users
+      .filter((u) => u.phone)
+      .map((u) => ({
+        firstName: u.firstName ?? '',
+        lastName: u.lastName ?? '',
+        phone: u.phone!,
+      }));
+  }
+
   /**
    * Find users with pagination and query filter
    */
@@ -317,6 +366,12 @@ export class AuthRepository {
   async clearDemoFlagFromAllUsers(): Promise<void> {
     await this.userModel
       .updateMany({ isDemo: true }, { $set: { isDemo: false } })
+      .exec();
+  }
+
+  async findDemoCustomerUser(): Promise<UserDocument | null> {
+    return this.userModel
+      .findOne({ isDemo: true, role: UserRole.USER })
       .exec();
   }
 
