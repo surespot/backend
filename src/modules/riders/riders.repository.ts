@@ -273,4 +273,8 @@ export class RidersRepository {
       .exec();
     return !!profile;
   }
+
+  async findDemoRider(): Promise<RiderProfileDocument | null> {
+    return this.riderProfileModel.findOne({ isDemo: true }).exec();
+  }
 }

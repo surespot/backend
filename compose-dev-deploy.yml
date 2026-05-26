@@ -61,6 +61,20 @@ services:
     networks:
       - surespot-dev-network
 
+  seed-demo-rider:
+    image: ${APP_IMAGE}
+    container_name: surespot-seed-demo-rider-dev
+    restart: 'no'
+    environment:
+      MONGODB_URI: mongodb://surespot:surespot_dev_password@mongodb-dev:27017/surespot?authSource=admin&replicaSet=rs0
+      MONGODB_DB_NAME: surespot
+    entrypoint: /app/node_modules/.bin/ts-node -r tsconfig-paths/register scripts/seed-demo-rider.ts
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    networks:
+      - surespot-dev-network
+
   app:
     image: ${APP_IMAGE}
     container_name: surespot-app-dev
@@ -83,6 +97,8 @@ services:
       mongodb-dev-init:
         condition: service_completed_successfully
       seed:
+        condition: service_completed_successfully
+      seed-demo-rider:
         condition: service_completed_successfully
       redis-dev:
         condition: service_healthy

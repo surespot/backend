@@ -47,6 +47,7 @@ import { WalletsService } from '../wallets/wallets.service';
 import { ChatService } from '../chat/chat.service';
 import { AuthRepository } from '../auth/auth.repository';
 import { AdminMenuRepository } from '../admin/admin-menu.repository';
+import { ConfigService } from '@nestjs/config';
 
 export interface OrderExtraResponse {
   id: string;
@@ -165,6 +166,7 @@ export class OrdersService {
     @Inject(forwardRef(() => AdminMenuRepository))
     private readonly adminMenuRepository: AdminMenuRepository | null,
     private readonly pickupLocationsRepository: PickupLocationsRepository,
+    private readonly configService: ConfigService,
   ) {}
 
   private formatPrice(price: number, currency: string = 'NGN'): string {
@@ -1414,6 +1416,7 @@ export class OrdersService {
       [DeliveryStatus.RIDER_REQUESTED]: OrderStatus.READY,
       [DeliveryStatus.RIDER_PRESENT]: OrderStatus.READY,
       [DeliveryStatus.RIDER_PICKED_UP]: OrderStatus.OUT_FOR_DELIVERY,
+      [DeliveryStatus.RIDER_DROPPED]: OrderStatus.READY,
       [DeliveryStatus.DELIVERED]: OrderStatus.DELIVERED,
       [DeliveryStatus.CANCELLED]: OrderStatus.CANCELLED,
     };
@@ -1830,6 +1833,23 @@ export class OrdersService {
           .catch((err) => {
             this.logger.warn(
               `Failed to notify pickup location admins of new confirmed order ${order.orderNumber}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          });
+
+        this.pickupLocationsRepository
+          .findById(pickupLocationIdStrForConfirm)
+          .then((location) => {
+            return this.notificationsService.notifySuperadminsNewPickupOrderConfirmed(
+              pickupLocationIdStrForConfirm,
+              location?.name ?? 'Unknown Location',
+              order._id.toString(),
+              order.orderNumber,
+              order.total,
+            );
+          })
+          .catch((err) => {
+            this.logger.warn(
+              `Failed to notify superadmins of new pickup order ${order.orderNumber}: ${err instanceof Error ? err.message : String(err)}`,
             );
           });
       }
@@ -2348,7 +2368,7 @@ export class OrdersService {
    * Returns orders that are READY and in the rider's region
    * Filters by proximity: rider must be within 15KM of both pickup location and delivery address
    */
-  async getRiderEligibleOrders(userId: string, filter: GetRiderOrdersDto) {
+  async getRiderEligibleOrders(userId: string, filter: GetRiderOrdersDto, isDemo = false) {
     // Get rider profile to get region
     const riderProfile = await this.ridersRepository.findByUserId(userId);
     if (!riderProfile) {
@@ -2373,6 +2393,38 @@ export class OrdersService {
             limit: filter.limit || 20,
             total: 0,
             totalPages: 0,
+            hasNext: false,
+            hasPrev: false,
+          },
+        },
+      };
+    }
+
+    // Demo riders: skip location check and return only their seeded demo orders
+    if (isDemo) {
+      const demoCustomer = await this.authRepository.findDemoCustomerUser();
+      if (!demoCustomer) {
+        return {
+          success: true,
+          message: 'Eligible orders retrieved successfully',
+          data: {
+            orders: [],
+            pagination: { page: 1, limit: 20, total: 0, totalPages: 0, hasNext: false, hasPrev: false },
+          },
+        };
+      }
+      const demoOrders = await this.ordersRepository.findDemoReadyOrders(demoCustomer._id.toString());
+      const formattedOrders = await Promise.all(demoOrders.map((o) => this.formatOrder(o)));
+      return {
+        success: true,
+        message: 'Eligible orders retrieved successfully',
+        data: {
+          orders: formattedOrders,
+          pagination: {
+            page: 1,
+            limit: formattedOrders.length,
+            total: formattedOrders.length,
+            totalPages: 1,
             hasNext: false,
             hasPrev: false,
           },
@@ -2927,10 +2979,24 @@ export class OrdersService {
   async markOrderAsPickedUp(
     orderId: string,
     userId: string,
+    isDemo: boolean,
     message?: string,
     latitude?: number,
     longitude?: number,
   ) {
+    // Rider-side self-serve pickup is reserved for the demo flow.
+    // In production, pickup must be confirmed by the pickup location admin
+    // so the rider's claim is verified at the store.
+    if (!isDemo) {
+      throw new ForbiddenException({
+        success: false,
+        error: {
+          code: 'PICKUP_REQUIRES_ADMIN_CONFIRMATION',
+          message: 'Pickup must be confirmed by the pickup location, not the rider.',
+        },
+      });
+    }
+
     // Get rider profile
     const riderProfile = await this.ridersRepository.findByUserId(userId);
     if (!riderProfile) {
@@ -3027,6 +3093,90 @@ export class OrdersService {
       success: true,
       message: 'Order marked as picked up successfully',
       data: await this.formatOrder(updatedOrder),
+    };
+  }
+
+  /**
+   * Drop an accepted order before pickup (Rider only).
+   * Unassigns the rider, puts the order back in the eligible pool, and
+   * re-notifies nearby riders so it appears as a fresh available order.
+   */
+  async dropOrder(orderId: string, userId: string) {
+    const riderProfile = await this.ridersRepository.findByUserId(userId);
+    if (!riderProfile) {
+      throw new NotFoundException({
+        success: false,
+        error: { code: 'RIDER_PROFILE_NOT_FOUND', message: 'Rider profile not found' },
+      });
+    }
+
+    const order = await this.ordersRepository.findById(orderId);
+    if (!order) {
+      throw new NotFoundException({
+        success: false,
+        error: { code: 'ORDER_NOT_FOUND', message: 'Order not found' },
+      });
+    }
+
+    if (!order.assignedRiderId || order.assignedRiderId.toString() !== riderProfile._id.toString()) {
+      throw new ForbiddenException({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'This order is not assigned to you' },
+      });
+    }
+
+    if (order.status !== OrderStatus.READY) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'ORDER_ALREADY_PICKED_UP',
+          message: 'Order cannot be dropped after it has been picked up',
+        },
+      });
+    }
+
+    const updatedOrder = await this.ordersRepository.unassignRiderFromOrder(orderId);
+    if (!updatedOrder) {
+      throw new NotFoundException({
+        success: false,
+        error: { code: 'ORDER_NOT_FOUND', message: 'Order not found' },
+      });
+    }
+
+    await this.ordersRepository.createDeliveryStatus({
+      orderId,
+      status: DeliveryStatus.RIDER_DROPPED,
+      message: 'Rider dropped the order before pickup',
+      updatedBy: userId,
+    });
+
+    // Notify pickup location admins
+    const pickupLocationIdStr = this.getPickupLocationIdString(order.pickupLocationId);
+    if (pickupLocationIdStr) {
+      this.notificationsService
+        .notifyPickupLocationAdminsRiderAssigned(
+          pickupLocationIdStr,
+          order.orderNumber,
+          order._id.toString(),
+          'A rider dropped this order — it is back in the available pool.',
+        )
+        .catch((err) => {
+          this.logger.warn(
+            `Failed to notify pickup location of dropped order ${order.orderNumber}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+    }
+
+    // Re-notify nearby riders so the order appears as available again
+    this.findAndNotifyNearbyRiders(updatedOrder).catch((err) => {
+      this.logger.warn(
+        `Failed to re-notify nearby riders after order drop ${order.orderNumber}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+
+    return {
+      success: true,
+      message: 'Order dropped successfully',
     };
   }
 }

@@ -10,6 +10,7 @@ export enum DeliveryStatus {
   RIDER_REQUESTED = 'rider_requested',
   RIDER_PRESENT = 'rider_present',
   RIDER_PICKED_UP = 'rider_picked_up',
+  RIDER_DROPPED = 'rider_dropped',
   DELIVERED = 'delivered',
   CANCELLED = 'cancelled',
 }
