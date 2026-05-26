@@ -103,10 +103,12 @@ export class TermiiSmsProvider implements ISmsProvider {
         this.logger.error(`[Termii] Failed to send to ${payload.to}`, {
           error: errorMessage,
           status: error.response?.status,
+          message: payload.body,
         });
       } else {
         this.logger.error(`[Termii] Failed to send to ${payload.to}`, {
           error: error instanceof Error ? error.message : String(error),
+          message: payload.body,
         });
       }
       return { success: false, error: errorMessage };
