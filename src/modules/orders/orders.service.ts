@@ -1836,13 +1836,17 @@ export class OrdersService {
             );
           });
 
-        this.notificationsService
-          .notifySuperadminsNewPickupOrderConfirmed(
-            pickupLocationIdStrForConfirm,
-            order._id.toString(),
-            order.orderNumber,
-            order.total,
-          )
+        this.pickupLocationsRepository
+          .findById(pickupLocationIdStrForConfirm)
+          .then((location) => {
+            return this.notificationsService.notifySuperadminsNewPickupOrderConfirmed(
+              pickupLocationIdStrForConfirm,
+              location?.name ?? 'Unknown Location',
+              order._id.toString(),
+              order.orderNumber,
+              order.total,
+            );
+          })
           .catch((err) => {
             this.logger.warn(
               `Failed to notify superadmins of new pickup order ${order.orderNumber}: ${err instanceof Error ? err.message : String(err)}`,

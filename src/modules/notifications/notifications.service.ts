@@ -696,23 +696,20 @@ export class NotificationsService {
 
   async notifySuperadminsNewPickupOrderConfirmed(
     pickupLocationId: string,
+    pickupLocationName: string,
     orderId: string,
     orderNumber: string,
     total: number,
   ): Promise<void> {
-    const [superadmins, pickupAdmins, orderItems, pickupLocation] =
-      await Promise.all([
-        this.authRepository.findActiveSuperadminsWithPhones(),
-        this.authRepository.findPickupAdminsByLocationId(pickupLocationId),
-        this.ordersRepository.findOrderItemsByOrderId(orderId),
-        this.pickupLocationsService
-          .findOne(pickupLocationId)
-          .catch(() => null),
-      ]);
+    const [superadmins, pickupAdmins, orderItems] = await Promise.all([
+      this.authRepository.findActiveSuperadminsWithPhones(),
+      this.authRepository.findPickupAdminsByLocationId(pickupLocationId),
+      this.ordersRepository.findOrderItemsByOrderId(orderId),
+    ]);
 
     if (superadmins.length === 0) return;
 
-    const locationName = pickupLocation?.name ?? 'Unknown Location';
+    const locationName = pickupLocationName;
 
     const itemLines = orderItems
       .map(
