@@ -22,6 +22,9 @@ const DEMO_RIDER_LAST_NAME = 'Rider';
 const DEMO_CUSTOMER_PHONE = '+2348000000003';
 const DEMO_CUSTOMER_EMAIL = 'demo-customer@surespot.app';
 
+// Demo app user (logs in via frontend — must retain isDemo after this seed runs)
+const DEMO_APP_USER_PHONE = '+2348000000001';
+
 async function seedDemoRider() {
   console.log('Connecting to MongoDB...');
   await mongoose.connect(MONGODB_URI, { dbName: MONGODB_DB_NAME });
@@ -50,12 +53,21 @@ async function seedDemoRider() {
   const clearedUsers = await usersCol.updateMany(
     {
       isDemo: true,
-      phone: { $nin: [DEMO_RIDER_PHONE, DEMO_CUSTOMER_PHONE] },
+      phone: { $nin: [DEMO_RIDER_PHONE, DEMO_CUSTOMER_PHONE, DEMO_APP_USER_PHONE] },
     },
     { $set: { isDemo: false } },
   );
   if (clearedUsers.modifiedCount > 0) {
     console.log(`Cleared isDemo from ${clearedUsers.modifiedCount} stale user record(s)`);
+  }
+
+  // Ensure the frontend demo user always retains isDemo: true
+  const restoredAppUser = await usersCol.updateOne(
+    { phone: DEMO_APP_USER_PHONE },
+    { $set: { isDemo: true } },
+  );
+  if (restoredAppUser.matchedCount > 0) {
+    console.log(`Restored isDemo on frontend demo user (${DEMO_APP_USER_PHONE})`);
   }
 
   // Find the first active region
