@@ -749,7 +749,10 @@ export class PromotionsService {
     }
 
     qualifying.sort((a, b) => a.price - b.price);
-    const toTake = Math.min(qualifying.length, promotion.maxFreeQuantity);
+    const toTake = Math.min(
+      Math.max(0, qualifying.length - 1),
+      promotion.maxFreeQuantity,
+    );
     return qualifying.slice(0, toTake).reduce((sum, u) => sum + u.price, 0);
   }
 
