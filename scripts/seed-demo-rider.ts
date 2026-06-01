@@ -102,10 +102,9 @@ async function seedDemoRider() {
           role: 'rider',
           isRider: true,
           isDemo: true,
-          deletedAt: null,
-          anonymizedAt: null,
           updatedAt: new Date(),
         },
+        $unset: { deletedAt: '', anonymizedAt: '' },
       },
     );
     console.log(`Updated existing demo rider user (${riderUserId})`);
@@ -192,10 +191,9 @@ async function seedDemoRider() {
           role: 'user',
           isRider: false,
           isDemo: true,
-          deletedAt: null,
-          anonymizedAt: null,
           updatedAt: new Date(),
         },
+        $unset: { deletedAt: '', anonymizedAt: '' },
       },
     );
     console.log(`Updated existing demo customer user (${customerUserId})`);
