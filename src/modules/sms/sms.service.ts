@@ -25,7 +25,7 @@ export class SmsService {
     @Inject(SMS_PROVIDER) private readonly provider: ISmsProvider,
   ) {
     this.senderId =
-      this.configService.get<string>('SMS_SENDER_ID') || 'Surespot NG';
+      this.configService.get<string>('SMS_SENDER_ID') || 'N-Alert';
   }
 
   /**
