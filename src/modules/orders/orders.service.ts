@@ -2414,7 +2414,8 @@ export class OrdersService {
         };
       }
       const demoOrders = await this.ordersRepository.findDemoReadyOrders(demoCustomer._id.toString());
-      const formattedOrders = await Promise.all(demoOrders.map((o) => this.formatOrder(o)));
+      const validDemoOrders = demoOrders.filter((o) => o.deliveryAddress?.address);
+      const formattedOrders = await Promise.all(validDemoOrders.map((o) => this.formatOrder(o)));
       return {
         success: true,
         message: 'Eligible orders retrieved successfully',
