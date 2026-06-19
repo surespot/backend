@@ -81,6 +81,7 @@ export class DemoOrdersScheduler {
           subtotal: subtotalKobo,
           extrasTotal: 0,
           deliveryFee: deliveryFeeKobo,
+          packagingFee: 0,
           discountAmount: 0,
           total: totalKobo,
           itemCount: 1,

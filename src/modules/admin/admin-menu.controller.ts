@@ -34,6 +34,7 @@ import { GetMenuItemsDto } from './dto/get-menu-items.dto';
 import { CreateMenuItemDto } from './dto/create-menu-item.dto';
 import { UpdateMenuItemDto } from './dto/update-menu-item.dto';
 import { ToggleStockDto } from './dto/toggle-stock.dto';
+import { SetItemPriceDto } from './dto/set-item-price.dto';
 
 type CurrentUserType = {
   id: string;
@@ -186,6 +187,41 @@ export class AdminMenuController {
       dto.inStock,
       dto.itemType,
     );
+  }
+
+  @Patch('items/:id/price')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Set or update location-specific price for an item' })
+  @ApiResponse({ status: 200, description: 'Price updated successfully' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Menu item not found' })
+  async setItemPrice(
+    @CurrentUser() user: CurrentUserType,
+    @Param('id') itemId: string,
+    @Body() dto: SetItemPriceDto,
+  ) {
+    const pickupLocationId = this.ensurePickupLocation(user);
+    return this.adminMenuService.setItemPrice(
+      pickupLocationId,
+      itemId,
+      dto.price,
+      dto.itemType,
+    );
+  }
+
+  @Delete('items/:id/price')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Remove location-specific price override; falls back to global price' })
+  @ApiResponse({ status: 200, description: 'Price override removed successfully' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Menu item not found' })
+  async unsetItemPrice(
+    @CurrentUser() user: CurrentUserType,
+    @Param('id') itemId: string,
+    @Query('itemType') itemType?: 'food' | 'extra',
+  ) {
+    const pickupLocationId = this.ensurePickupLocation(user);
+    return this.adminMenuService.unsetItemPrice(pickupLocationId, itemId, itemType);
   }
 
   @Get('categories')

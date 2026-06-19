@@ -7,10 +7,12 @@ import {
   IsOptional,
   IsNotEmpty,
   IsMongoId,
+  IsEnum,
   Min,
   Max,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { PricingType } from '../../food-items/schemas/food-item.schema';
 
 export class CreateMenuItemDto {
   @ApiProperty()
@@ -79,4 +81,13 @@ export class CreateMenuItemDto {
   @IsOptional()
   @IsString()
   imageUrl?: string;
+
+  @ApiPropertyOptional({
+    description: 'Whether the item is priced per portion or per pack',
+    enum: PricingType,
+    default: PricingType.PER_PORTION,
+  })
+  @IsOptional()
+  @IsEnum(PricingType)
+  pricingType?: PricingType;
 }

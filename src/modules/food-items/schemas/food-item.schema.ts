@@ -3,6 +3,11 @@ import { HydratedDocument, Types } from 'mongoose';
 
 export type FoodItemDocument = HydratedDocument<FoodItem>;
 
+export enum PricingType {
+  PER_PORTION = 'per_portion',
+  PER_PACK = 'per_pack',
+}
+
 export enum FoodCategory {
   FOOD = 'Food',
   PROTEIN = 'Protein',
@@ -83,6 +88,13 @@ export class FoodItem {
 
   @Prop({ default: 0 })
   sortOrder: number;
+
+  @Prop({
+    type: String,
+    enum: Object.values(PricingType),
+    default: PricingType.PER_PORTION,
+  })
+  pricingType: PricingType;
 
   createdAt?: Date;
   updatedAt?: Date;

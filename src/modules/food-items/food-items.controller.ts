@@ -66,6 +66,9 @@ class ProductDetailsQueryDto {
   @IsInt()
   @Min(1)
   relatedLimit?: number = 3;
+
+  @IsOptional()
+  pickupLocationId?: string;
 }
 
 class GetLikedFoodItemsDto {
@@ -535,17 +538,17 @@ export class FoodItemsController {
     @CurrentUser() user?: { id: string },
   ) {
     const {
-      includeExtras = true,
       includeRelated = true,
       relatedLimit = 3,
+      pickupLocationId,
     } = query;
-    // Always populate extras when fetching a single item
     return this.foodItemsService.findOne(
       id,
-      true, // Always include extras for single item fetch
+      true,
       includeRelated,
       relatedLimit,
       user?.id,
+      pickupLocationId,
     );
   }
 

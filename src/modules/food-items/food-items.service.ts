@@ -6,6 +6,7 @@ import {
   BadRequestException,
   UnauthorizedException,
   Inject,
+  Optional,
 } from '@nestjs/common';
 import { FoodItemsRepository } from './food-items.repository';
 import { GetFoodItemsFilterDto } from './dto/get-food-items-filter.dto';
@@ -15,7 +16,7 @@ import { UpdateFoodItemDto } from './dto/update-food-item.dto';
 import { UpdateFoodItemExtrasDto } from './dto/update-food-item-extras.dto';
 import { CreateFoodExtraDto } from './dto/create-food-extra.dto';
 import { UpdateFoodExtraDto } from './dto/update-food-extra.dto';
-import { FoodItemDocument } from './schemas/food-item.schema';
+import { FoodItemDocument, PricingType } from './schemas/food-item.schema';
 import { FoodExtraDocument } from './schemas/food-extra.schema';
 import { FoodCategory } from './schemas/food-item.schema';
 import { InteractionType } from './schemas/food-interaction.schema';
@@ -25,6 +26,7 @@ import { STORAGE_SERVICE } from '../../common/storage/storage.constants';
 import type { IStorageService } from '../../common/storage/interfaces/storage.interface';
 import { OrdersRepository } from '../orders/orders.repository';
 import { NotificationsService } from '../notifications/notifications.service';
+import { AdminMenuRepository } from '../admin/admin-menu.repository';
 import { Types } from 'mongoose';
 
 export interface FoodItemResponse {
@@ -53,6 +55,10 @@ export interface FoodItemResponse {
   viewCount?: number;
   orderCount?: number;
   isPopular?: boolean;
+  pricingType?: PricingType;
+  locationPrice?: number;
+  formattedLocationPrice?: string;
+  locationInStock?: boolean;
   userInteractions?: {
     isViewed: boolean;
     isLiked: boolean;
@@ -91,6 +97,7 @@ export class FoodItemsService {
     @Inject(STORAGE_SERVICE) private readonly storageService: IStorageService,
     private readonly ordersRepository: OrdersRepository,
     private readonly notificationsService: NotificationsService,
+    @Optional() private readonly adminMenuRepository?: AdminMenuRepository,
   ) {}
 
   private formatPrice(price: number, currency: string = 'NGN'): string {
@@ -120,6 +127,8 @@ export class FoodItemsService {
     item: FoodItemDocument,
     includeExtras = false,
     userInteractions?: { isViewed: boolean; isLiked: boolean },
+    locationPrice?: number | null,
+    locationInStock?: boolean,
   ): FoodItemResponse {
     const response: FoodItemResponse = {
       id: item._id.toString(),
@@ -142,9 +151,18 @@ export class FoodItemsService {
       viewCount: item.viewCount,
       orderCount: item.orderCount,
       isPopular: item.isPopular,
+      pricingType: item.pricingType ?? PricingType.PER_PORTION,
       createdAt: item.createdAt?.toISOString(),
       updatedAt: item.updatedAt?.toISOString(),
     };
+
+    if (locationPrice != null) {
+      response.locationPrice = locationPrice;
+      response.formattedLocationPrice = this.formatPrice(locationPrice, item.currency);
+    }
+    if (locationInStock !== undefined) {
+      response.locationInStock = locationInStock;
+    }
 
     // Add user interactions if provided
     if (userInteractions) {
@@ -167,16 +185,32 @@ export class FoodItemsService {
   async findAll(filter: GetFoodItemsFilterDto, userId?: string) {
     const result = await this.foodItemsRepository.findAll(filter);
 
-    // Get user interactions if userId provided
-    let userInteractionsMap: Map<string, Set<string>> | null = null;
-    if (userId) {
-      const itemIds = result.items.map((item) => item._id);
-      userInteractionsMap =
-        await this.foodItemsRepository.getUserInteractionsForItems(
-          userId,
-          itemIds,
-        );
-    }
+    const itemInputs = result.items.map((item) => ({
+      itemId: item._id.toString(),
+      itemType: 'food' as const,
+    }));
+
+    const [userInteractionsMap, locationPriceMap, locationStockMap] =
+      await Promise.all([
+        userId
+          ? this.foodItemsRepository.getUserInteractionsForItems(
+              userId,
+              result.items.map((item) => item._id),
+            )
+          : Promise.resolve(null),
+        filter.pickupLocationId && this.adminMenuRepository && itemInputs.length > 0
+          ? this.adminMenuRepository.getLocationPriceBatch(
+              filter.pickupLocationId,
+              itemInputs,
+            )
+          : Promise.resolve(null),
+        filter.pickupLocationId && this.adminMenuRepository && itemInputs.length > 0
+          ? this.adminMenuRepository.getStockStatusBatch(
+              filter.pickupLocationId,
+              itemInputs,
+            )
+          : Promise.resolve(null),
+      ]);
 
     return {
       success: true,
@@ -184,10 +218,16 @@ export class FoodItemsService {
         items: result.items.map((item) => {
           const itemId = item._id.toString();
           const interactions = userInteractionsMap?.get(itemId);
-          return this.toFoodItemResponse(item, true, {
-            isViewed: interactions?.has(InteractionType.VIEW) ?? false,
-            isLiked: interactions?.has(InteractionType.LIKE) ?? false,
-          });
+          return this.toFoodItemResponse(
+            item,
+            true,
+            {
+              isViewed: interactions?.has(InteractionType.VIEW) ?? false,
+              isLiked: interactions?.has(InteractionType.LIKE) ?? false,
+            },
+            locationPriceMap?.get(itemId) ?? null,
+            locationStockMap?.get(itemId),
+          );
         }),
         pagination: result.pagination,
       },
@@ -200,6 +240,7 @@ export class FoodItemsService {
     includeRelated = true,
     relatedLimit = 3,
     userId?: string,
+    pickupLocationId?: string,
   ) {
     const item = await this.foodItemsRepository.findById(id, includeExtras);
 
@@ -213,14 +254,32 @@ export class FoodItemsService {
       });
     }
 
-    // Get user interactions if userId provided
+    const itemInput = [{ itemId: item._id.toString(), itemType: 'food' as const }];
+
+    const [userInteractionsRaw, locationPrice, locationInStock] =
+      await Promise.all([
+        userId
+          ? this.foodItemsRepository.getUserInteractionsForItems(userId, [item._id])
+          : Promise.resolve(null),
+        pickupLocationId && this.adminMenuRepository
+          ? this.adminMenuRepository.getLocationPrice(
+              pickupLocationId,
+              item._id.toString(),
+              'food',
+            )
+          : Promise.resolve(null),
+        pickupLocationId && this.adminMenuRepository
+          ? this.adminMenuRepository.getStockStatus(
+              pickupLocationId,
+              item._id.toString(),
+              'food',
+            )
+          : Promise.resolve(undefined),
+      ]);
+
     let userInteractions: { isViewed: boolean; isLiked: boolean } | undefined;
-    if (userId) {
-      const interactions =
-        await this.foodItemsRepository.getUserInteractionsForItems(userId, [
-          item._id,
-        ]);
-      const itemInteractions = interactions.get(item._id.toString());
+    if (userInteractionsRaw) {
+      const itemInteractions = userInteractionsRaw.get(item._id.toString());
       userInteractions = {
         isViewed: itemInteractions?.has(InteractionType.VIEW) ?? false,
         isLiked: itemInteractions?.has(InteractionType.LIKE) ?? false,
@@ -231,6 +290,8 @@ export class FoodItemsService {
       item,
       includeExtras,
       userInteractions,
+      locationPrice,
+      locationInStock as boolean | undefined,
     );
 
     // Get related items if requested
@@ -319,16 +380,32 @@ export class FoodItemsService {
       foodItemIds,
     );
 
-    // Get user interactions if userId provided
-    let userInteractionsMap: Map<string, Set<string>> | null = null;
-    if (userId) {
-      const itemIds = result.items.map((item) => item._id);
-      userInteractionsMap =
-        await this.foodItemsRepository.getUserInteractionsForItems(
-          userId,
-          itemIds,
-        );
-    }
+    const searchItemInputs = result.items.map((item) => ({
+      itemId: item._id.toString(),
+      itemType: 'food' as const,
+    }));
+
+    const [userInteractionsMap, locationPriceMap, locationStockMap] =
+      await Promise.all([
+        userId
+          ? this.foodItemsRepository.getUserInteractionsForItems(
+              userId,
+              result.items.map((item) => item._id),
+            )
+          : Promise.resolve(null),
+        filterDto.pickupLocationId && this.adminMenuRepository && searchItemInputs.length > 0
+          ? this.adminMenuRepository.getLocationPriceBatch(
+              filterDto.pickupLocationId,
+              searchItemInputs,
+            )
+          : Promise.resolve(null),
+        filterDto.pickupLocationId && this.adminMenuRepository && searchItemInputs.length > 0
+          ? this.adminMenuRepository.getStockStatusBatch(
+              filterDto.pickupLocationId,
+              searchItemInputs,
+            )
+          : Promise.resolve(null),
+      ]);
 
     return {
       success: true,
@@ -336,10 +413,16 @@ export class FoodItemsService {
         items: result.items.map((item) => {
           const itemId = item._id.toString();
           const interactions = userInteractionsMap?.get(itemId);
-          return this.toFoodItemResponse(item, true, {
-            isViewed: interactions?.has(InteractionType.VIEW) ?? false,
-            isLiked: interactions?.has(InteractionType.LIKE) ?? false,
-          });
+          return this.toFoodItemResponse(
+            item,
+            true,
+            {
+              isViewed: interactions?.has(InteractionType.VIEW) ?? false,
+              isLiked: interactions?.has(InteractionType.LIKE) ?? false,
+            },
+            locationPriceMap?.get(itemId) ?? null,
+            locationStockMap?.get(itemId),
+          );
         }),
         pagination: result.pagination,
       },
@@ -506,6 +589,7 @@ export class FoodItemsService {
       extras: extrasIds,
       isPopular: dto.isPopular,
       sortOrder: dto.sortOrder,
+      pricingType: dto.pricingType,
     });
 
     return {

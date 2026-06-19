@@ -30,6 +30,10 @@ import {
   PickupLocationItemAvailability,
   PickupLocationItemAvailabilitySchema,
 } from './schemas/pickup-location-item-availability.schema';
+import {
+  PickupLocationItemPrice,
+  PickupLocationItemPriceSchema,
+} from './schemas/pickup-location-item-price.schema';
 import { RegionsModule } from '../regions/regions.module';
 import { PickupLocationsModule } from '../pickup-locations/pickup-locations.module';
 import { NotificationsModule } from '../notifications/notifications.module';
@@ -57,6 +61,10 @@ import { NotificationsModule } from '../notifications/notifications.module';
       {
         name: PickupLocationItemAvailability.name,
         schema: PickupLocationItemAvailabilitySchema,
+      },
+      {
+        name: PickupLocationItemPrice.name,
+        schema: PickupLocationItemPriceSchema,
       },
     ]),
   ],
