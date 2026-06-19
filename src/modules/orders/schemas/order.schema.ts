@@ -98,9 +98,6 @@ export class Order {
   deliveryFee: number; // Delivery fee (in kobo, 0 for pickup)
 
   @Prop({ type: Number, default: 0, min: 0 })
-  packagingFee: number; // Flat packaging fee for per-pack items (in kobo)
-
-  @Prop({ type: Number, default: 0, min: 0 })
   discountAmount: number; // Discount from promo code (in kobo)
 
   @Prop({ type: Number, min: 0, max: 100 })

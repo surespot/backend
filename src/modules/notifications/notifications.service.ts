@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Logger, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { NotificationsRepository } from './notifications.repository';
@@ -42,7 +42,6 @@ export class NotificationsService {
     private readonly mailService: MailService,
     private readonly authRepository: AuthRepository,
     private readonly ordersRepository: OrdersRepository,
-    @Inject(forwardRef(() => PickupLocationsService))
     private readonly pickupLocationsService: PickupLocationsService,
     private readonly gateway: NotificationsGateway,
     private readonly pushNotificationService: PushNotificationService,

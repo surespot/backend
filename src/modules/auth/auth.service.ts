@@ -1688,7 +1688,12 @@ export class AuthService {
           birthday: profile.birthday,
           isEmailVerified: !!profile.email,
           role: UserRole.USER,
-          isOnboarded: true,
+          isOnboarded: Boolean(
+            profile.birthday &&
+              profile.firstName &&
+              profile.lastName &&
+              !(profile.firstName === 'New' && profile.lastName === 'User'),
+          ),
         });
       }
     }

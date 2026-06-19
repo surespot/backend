@@ -10,7 +10,6 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
-  BadRequestException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -22,7 +21,6 @@ import { PickupLocationsService } from './pickup-locations.service';
 import { CreatePickupLocationDto } from './dto/create-pickup-location.dto';
 import { UpdatePickupLocationDto } from './dto/update-pickup-location.dto';
 import { FindNearestPickupLocationDto } from './dto/find-nearest-pickup-location.dto';
-import { JoinWaitlistDto } from './dto/join-waitlist.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -188,62 +186,6 @@ export class PickupLocationsController {
     @CurrentUser() user: { id: string; role: string; pickupLocationId?: string },
   ) {
     return this.pickupLocationsService.deactivatePickupLocation(id, user);
-  }
-
-  @Patch(':id/close')
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.PICKUP_ADMIN)
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Close a pickup location (mark inactive without unlinking the admin). Super admins can close any location; pickup admins can only close their own.',
-  })
-  @ApiResponse({ status: 200, description: 'Pickup location closed successfully' })
-  @ApiResponse({ status: 400, description: 'Pickup location is already closed' })
-  @ApiResponse({ status: 403, description: 'Forbidden - pickup admin can only close their own location' })
-  @ApiResponse({ status: 404, description: 'Pickup location not found' })
-  async close(
-    @Param('id') id: string,
-    @CurrentUser() user: { id: string; role: string; pickupLocationId?: string },
-  ) {
-    return this.pickupLocationsService.closePickupLocation(id, user);
-  }
-
-  @Post('waitlist')
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard)
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Join pickup location waitlist (authenticated users)' })
-  @ApiResponse({ status: 200, description: 'Added to waitlist successfully' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async joinWaitlist(
-    @CurrentUser() user: { id: string },
-    @Body() dto: JoinWaitlistDto,
-  ) {
-    await this.pickupLocationsService.joinWaitlist(
-      user.id,
-      dto.latitude,
-      dto.longitude,
-    );
-    return {
-      success: true,
-      message: "You're on the waitlist. We'll notify you when a pickup point opens near you.",
-    };
-  }
-
-  @Delete('waitlist')
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard)
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Leave pickup location waitlist (authenticated users)' })
-  @ApiResponse({ status: 200, description: 'Removed from waitlist successfully' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async leaveWaitlist(@CurrentUser() user: { id: string }) {
-    await this.pickupLocationsService.leaveWaitlist(user.id);
-    return {
-      success: true,
-      message: "You've been removed from the waitlist.",
-    };
   }
 
   @Delete(':id')

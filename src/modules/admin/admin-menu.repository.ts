@@ -5,10 +5,6 @@ import {
   PickupLocationItemAvailability,
   PickupLocationItemAvailabilityDocument,
 } from './schemas/pickup-location-item-availability.schema';
-import {
-  PickupLocationItemPrice,
-  PickupLocationItemPriceDocument,
-} from './schemas/pickup-location-item-price.schema';
 
 export interface StockItemInput {
   itemId: string;
@@ -21,8 +17,6 @@ export class AdminMenuRepository {
   constructor(
     @InjectModel(PickupLocationItemAvailability.name)
     private readonly availabilityModel: Model<PickupLocationItemAvailabilityDocument>,
-    @InjectModel(PickupLocationItemPrice.name)
-    private readonly priceModel: Model<PickupLocationItemPriceDocument>,
   ) {}
 
   private validateObjectId(id: string, fieldName: string): void {
@@ -36,8 +30,6 @@ export class AdminMenuRepository {
       });
     }
   }
-
-  // ── Stock status ────────────────────────────────────────────────────────────
 
   async getStockStatus(
     pickupLocationId: string,
@@ -134,107 +126,6 @@ export class AdminMenuRepository {
   ): Promise<void> {
     this.validateObjectId(itemId, 'itemId');
     await this.availabilityModel
-      .deleteMany({ itemId: new Types.ObjectId(itemId), itemType })
-      .exec();
-  }
-
-  // ── Location-specific pricing ────────────────────────────────────────────────
-
-  async getLocationPrice(
-    pickupLocationId: string,
-    itemId: string,
-    itemType: 'food' | 'extra',
-  ): Promise<number | null> {
-    this.validateObjectId(pickupLocationId, 'pickupLocationId');
-    this.validateObjectId(itemId, 'itemId');
-
-    const doc = await this.priceModel
-      .findOne({
-        pickupLocationId: new Types.ObjectId(pickupLocationId),
-        itemId: new Types.ObjectId(itemId),
-        itemType,
-      })
-      .lean()
-      .exec();
-
-    return doc?.price ?? null;
-  }
-
-  async getLocationPriceBatch(
-    pickupLocationId: string,
-    items: StockItemInput[],
-  ): Promise<Map<string, number | null>> {
-    this.validateObjectId(pickupLocationId, 'pickupLocationId');
-    if (items.length === 0) return new Map();
-
-    const itemIds = items.map((i) => new Types.ObjectId(i.itemId));
-    const itemTypes = [...new Set(items.map((i) => i.itemType))];
-
-    const docs = await this.priceModel
-      .find({
-        pickupLocationId: new Types.ObjectId(pickupLocationId),
-        itemId: { $in: itemIds },
-        itemType: { $in: itemTypes },
-      })
-      .lean()
-      .exec();
-
-    const map = new Map<string, number | null>();
-    for (const item of items) {
-      const doc = docs.find(
-        (d) =>
-          d.itemId.toString() === item.itemId && d.itemType === item.itemType,
-      );
-      map.set(item.itemId, doc?.price ?? null);
-    }
-    return map;
-  }
-
-  async setLocationPrice(
-    pickupLocationId: string,
-    itemId: string,
-    itemType: 'food' | 'extra',
-    price: number,
-  ): Promise<void> {
-    this.validateObjectId(pickupLocationId, 'pickupLocationId');
-    this.validateObjectId(itemId, 'itemId');
-
-    await this.priceModel
-      .findOneAndUpdate(
-        {
-          pickupLocationId: new Types.ObjectId(pickupLocationId),
-          itemId: new Types.ObjectId(itemId),
-          itemType,
-        },
-        { $set: { price } },
-        { upsert: true, new: true },
-      )
-      .exec();
-  }
-
-  async deleteLocationPrice(
-    pickupLocationId: string,
-    itemId: string,
-    itemType: 'food' | 'extra',
-  ): Promise<void> {
-    this.validateObjectId(pickupLocationId, 'pickupLocationId');
-    this.validateObjectId(itemId, 'itemId');
-
-    await this.priceModel
-      .deleteMany({
-        pickupLocationId: new Types.ObjectId(pickupLocationId),
-        itemId: new Types.ObjectId(itemId),
-        itemType,
-      })
-      .exec();
-  }
-
-  async deleteAllLocationPricesForItem(
-    itemId: string,
-    itemType: 'food' | 'extra',
-  ): Promise<void> {
-    this.validateObjectId(itemId, 'itemId');
-    await this.priceModel
       .deleteMany({ itemId: new Types.ObjectId(itemId), itemType })
       .exec();
   }

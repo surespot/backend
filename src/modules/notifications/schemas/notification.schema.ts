@@ -18,7 +18,6 @@ export enum NotificationType {
   GENERAL = 'general',
   CHAT_MESSAGE = 'chat_message',
   NEW_REVIEW = 'new_review',
-  PICKUP_LOCATION_AVAILABLE = 'pickup_location_available',
 }
 
 export enum NotificationChannel {

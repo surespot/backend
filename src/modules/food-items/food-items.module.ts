@@ -15,7 +15,6 @@ import { Review, ReviewSchema } from './schemas/review.schema';
 import { AuthModule } from '../auth/auth.module';
 import { OrdersModule } from '../orders/orders.module';
 import { NotificationsModule } from '../notifications/notifications.module';
-import { AdminModule } from '../admin/admin.module';
 
 @Module({
   imports: [
@@ -28,7 +27,6 @@ import { AdminModule } from '../admin/admin.module';
     forwardRef(() => AuthModule),
     forwardRef(() => OrdersModule),
     forwardRef(() => NotificationsModule),
-    forwardRef(() => AdminModule),
   ],
   controllers: [
     FoodItemsController,

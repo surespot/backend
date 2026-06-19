@@ -72,7 +72,6 @@ export class OrdersRepository {
       subtotal: number;
       extrasTotal: number;
       deliveryFee: number;
-      packagingFee: number;
       discountAmount: number;
       discountPercent?: number;
       promoCode?: string;
@@ -110,7 +109,6 @@ export class OrdersRepository {
       subtotal: data.subtotal,
       extrasTotal: data.extrasTotal,
       deliveryFee: data.deliveryFee,
-      packagingFee: data.packagingFee,
       discountAmount: data.discountAmount,
       discountPercent: data.discountPercent,
       promoCode: data.promoCode,

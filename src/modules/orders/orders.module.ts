@@ -25,7 +25,6 @@ import { RidersModule } from '../riders/riders.module';
 import { WalletsModule } from '../wallets/wallets.module';
 import { ChatModule } from '../chat/chat.module';
 import { AdminModule } from '../admin/admin.module';
-import { SettingsModule } from '../settings/settings.module';
 
 @Module({
   imports: [
@@ -53,7 +52,6 @@ import { SettingsModule } from '../settings/settings.module';
     forwardRef(() => WalletsModule),
     forwardRef(() => ChatModule),
     forwardRef(() => AdminModule),
-    SettingsModule,
   ],
   controllers: [OrdersController, CheckoutController],
   providers: [

@@ -220,7 +220,6 @@ export class CartRepository {
   async updateCartItem(
     itemId: string,
     data: Partial<{
-      price: number;
       quantity: number;
       subtotal: number;
       extrasTotal: number;
@@ -230,7 +229,6 @@ export class CartRepository {
     this.validateObjectId(itemId, 'itemId');
 
     const updateData: Record<string, unknown> = {};
-    if (data.price !== undefined) updateData.price = data.price;
     if (data.quantity !== undefined) updateData.quantity = data.quantity;
     if (data.subtotal !== undefined) updateData.subtotal = data.subtotal;
     if (data.extrasTotal !== undefined)

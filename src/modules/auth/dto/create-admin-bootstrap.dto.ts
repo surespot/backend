@@ -2,6 +2,7 @@ import { ApiProperty } from '@nestjs/swagger';
 import {
   IsEmail,
   IsNotEmpty,
+  IsOptional,
   IsString,
   Matches,
   MinLength,
@@ -24,11 +25,12 @@ export class CreateAdminBootstrapDto {
 
   @ApiProperty({
     example: '+2349012345678',
-    description: 'Admin phone number',
+    description: 'Admin phone (optional)',
+    required: false,
   })
   @IsString()
-  @IsNotEmpty()
-  phone: string;
+  @IsOptional()
+  phone?: string;
 
   @ApiProperty({
     example: 'Sup3rSecret!',

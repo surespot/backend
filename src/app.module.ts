@@ -35,7 +35,6 @@ import { AdminModule } from './modules/admin/admin.module';
 import { IntegrationsTestModule } from './modules/integrations-test/integrations-test.module';
 import { HealthModule } from './modules/health/health.module';
 import { PlacesModule } from './modules/places/places.module';
-import { SettingsModule } from './modules/settings/settings.module';
 import { CorrelationMiddleware } from './common/correlation/correlation.middleware';
 import { HttpMetricsMiddleware } from './common/metrics/http-metrics.middleware';
 
@@ -201,9 +200,6 @@ import { HttpMetricsMiddleware } from './common/metrics/http-metrics.middleware'
 
     // Google Places proxy (keeps API key server-side)
     PlacesModule,
-
-    // Site settings (packaging fee, order cutoff, etc.)
-    SettingsModule,
   ],
   controllers: [AppController],
   providers: [

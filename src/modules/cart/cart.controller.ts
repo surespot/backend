@@ -6,7 +6,6 @@ import {
   Delete,
   Body,
   Param,
-  Query,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -88,11 +87,8 @@ export class CartController {
     status: 401,
     description: 'Unauthorized',
   })
-  async getCart(
-    @CurrentUser() user: { id: string },
-    @Query('pickupLocationId') pickupLocationId?: string,
-  ) {
-    return this.cartService.getCart(user.id, pickupLocationId);
+  async getCart(@CurrentUser() user: { id: string }) {
+    return this.cartService.getCart(user.id);
   }
 
   @Post('items')

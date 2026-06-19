@@ -5,9 +5,6 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
-  Inject,
-  forwardRef,
-  OnModuleInit,
 } from '@nestjs/common';
 import { PickupLocationsRepository } from './pickup-locations.repository';
 import { CreatePickupLocationDto } from './dto/create-pickup-location.dto';
@@ -18,10 +15,6 @@ import {
   PickupLocationDocument,
   type RegionIdField,
 } from './schemas/pickup-location.schema';
-import {
-  PickupLocationWaitlist,
-  PickupLocationWaitlistDocument,
-} from './schemas/pickup-location-waitlist.schema';
 import { CreatePickupLocationForAdminDto } from './dto/create-pickup-location-for-admin.dto';
 import { AuthRepository } from '../auth/auth.repository';
 import { UserRole } from '../auth/schemas/user.schema';
@@ -29,18 +22,12 @@ import { OtpPurpose } from '../auth/schemas/otp-code.schema';
 import { MailService } from '../mail/mail.service';
 import { SmsService } from '../sms/sms.service';
 import { ConfigService } from '@nestjs/config';
-import { InjectConnection, InjectModel } from '@nestjs/mongoose';
+import { InjectConnection } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
 import { OrderStatus, PaymentStatus } from '../orders/schemas/order.schema';
-import { NotificationsService } from '../notifications/notifications.service';
-import {
-  NotificationChannel,
-  NotificationType,
-} from '../notifications/schemas/notification.schema';
-import { SavedLocationsRepository } from '../saved-locations/saved-locations.repository';
 
 @Injectable()
-export class PickupLocationsService implements OnModuleInit {
+export class PickupLocationsService {
   private readonly logger = new Logger(PickupLocationsService.name);
 
   constructor(
@@ -50,16 +37,7 @@ export class PickupLocationsService implements OnModuleInit {
     private readonly smsService: SmsService,
     private readonly configService: ConfigService,
     @InjectConnection() private readonly connection: Connection,
-    @InjectModel(PickupLocationWaitlist.name)
-    private readonly waitlistModel: Model<PickupLocationWaitlistDocument>,
-    @Inject(forwardRef(() => NotificationsService))
-    private readonly notificationsService: NotificationsService,
-    private readonly savedLocationsRepository: SavedLocationsRepository,
   ) {}
-
-  async onModuleInit() {
-    await this.waitlistModel.syncIndexes();
-  }
 
   async create(dto: CreatePickupLocationDto) {
     // Ensure no existing user already uses this admin email
@@ -132,19 +110,6 @@ export class PickupLocationsService implements OnModuleInit {
         expiresInMinutes: otpExpiryMinutes,
       });
 
-      if (pickupLocation.isActive) {
-        this.notifyNearbyWaitlist(pickupLocation).catch((err) => {
-          this.logger.warn(
-            `Failed to notify waitlist for new pickup location ${pickupLocation._id.toString()}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        });
-        this.emailNearbyUsers(pickupLocation).catch((err) => {
-          this.logger.warn(
-            `Failed to email nearby users for new pickup location ${pickupLocation._id.toString()}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        });
-      }
-
       return {
         success: true,
         message: 'Pickup location created successfully',
@@ -178,19 +143,6 @@ export class PickupLocationsService implements OnModuleInit {
       regionId: dto.regionId,
       isActive: dto.isActive ?? true,
     });
-
-    if (pickupLocation.isActive) {
-      this.notifyNearbyWaitlist(pickupLocation).catch((err) => {
-        this.logger.warn(
-          `Failed to notify waitlist for new pickup location ${pickupLocation._id.toString()}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      });
-      this.emailNearbyUsers(pickupLocation).catch((err) => {
-        this.logger.warn(
-          `Failed to email nearby users for new pickup location ${pickupLocation._id.toString()}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      });
-    }
 
     return {
       success: true,
@@ -262,19 +214,6 @@ export class PickupLocationsService implements OnModuleInit {
           code: 'ADMIN_USER_NOT_FOUND',
           message: 'Admin user not found after attaching pickup location',
         },
-      });
-    }
-
-    if (pickupLocation.isActive) {
-      this.notifyNearbyWaitlist(pickupLocation).catch((err) => {
-        this.logger.warn(
-          `Failed to notify waitlist for new pickup location ${pickupLocation._id.toString()}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      });
-      this.emailNearbyUsers(pickupLocation).catch((err) => {
-        this.logger.warn(
-          `Failed to email nearby users for new pickup location ${pickupLocation._id.toString()}: ${err instanceof Error ? err.message : String(err)}`,
-        );
       });
     }
 
@@ -507,7 +446,7 @@ export class PickupLocationsService implements OnModuleInit {
         success: false,
         error: {
           code: 'PICKUP_LOCATION_NOT_FOUND',
-          message: 'No open branches near your location, try again later',
+          message: 'No active pickup location found nearby',
         },
       });
     }
@@ -546,8 +485,6 @@ export class PickupLocationsService implements OnModuleInit {
       });
     }
 
-    const wasActive = existing.isActive;
-
     const updated = await this.pickupLocationsRepository.update(id, {
       name: dto.name,
       address: dto.address,
@@ -564,19 +501,6 @@ export class PickupLocationsService implements OnModuleInit {
           code: 'UPDATE_FAILED',
           message: 'Failed to update pickup location',
         },
-      });
-    }
-
-    if (!wasActive && updated.isActive) {
-      this.notifyNearbyWaitlist(updated).catch((err) => {
-        this.logger.warn(
-          `Failed to notify waitlist on activation of pickup location ${id}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      });
-      this.emailNearbyUsers(updated).catch((err) => {
-        this.logger.warn(
-          `Failed to email nearby users on activation of pickup location ${id}: ${err instanceof Error ? err.message : String(err)}`,
-        );
       });
     }
 
@@ -634,52 +558,6 @@ export class PickupLocationsService implements OnModuleInit {
     return {
       success: true,
       message: 'Pickup location deactivated successfully',
-    };
-  }
-
-  async closePickupLocation(
-    locationId: string,
-    requestingUser: { id: string; role: string; pickupLocationId?: string },
-  ) {
-    const location =
-      await this.pickupLocationsRepository.findById(locationId);
-    if (!location) {
-      throw new NotFoundException({
-        success: false,
-        error: {
-          code: 'PICKUP_LOCATION_NOT_FOUND',
-          message: 'Pickup location not found',
-        },
-      });
-    }
-
-    if (requestingUser.role === UserRole.PICKUP_ADMIN) {
-      if (requestingUser.pickupLocationId !== locationId) {
-        throw new ForbiddenException({
-          success: false,
-          error: {
-            code: 'FORBIDDEN',
-            message: 'You can only close your own pickup location',
-          },
-        });
-      }
-    }
-
-    if (!location.isActive) {
-      throw new BadRequestException({
-        success: false,
-        error: {
-          code: 'ALREADY_INACTIVE',
-          message: 'Pickup location is already closed',
-        },
-      });
-    }
-
-    await this.pickupLocationsRepository.update(locationId, { isActive: false });
-
-    return {
-      success: true,
-      message: 'Pickup location closed successfully',
     };
   }
 
@@ -754,124 +632,6 @@ export class PickupLocationsService implements OnModuleInit {
       success: true,
       message: 'Pickup location deleted successfully',
     };
-  }
-
-  async joinWaitlist(
-    userId: string,
-    latitude: number,
-    longitude: number,
-  ): Promise<void> {
-    await this.waitlistModel
-      .findOneAndUpdate(
-        { userId: new Types.ObjectId(userId), latitude, longitude },
-        { $set: { userId: new Types.ObjectId(userId), latitude, longitude } },
-        { upsert: true, new: true },
-      )
-      .exec();
-  }
-
-  async leaveWaitlist(userId: string): Promise<void> {
-    await this.waitlistModel
-      .deleteMany({ userId: new Types.ObjectId(userId) })
-      .exec();
-  }
-
-  private async emailNearbyUsers(
-    pickupLocation: PickupLocationDocument,
-  ): Promise<void> {
-    const MAX_DISTANCE_METERS = 20000;
-    const [lng, lat] = pickupLocation.location.coordinates;
-
-    const userIds =
-      await this.savedLocationsRepository.findDistinctUserIdsNearPoint(
-        lng,
-        lat,
-        MAX_DISTANCE_METERS,
-      );
-
-    if (userIds.length === 0) return;
-
-    await Promise.all(
-      userIds.map(async (userId) => {
-        try {
-          const user = await this.authRepository.findUserById(userId);
-          if (!user?.email || !user.isEmailVerified) return;
-          await this.mailService.sendPickupLocationNearbyEmail({
-            to: user.email,
-            firstName: user.firstName ?? 'there',
-            locationName: pickupLocation.name,
-            locationAddress: pickupLocation.address,
-          });
-        } catch (err) {
-          this.logger.warn(
-            `Failed to email user ${userId} about new pickup location: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-      }),
-    );
-  }
-
-  private async notifyNearbyWaitlist(
-    pickupLocation: PickupLocationDocument,
-  ): Promise<void> {
-    const MAX_DISTANCE_METERS = 20000;
-    const [lng, lat] = pickupLocation.location.coordinates;
-
-    const entries = await this.waitlistModel.find().lean().exec();
-    const nearbyEntries = entries.filter((entry) => {
-      const distanceKm = this.haversineDistance(
-        lat,
-        lng,
-        entry.latitude,
-        entry.longitude,
-      );
-      return distanceKm * 1000 <= MAX_DISTANCE_METERS;
-    });
-
-    if (nearbyEntries.length === 0) return;
-
-    const userIds = [...new Set(nearbyEntries.map((e) => e.userId.toString()))];
-
-    await Promise.all(
-      userIds.map((userId) =>
-        this.notificationsService
-          .create(
-            userId,
-            NotificationType.PICKUP_LOCATION_AVAILABLE,
-            'Pickup point now available near you!',
-            `Great news! A Surespot pickup point has opened near you at ${pickupLocation.name}. You can now place orders for pickup.`,
-            { pickupLocationId: pickupLocation._id.toString() },
-            [NotificationChannel.IN_APP, NotificationChannel.PUSH],
-          )
-          .catch((err) => {
-            this.logger.warn(
-              `Failed to notify user ${userId} of new pickup location: ${err instanceof Error ? err.message : String(err)}`,
-            );
-          }),
-      ),
-    );
-
-    await this.waitlistModel
-      .deleteMany({ userId: { $in: userIds.map((id) => new Types.ObjectId(id)) } })
-      .exec();
-  }
-
-  private haversineDistance(
-    lat1: number,
-    lng1: number,
-    lat2: number,
-    lng2: number,
-  ): number {
-    const R = 6371;
-    const dLat = ((lat2 - lat1) * Math.PI) / 180;
-    const dLng = ((lng2 - lng1) * Math.PI) / 180;
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos((lat1 * Math.PI) / 180) *
-        Math.cos((lat2 * Math.PI) / 180) *
-        Math.sin(dLng / 2) *
-        Math.sin(dLng / 2);
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   }
 
   /**

@@ -43,14 +43,6 @@ export class AddItemToCartDto {
   foodItemId: string;
 
   @ApiPropertyOptional({
-    description: 'Pickup location ID — used to apply location-specific price override',
-    example: '507f1f77bcf86cd799439099',
-  })
-  @IsMongoId()
-  @IsOptional()
-  pickupLocationId?: string;
-
-  @ApiPropertyOptional({
     description: 'Quantity to add (default: 1)',
     example: 1,
     minimum: 1,

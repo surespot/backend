@@ -7,15 +7,9 @@ import {
   PickupLocation,
   PickupLocationSchema,
 } from './schemas/pickup-location.schema';
-import {
-  PickupLocationWaitlist,
-  PickupLocationWaitlistSchema,
-} from './schemas/pickup-location-waitlist.schema';
 import { AuthModule } from '../auth/auth.module';
 import { MailModule } from '../mail/mail.module';
 import { SmsModule } from '../sms/sms.module';
-import { NotificationsModule } from '../notifications/notifications.module';
-import { SavedLocationsModule } from '../saved-locations/saved-locations.module';
 import { AdminUsersController } from './admin-users.controller';
 import { AdminOnboardingController } from './admin-onboarding.controller';
 import { AdminPickupLocationsController } from './admin-pickup-locations.controller';
@@ -24,13 +18,10 @@ import { AdminPickupLocationsController } from './admin-pickup-locations.control
   imports: [
     MongooseModule.forFeature([
       { name: PickupLocation.name, schema: PickupLocationSchema },
-      { name: PickupLocationWaitlist.name, schema: PickupLocationWaitlistSchema },
     ]),
     forwardRef(() => AuthModule),
     forwardRef(() => MailModule),
     SmsModule,
-    forwardRef(() => NotificationsModule),
-    SavedLocationsModule,
   ],
   controllers: [
     PickupLocationsController,
