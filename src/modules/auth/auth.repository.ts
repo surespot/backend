@@ -384,8 +384,8 @@ export class AuthRepository {
         : pickupLocationId;
     await this.userModel
       .updateMany(
-        { pickupLocationId: id, deletedAt: null },
-        { $unset: { pickupLocationId: '' } },
+        { pickupLocationId: id, role: UserRole.PICKUP_ADMIN, deletedAt: null },
+        { $unset: { pickupLocationId: '' }, $set: { role: UserRole.USER } },
       )
       .exec();
   }

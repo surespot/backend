@@ -6,6 +6,7 @@ import {
 import { CartRepository } from './cart.repository';
 import { FoodItemsRepository } from '../food-items/food-items.repository';
 import { PromotionsService } from '../promotions/promotions.service';
+import { AdminMenuRepository } from '../admin/admin-menu.repository';
 import { AddItemToCartDto } from './dto/add-item-to-cart.dto';
 import { CartDocument } from './schemas/cart.schema';
 import { CartItemDocument } from './schemas/cart-item.schema';
@@ -69,6 +70,7 @@ export class CartService {
     private readonly cartRepository: CartRepository,
     private readonly foodItemsRepository: FoodItemsRepository,
     private readonly promotionsService: PromotionsService,
+    private readonly adminMenuRepository: AdminMenuRepository,
   ) {}
 
   private formatPrice(price: number, currency: string = 'NGN'): string {
@@ -77,26 +79,45 @@ export class CartService {
     return `₦${amount.toLocaleString('en-NG')}`;
   }
 
-  private async formatCart(cart: CartDocument): Promise<CartResponse> {
+  private async formatCart(
+    cart: CartDocument,
+    pickupLocationId?: string,
+  ): Promise<CartResponse> {
     const cartItems = await this.cartRepository.findCartItemsByCartId(
       cart._id.toString(),
     );
 
     const items: CartItemResponse[] = await Promise.all(
-      cartItems.map(async (item) => this.formatCartItem(item)),
+      cartItems.map(async (item) => this.formatCartItem(item, pickupLocationId)),
     );
+
+    // When displaying with location pricing, recompute totals from adjusted item prices
+    let subtotal = cart.subtotal;
+    let extrasTotal = cart.extrasTotal;
+    let total = cart.total;
+    let discountAmount = cart.discountAmount;
+
+    if (pickupLocationId) {
+      subtotal = items.reduce((sum, item) => sum + item.subtotal, 0);
+      extrasTotal = items.reduce((sum, item) => sum + item.extrasTotal, 0);
+      const rawTotal = subtotal + extrasTotal;
+      discountAmount = cart.discountAmount > 0
+        ? Math.round((cart.discountAmount / (cart.subtotal + cart.extrasTotal || 1)) * rawTotal)
+        : 0;
+      total = Math.max(0, rawTotal - discountAmount);
+    }
 
     return {
       id: cart._id.toString(),
       userId: cart.userId.toString(),
       items,
-      subtotal: cart.subtotal,
-      extrasTotal: cart.extrasTotal,
-      discountAmount: cart.discountAmount,
+      subtotal,
+      extrasTotal,
+      discountAmount,
       discountPercent: cart.discountPercent,
       promoCode: cart.promoCode,
-      total: cart.total,
-      formattedTotal: this.formatPrice(cart.total),
+      total,
+      formattedTotal: this.formatPrice(total),
       itemCount: cart.itemCount,
       extrasCount: cart.extrasCount,
       createdAt: cart.createdAt?.toISOString(),
@@ -106,10 +127,28 @@ export class CartService {
 
   private async formatCartItem(
     item: CartItemDocument,
+    pickupLocationId?: string,
   ): Promise<CartItemResponse> {
     const extras = await this.cartRepository.findExtrasByCartItemId(
       item._id.toString(),
     );
+
+    let displayPrice = item.price;
+    if (pickupLocationId) {
+      const locationPrice = await this.adminMenuRepository.getLocationPrice(
+        pickupLocationId,
+        item.foodItemId.toString(),
+        'food',
+      );
+      if (locationPrice != null) displayPrice = locationPrice;
+    }
+
+    const extrasPerItem = extras.reduce(
+      (sum, e) => sum + e.price * e.quantity,
+      0,
+    );
+    const displaySubtotal = displayPrice * item.quantity;
+    const displayLineTotal = displaySubtotal + extrasPerItem * item.quantity;
 
     return {
       id: item._id.toString(),
@@ -117,15 +156,15 @@ export class CartService {
       name: item.name,
       description: item.description,
       slug: item.slug,
-      price: item.price,
-      formattedPrice: this.formatPrice(item.price, item.currency),
+      price: displayPrice,
+      formattedPrice: this.formatPrice(displayPrice, item.currency),
       currency: item.currency,
       imageUrl: item.imageUrl,
       quantity: item.quantity,
       extras: extras.map((extra) => this.formatCartExtra(extra)),
-      subtotal: item.subtotal,
+      subtotal: displaySubtotal,
       extrasTotal: item.extrasTotal,
-      lineTotal: item.lineTotal,
+      lineTotal: displayLineTotal,
       estimatedTime: item.estimatedTime,
       createdAt: item.createdAt?.toISOString(),
       updatedAt: item.updatedAt?.toISOString(),
@@ -149,7 +188,7 @@ export class CartService {
   /**
    * Get or create cart for a user
    */
-  async getCart(userId: string) {
+  async getCart(userId: string, pickupLocationId?: string) {
     let cart = await this.cartRepository.findCartByUserId(userId);
 
     if (!cart) {
@@ -162,7 +201,7 @@ export class CartService {
     return {
       success: true,
       message: 'Cart retrieved successfully',
-      data: await this.formatCart(cart),
+      data: await this.formatCart(cart, pickupLocationId),
     };
   }
 
@@ -272,16 +311,59 @@ export class CartService {
     const quantity = dto.quantity || 1;
 
     if (existingItem) {
-      // Update quantity of existing item
+      // Resolve effective price and update stored price if location override applies
+      let effectivePrice = existingItem.price;
+      if (dto.pickupLocationId) {
+        const locationPrice = await this.adminMenuRepository.getLocationPrice(
+          dto.pickupLocationId,
+          dto.foodItemId,
+          'food',
+        );
+        if (locationPrice != null) effectivePrice = locationPrice;
+      }
+
       const newQuantity = Math.min(existingItem.quantity + quantity, 99);
-      await this.updateItemQuantity(
-        userId,
-        existingItem._id.toString(),
-        newQuantity,
-      );
+
+      if (effectivePrice !== existingItem.price) {
+        // Price changed — recalculate extras per unit and update the item
+        const extras = await this.cartRepository.findExtrasByCartItemId(
+          existingItem._id.toString(),
+        );
+        const extrasPerItem = extras.reduce(
+          (sum, e) => sum + e.price * e.quantity,
+          0,
+        );
+        const subtotal = effectivePrice * newQuantity;
+        const extrasTotal = extrasPerItem * newQuantity;
+        const lineTotal = subtotal + extrasTotal;
+        await this.cartRepository.updateCartItem(existingItem._id.toString(), {
+          price: effectivePrice,
+          quantity: newQuantity,
+          subtotal,
+          extrasTotal,
+          lineTotal,
+        });
+      } else {
+        await this.updateItemQuantity(
+          userId,
+          existingItem._id.toString(),
+          newQuantity,
+        );
+      }
     } else {
+      // Resolve effective price: use location override if pickupLocationId provided
+      let effectivePrice = foodItem.price;
+      if (dto.pickupLocationId) {
+        const locationPrice = await this.adminMenuRepository.getLocationPrice(
+          dto.pickupLocationId,
+          dto.foodItemId,
+          'food',
+        );
+        if (locationPrice != null) effectivePrice = locationPrice;
+      }
+
       // Calculate item totals
-      const subtotal = foodItem.price * quantity;
+      const subtotal = effectivePrice * quantity;
       const extrasTotal =
         extrasData.reduce((sum, e) => sum + e.price * e.quantity, 0) * quantity;
       const lineTotal = subtotal + extrasTotal;
@@ -293,7 +375,7 @@ export class CartService {
         name: foodItem.name,
         description: foodItem.description,
         slug: foodItem.slug,
-        price: foodItem.price,
+        price: effectivePrice,
         currency: foodItem.currency,
         imageUrl: foodItem.imageUrl,
         quantity,
@@ -330,7 +412,7 @@ export class CartService {
     return {
       success: true,
       message: 'Item added to cart',
-      data: await this.formatCart(updatedCart!),
+      data: await this.formatCart(updatedCart!, dto.pickupLocationId),
     };
   }
 
