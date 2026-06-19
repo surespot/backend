@@ -11,7 +11,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
-import { FoodCategory } from '../schemas/food-item.schema';
+import { FoodCategory, PricingType } from '../schemas/food-item.schema';
 
 class EstimatedTimeDto {
   @ApiProperty({
@@ -238,4 +238,13 @@ export class CreateFoodItemDto {
   })
   @IsNumber()
   sortOrder?: number;
+
+  @ApiPropertyOptional({
+    description: 'Whether the item is priced per portion or per pack',
+    enum: PricingType,
+    default: PricingType.PER_PORTION,
+  })
+  @IsOptional()
+  @IsEnum(PricingType)
+  pricingType?: PricingType;
 }

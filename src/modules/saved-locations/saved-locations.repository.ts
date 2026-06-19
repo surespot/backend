@@ -193,4 +193,20 @@ export class SavedLocationsRepository {
       .deleteMany({ userId: new Types.ObjectId(userId) })
       .exec();
   }
+
+  async findDistinctUserIdsNearPoint(
+    longitude: number,
+    latitude: number,
+    maxDistanceMeters: number,
+  ): Promise<string[]> {
+    const radiusRadians = maxDistanceMeters / 6371000;
+    const userIds = await this.savedLocationModel.distinct('userId', {
+      location: {
+        $geoWithin: {
+          $centerSphere: [[longitude, latitude], radiusRadians],
+        },
+      },
+    });
+    return (userIds as Types.ObjectId[]).map((id) => id.toString());
+  }
 }

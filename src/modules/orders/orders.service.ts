@@ -48,6 +48,8 @@ import { ChatService } from '../chat/chat.service';
 import { AuthRepository } from '../auth/auth.repository';
 import { AdminMenuRepository } from '../admin/admin-menu.repository';
 import { ConfigService } from '@nestjs/config';
+import { SettingsService } from '../settings/settings.service';
+import { PricingType } from '../food-items/schemas/food-item.schema';
 
 export interface OrderExtraResponse {
   id: string;
@@ -167,6 +169,7 @@ export class OrdersService {
     private readonly adminMenuRepository: AdminMenuRepository | null,
     private readonly pickupLocationsRepository: PickupLocationsRepository,
     private readonly configService: ConfigService,
+    private readonly settingsService: SettingsService,
   ) {}
 
   private formatPrice(price: number, currency: string = 'NGN'): string {
@@ -324,6 +327,21 @@ export class OrdersService {
       hasPromoCode: Boolean(dto.promoCode),
     });
 
+    // Enforce order cutoff time (default 8PM WAT = UTC+1)
+    if (!this.isDemoUser(isDemo)) {
+      const settings = await this.settingsService.get();
+      const nowWAT = new Date(Date.now() + 60 * 60 * 1000); // WAT = UTC+1
+      if (nowWAT.getUTCHours() >= settings.orderCutoffHour) {
+        throw new BadRequestException({
+          success: false,
+          error: {
+            code: 'ORDER_CUTOFF_REACHED',
+            message: `Orders are not accepted after ${settings.orderCutoffHour}:00. Please order again tomorrow.`,
+          },
+        });
+      }
+    }
+
     // Get cart
     const cartData = await this.cartService.getCartForCheckout(userId);
     if (!cartData || cartData.items.length === 0) {
@@ -427,7 +445,7 @@ export class OrdersService {
         } catch {
           errors.push({
             field: 'deliveryAddress',
-            message: 'No pickup locations available near your address',
+            message: 'No open branches near your location, try again later',
           });
         }
       }
@@ -446,6 +464,12 @@ export class OrdersService {
             dto.pickupLocationId,
           );
           pickupLocation = location.data;
+          if (!pickupLocation.isActive) {
+            errors.push({
+              field: 'pickupLocationId',
+              message: 'This pickup location is currently closed',
+            });
+          }
         } catch {
           errors.push({
             field: 'pickupLocationId',
@@ -484,6 +508,40 @@ export class OrdersService {
       }
     }
 
+    // Apply location-specific food prices to subtotal
+    let adjustedSubtotal = cart.subtotal;
+    let locationFoodPrices: Map<string, number | null> | null = null;
+    if (this.adminMenuRepository && pickupLocation?.id) {
+      const foodInputs = items.map((item) => ({
+        itemId: item.foodItemId.toString(),
+        itemType: 'food' as const,
+      }));
+      locationFoodPrices = await this.adminMenuRepository.getLocationPriceBatch(
+        pickupLocation.id,
+        foodInputs,
+      );
+      adjustedSubtotal = items.reduce((sum, item) => {
+        const locPrice = locationFoodPrices!.get(item.foodItemId.toString());
+        return sum + (locPrice ?? item.price) * item.quantity;
+      }, 0);
+    }
+
+    // Calculate packaging fee:
+    // - per_portion items: 1 fee per unique food item (regardless of quantity)
+    // - per_pack items: 1 fee per unit ordered
+    let packagingFee = 0;
+    if (!this.isDemoUser(isDemo)) {
+      const itemIds = items.map((item) => item.foodItemId.toString());
+      const pricingTypes = await this.foodItemsRepository.findPricingTypesByIds(itemIds);
+      let packCount = 0;
+      for (const item of items) {
+        const type = pricingTypes.get(item.foodItemId.toString()) ?? PricingType.PER_PORTION;
+        packCount += type === PricingType.PER_PACK ? item.quantity : 1;
+      }
+      const settings = await this.settingsService.get();
+      packagingFee = packCount * settings.packagingFeeKobo;
+    }
+
     // Calculate delivery fee
     const deliveryFee =
       dto.deliveryType === DeliveryType.DOOR_DELIVERY
@@ -497,13 +555,17 @@ export class OrdersService {
     let promoCode = cart.promoCode;
 
     if (codeToValidate) {
-      const cartTotal = cart.subtotal + cart.extrasTotal;
-      const cartItemsForPromo = items.map((item) => ({
-        foodItemId: item.foodItemId.toString(),
-        quantity: item.quantity,
-        price: item.price,
-        lineTotal: item.lineTotal,
-      }));
+      const cartTotal = adjustedSubtotal + cart.extrasTotal;
+      const cartItemsForPromo = items.map((item) => {
+        const locPrice = locationFoodPrices?.get(item.foodItemId.toString());
+        const effectivePrice = locPrice ?? item.price;
+        return {
+          foodItemId: item.foodItemId.toString(),
+          quantity: item.quantity,
+          price: effectivePrice,
+          lineTotal: effectivePrice * item.quantity,
+        };
+      });
       const validation = await this.promotionsService.validateDiscountCode(
         codeToValidate,
         {
@@ -525,11 +587,11 @@ export class OrdersService {
     }
 
     // Calculate totals
-    const subtotal = cart.subtotal;
+    const subtotal = adjustedSubtotal;
     const extrasTotal = cart.extrasTotal;
     const total = Math.max(
       0,
-      subtotal + extrasTotal + deliveryFee - discountAmount,
+      subtotal + extrasTotal + deliveryFee + packagingFee - discountAmount,
     );
 
     const ridingMinutes = this.isDemoUser(isDemo)
@@ -563,6 +625,7 @@ export class OrdersService {
         cart: {
           subtotal,
           extrasTotal,
+          packagingFee,
           discountAmount,
           discountPercent,
           promoCode,
@@ -704,6 +767,20 @@ export class OrdersService {
         }
       }
 
+      // Fetch location-specific prices for order items so stored prices reflect what was paid
+      let orderItemLocationPrices: Map<string, number | null> | null = null;
+      if (this.adminMenuRepository && pickupLocationId) {
+        const foodInputs = items.map((item) => ({
+          itemId: item.foodItemId.toString(),
+          itemType: 'food' as const,
+        }));
+        orderItemLocationPrices =
+          await this.adminMenuRepository.getLocationPriceBatch(
+            pickupLocationId,
+            foodInputs,
+          );
+      }
+
       // Atomically create order, items, extras, and delivery status
       const session = await this.ordersRepository.startSession();
       try {
@@ -716,6 +793,7 @@ export class OrdersService {
               subtotal: validation.data.cart.subtotal,
               extrasTotal: validation.data.cart.extrasTotal,
               deliveryFee: validation.data.deliveryFee,
+              packagingFee: validation.data.cart.packagingFee,
               discountAmount: validation.data.cart.discountAmount,
               discountPercent: validation.data.cart.discountPercent,
               promoCode: validation.data.cart.promoCode,
@@ -742,7 +820,10 @@ export class OrdersService {
             const extrasTotal =
               itemExtras.reduce((sum, e) => sum + e.price * e.quantity, 0) *
               item.quantity;
-            const lineTotal = item.price * item.quantity + extrasTotal;
+            const effectivePrice =
+              orderItemLocationPrices?.get(item.foodItemId.toString()) ??
+              item.price;
+            const lineTotal = effectivePrice * item.quantity + extrasTotal;
 
             const orderItem = await this.ordersRepository.createOrderItem(
               {
@@ -751,7 +832,7 @@ export class OrdersService {
                 name: item.name,
                 description: item.description,
                 slug: item.slug,
-                price: item.price,
+                price: effectivePrice,
                 currency: item.currency,
                 imageUrl: item.imageUrl,
                 quantity: item.quantity,

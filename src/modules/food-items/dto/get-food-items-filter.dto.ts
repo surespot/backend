@@ -161,4 +161,12 @@ export class GetFoodItemsFilterDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  @ApiPropertyOptional({
+    description: 'Pickup location ID to scope prices and stock availability',
+    example: '507f1f77bcf86cd799439011',
+  })
+  @IsOptional()
+  @IsString()
+  pickupLocationId?: string;
 }

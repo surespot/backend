@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { PricingType } from '../../food-items/schemas/food-item.schema';
 
 export class MenuItemResponseDto {
   @ApiProperty()
@@ -7,8 +8,11 @@ export class MenuItemResponseDto {
   @ApiProperty()
   name: string;
 
-  @ApiProperty({ description: 'Price in kobo' })
+  @ApiProperty({ description: 'Global base price in kobo' })
   price: number;
+
+  @ApiPropertyOptional({ description: 'Location-specific price override in kobo; use this when present' })
+  locationPrice?: number;
 
   @ApiProperty()
   description: string;
@@ -36,6 +40,9 @@ export class MenuItemResponseDto {
 
   @ApiPropertyOptional({ description: 'Quantity or notes (extra only)' })
   quantity?: string;
+
+  @ApiPropertyOptional({ enum: PricingType, description: 'per_portion or per_pack (food only)' })
+  pricingType?: PricingType;
 
   @ApiPropertyOptional()
   reviews?: { averageRating?: number; ratingCount?: number };

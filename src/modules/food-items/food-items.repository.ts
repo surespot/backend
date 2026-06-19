@@ -7,6 +7,7 @@ import {
   FoodItem,
   FoodItemDocument,
   FoodCategory,
+  PricingType,
 } from './schemas/food-item.schema';
 import { FoodExtra, FoodExtraDocument } from './schemas/food-extra.schema';
 import {
@@ -447,6 +448,27 @@ export class FoodItemsRepository {
     return counts;
   }
 
+  async findPricingTypesByIds(
+    ids: string[],
+  ): Promise<Map<string, PricingType>> {
+    const objectIds = ids
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+    const items = await this.foodItemModel
+      .find({ _id: { $in: objectIds } })
+      .select('_id pricingType')
+      .lean()
+      .exec();
+    const map = new Map<string, PricingType>();
+    for (const item of items) {
+      map.set(
+        (item._id as Types.ObjectId).toString(),
+        (item.pricingType as PricingType) ?? PricingType.PER_PORTION,
+      );
+    }
+    return map;
+  }
+
   async findExtrasByIds(ids: Types.ObjectId[]): Promise<FoodExtraDocument[]> {
     return this.foodExtraModel
       .find({
@@ -474,6 +496,7 @@ export class FoodItemsRepository {
     extras?: Types.ObjectId[];
     isPopular?: boolean;
     sortOrder?: number;
+    pricingType?: PricingType;
   }): Promise<FoodItemDocument> {
     const foodItem = new this.foodItemModel({
       ...data,
