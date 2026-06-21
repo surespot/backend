@@ -259,9 +259,12 @@ export class OrdersService {
    */
   private async generateOrderNumber(): Promise<string> {
     const year = new Date().getFullYear();
-    const count = await this.ordersRepository.countOrdersForYear(year);
-    const sequence = String(count + 1).padStart(6, '0');
-    return `ORD-${year}-${sequence}`;
+    let orderNumber: string;
+    do {
+      const digits = String(Math.floor(Math.random() * 1_000_000)).padStart(6, '0');
+      orderNumber = `ORD-${year}-${digits}`;
+    } while (await this.ordersRepository.orderNumberExists(orderNumber));
+    return orderNumber;
   }
 
   private isDemoUser(isDemo: boolean): boolean {
@@ -2638,6 +2641,57 @@ export class OrdersService {
   }
 
   /**
+   * Fire all rider-assigned notifications (customer SMS/in-app, admin WS, pickup location admins).
+   * Called by both the rider self-serve acceptOrder flow and the admin assign-rider action.
+   */
+  async notifyRiderAssigned(order: OrderDocument, riderProfileId: string, riderName: string): Promise<void> {
+    await this.notificationsService.queueNotification(
+      order.userId.toString(),
+      NotificationType.ORDER_OUT_FOR_DELIVERY,
+      'Rider Assigned',
+      `${riderName} is on the way to pick up your order ${order.orderNumber}.`,
+      {
+        orderId: order._id.toString(),
+        orderNumber: order.orderNumber,
+        riderName,
+        riderProfileId,
+      },
+      [NotificationChannel.IN_APP, NotificationChannel.SMS],
+    );
+
+    const pickupLocationIdStr = this.getPickupLocationIdString(order.pickupLocationId);
+    if (pickupLocationIdStr) {
+      if (this.adminGateway?.emitRiderAssigned) {
+        await this.adminGateway.emitRiderAssigned(pickupLocationIdStr, {
+          orderId: order._id.toString(),
+          orderNumber: order.orderNumber,
+          riderName,
+        });
+      }
+
+      await this.notificationsGateway.emitRiderAssignedToPickupLocation(
+        pickupLocationIdStr,
+        order.orderNumber,
+        order._id.toString(),
+        { riderName, orderNumber: order.orderNumber },
+      );
+
+      this.notificationsService
+        .notifyPickupLocationAdminsRiderAssigned(
+          pickupLocationIdStr,
+          order.orderNumber,
+          order._id.toString(),
+          riderName,
+        )
+        .catch((err) => {
+          this.logger.warn(
+            `Failed to notify pickup location admins of rider assignment for order ${order.orderNumber}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+    }
+  }
+
+  /**
    * Accept an order (Rider only)
    * Atomically assigns a rider to an order, preventing race conditions
    */
@@ -2743,70 +2797,9 @@ export class OrdersService {
     }
 
     // At this point, order is guaranteed to be non-null
-    // Get formatted order
     const formattedOrder = await this.formatOrder(order);
 
-    // Notify customer that rider is on the way (using normal notification flow)
-    const riderName =
-      `${riderProfile.firstName || ''} ${riderProfile.lastName || ''}`.trim() ||
-      'A rider';
-    await this.notificationsService.queueNotification(
-      order.userId.toString(),
-      NotificationType.ORDER_OUT_FOR_DELIVERY,
-      'Rider Assigned',
-      `${riderName} is on the way to pick up your order ${order.orderNumber}.`,
-      {
-        orderId: order._id.toString(),
-        orderNumber: order.orderNumber,
-        riderName,
-        riderProfileId: riderProfile._id.toString(),
-      },
-      [NotificationChannel.IN_APP, NotificationChannel.SMS],
-    );
-
-    // Notify pickup location that rider is on the way
-    const pickupLocationIdStrForRider = this.getPickupLocationIdString(
-      order.pickupLocationId,
-    );
-    if (pickupLocationIdStrForRider) {
-      // Emit to admin dashboard via /admin namespace
-      if (this.adminGateway && this.adminGateway.emitRiderAssigned) {
-        await this.adminGateway.emitRiderAssigned(pickupLocationIdStrForRider, {
-          orderId: order._id.toString(),
-          orderNumber: order.orderNumber,
-          riderName,
-        });
-      }
-
-      // Keep backward compatibility for old notification system
-      await this.notificationsGateway.emitRiderAssignedToPickupLocation(
-        pickupLocationIdStrForRider,
-        order.orderNumber,
-        order._id.toString(),
-        {
-          riderName:
-            `${riderProfile.firstName || ''} ${riderProfile.lastName || ''}`.trim() ||
-            'A rider',
-          orderNumber: order.orderNumber,
-        },
-      );
-    }
-
-    // Notify pickup location's admins that a rider was assigned
-    if (pickupLocationIdStrForRider) {
-      this.notificationsService
-        .notifyPickupLocationAdminsRiderAssigned(
-          pickupLocationIdStrForRider,
-          order.orderNumber,
-          order._id.toString(),
-          riderName,
-        )
-        .catch((err) => {
-          this.logger.warn(
-            `Failed to notify pickup location admins of rider assignment for order ${order.orderNumber}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        });
-    }
+    await this.notifyRiderAssigned(order, riderProfile._id.toString(), `${riderProfile.firstName || ''} ${riderProfile.lastName || ''}`.trim() || 'A rider');
 
     return {
       success: true,
@@ -3249,8 +3242,8 @@ export class OrdersService {
         });
     }
 
-    // Re-notify nearby riders so the order appears as available again
-    this.findAndNotifyNearbyRiders(updatedOrder).catch((err) => {
+    // Re-notify nearby riders so the order appears as available again (skip demo orders)
+    if (updatedOrder.paymentMethod !== 'demo') this.findAndNotifyNearbyRiders(updatedOrder).catch((err) => {
       this.logger.warn(
         `Failed to re-notify nearby riders after order drop ${order.orderNumber}: ${err instanceof Error ? err.message : String(err)}`,
       );

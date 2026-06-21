@@ -276,6 +276,7 @@ export class OrdersRepository {
       status,
       deliveryType: DeliveryType.DOOR_DELIVERY, // Only door delivery orders
       paymentStatus: PaymentStatus.PAID, // Only paid orders
+      paymentMethod: { $ne: 'demo' }, // Exclude demo orders
       pickupLocationId: { $exists: true, $ne: null },
       $or: [{ assignedRiderId: { $exists: false } }, { assignedRiderId: null }], // Only unassigned orders
     };
@@ -410,7 +411,7 @@ export class OrdersRepository {
     this.validateObjectId(riderProfileId, 'riderProfileId');
     this.validateObjectId(userId, 'userId');
 
-    // Atomic update: only assign if order is READY, not already assigned, and is DOOR_DELIVERY
+    // Atomic update: only assign if order is READY, not already assigned, DOOR_DELIVERY, and not a demo order
     const updatedOrder = await this.orderModel
       .findOneAndUpdate(
         {
@@ -421,6 +422,7 @@ export class OrdersRepository {
             { assignedRiderId: null },
           ], // Not already assigned
           deliveryType: DeliveryType.DOOR_DELIVERY,
+          paymentMethod: { $ne: 'demo' },
         },
         {
           $set: {
@@ -660,15 +662,9 @@ export class OrdersRepository {
     }));
   }
 
-  async countOrdersForYear(year: number): Promise<number> {
-    const startOfYear = new Date(year, 0, 1);
-    const endOfYear = new Date(year + 1, 0, 1);
-
-    return this.orderModel
-      .countDocuments({
-        createdAt: { $gte: startOfYear, $lt: endOfYear },
-      })
-      .exec();
+  async orderNumberExists(orderNumber: string): Promise<boolean> {
+    const count = await this.orderModel.countDocuments({ orderNumber }).exec();
+    return count > 0;
   }
 
   // ============ Order Item Operations ============
