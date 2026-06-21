@@ -19,6 +19,7 @@ import { AdminOrdersService } from './admin-orders.service';
 import { AdminGetOrdersDto } from './dto/admin-get-orders.dto';
 import { AdminUpdateOrderStatusDto } from './dto/admin-update-order-status.dto';
 import { AdminRedirectOrderDto } from './dto/admin-redirect-order.dto';
+import { AdminAssignRiderDto } from './dto/admin-assign-rider.dto';
 
 type CurrentUserType = {
   id: string;
@@ -232,6 +233,41 @@ export class AdminOrdersController {
       user.pickupLocationId,
       orderId,
       dto,
+      user.id,
+    );
+  }
+
+  @Get(':orderId/eligible-riders')
+  @ApiOperation({ summary: 'List active riders eligible to be assigned to an order' })
+  @ApiResponse({ status: 200, description: 'Eligible riders retrieved successfully' })
+  @ApiResponse({ status: 404, description: 'Order not found' })
+  async getEligibleRiders(
+    @Param('orderId') orderId: string,
+    @CurrentUser() user: CurrentUserType,
+  ) {
+    const pickupLocationId =
+      user.role === UserRole.ADMIN ? null : user.pickupLocationId ?? null;
+
+    return this.adminOrdersService.getEligibleRidersForOrder(pickupLocationId, orderId);
+  }
+
+  @Patch(':orderId/assign-rider')
+  @ApiOperation({ summary: 'Assign a rider to a READY order (admin action)' })
+  @ApiResponse({ status: 200, description: 'Rider assigned successfully' })
+  @ApiResponse({ status: 400, description: 'Order not READY, already assigned, or rider inactive' })
+  @ApiResponse({ status: 404, description: 'Order or rider not found' })
+  async assignRider(
+    @Param('orderId') orderId: string,
+    @Body() dto: AdminAssignRiderDto,
+    @CurrentUser() user: CurrentUserType,
+  ) {
+    const pickupLocationId =
+      user.role === UserRole.ADMIN ? null : user.pickupLocationId ?? null;
+
+    return this.adminOrdersService.assignRider(
+      pickupLocationId,
+      orderId,
+      dto.riderProfileId,
       user.id,
     );
   }

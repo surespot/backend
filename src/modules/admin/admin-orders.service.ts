@@ -28,6 +28,7 @@ import {
   AdminOrderStatus,
 } from './dto/admin-update-order-status.dto';
 import { AdminRedirectOrderDto } from './dto/admin-redirect-order.dto';
+import { RiderStatus } from '../riders/schemas/rider-profile.schema';
 
 @Injectable()
 export class AdminOrdersService {
@@ -617,6 +618,139 @@ export class AdminOrdersService {
       message: 'Order redirected successfully',
       data: orderDetails,
     };
+  }
+
+  /**
+   * List ACTIVE non-demo riders in the same region as the order's pickup location.
+   * Used to populate the assign-rider dropdown in the admin dashboard.
+   */
+  async getEligibleRidersForOrder(pickupLocationId: string | null, orderId: string) {
+    const order = await this.ordersRepository.findById(orderId);
+
+    if (
+      !order ||
+      (pickupLocationId && !this.orderBelongsToPickupLocation(order, pickupLocationId))
+    ) {
+      throw new NotFoundException({
+        success: false,
+        error: { code: 'ORDER_NOT_FOUND', message: 'Order not found' },
+      });
+    }
+
+    const pl: any = order.pickupLocationId;
+    const pickupDoc = pl?._id
+      ? pl
+      : await this.pickupLocationsRepository.findById(
+          (pl as Types.ObjectId).toString(),
+        );
+
+    if (!pickupDoc) {
+      throw new NotFoundException({
+        success: false,
+        error: { code: 'PICKUP_LOCATION_NOT_FOUND', message: 'Pickup location not found' },
+      });
+    }
+
+    const regionId = pickupDoc.regionId.toString();
+
+    const { profiles } = await this.ridersRepository.findProfiles(
+      { status: RiderStatus.ACTIVE, regionId },
+      { page: 1, limit: 100 },
+    );
+
+    const eligibleRiders = profiles
+      .filter((r) => !r.isDemo)
+      .map((r) => ({
+        id: r._id.toString(),
+        name: `${r.firstName ?? ''} ${r.lastName ?? ''}`.trim() || 'Unnamed Rider',
+        phone: r.phone ?? '',
+      }));
+
+    return { success: true, data: { riders: eligibleRiders } };
+  }
+
+  /**
+   * Assign a specific rider to an order (admin action).
+   * Order must be READY, door-delivery, and currently unassigned.
+   */
+  async assignRider(
+    pickupLocationId: string | null,
+    orderId: string,
+    riderProfileId: string,
+    adminId: string,
+  ) {
+    const order = await this.ordersRepository.findById(orderId);
+
+    if (
+      !order ||
+      (pickupLocationId && !this.orderBelongsToPickupLocation(order, pickupLocationId))
+    ) {
+      throw new NotFoundException({
+        success: false,
+        error: { code: 'ORDER_NOT_FOUND', message: 'Order not found' },
+      });
+    }
+
+    if (order.status !== OrderStatus.READY) {
+      throw new BadRequestException({
+        success: false,
+        error: { code: 'ORDER_NOT_READY', message: 'Only READY orders can be assigned to a rider' },
+      });
+    }
+
+    if (order.assignedRiderId) {
+      throw new BadRequestException({
+        success: false,
+        error: { code: 'ORDER_ALREADY_ASSIGNED', message: 'Order is already assigned to a rider' },
+      });
+    }
+
+    if (order.deliveryType !== DeliveryType.DOOR_DELIVERY) {
+      throw new BadRequestException({
+        success: false,
+        error: { code: 'INVALID_ORDER_TYPE', message: 'Only door-delivery orders can be assigned to a rider' },
+      });
+    }
+
+    const riderProfile = await this.ridersRepository.findById(riderProfileId);
+    if (!riderProfile || riderProfile.isDemo) {
+      throw new NotFoundException({
+        success: false,
+        error: { code: 'RIDER_NOT_FOUND', message: 'Rider not found' },
+      });
+    }
+
+    if (riderProfile.status !== RiderStatus.ACTIVE) {
+      throw new BadRequestException({
+        success: false,
+        error: { code: 'RIDER_NOT_ACTIVE', message: 'Rider is not active' },
+      });
+    }
+
+    const updatedOrder = await this.ordersRepository.assignRiderToOrder(
+      orderId,
+      riderProfileId,
+      adminId,
+    );
+
+    if (!updatedOrder) {
+      throw new BadRequestException({
+        success: false,
+        error: { code: 'ASSIGNMENT_FAILED', message: 'Failed to assign rider — order may have been taken' },
+      });
+    }
+
+    const riderName =
+      `${riderProfile.firstName ?? ''} ${riderProfile.lastName ?? ''}`.trim() || 'A rider';
+
+    await this.ordersService.notifyRiderAssigned(
+      updatedOrder,
+      riderProfile._id.toString(),
+      riderName,
+    );
+
+    const orderDetails = await this.formatOrderDetails(updatedOrder);
+    return { success: true, message: 'Rider assigned successfully', data: orderDetails };
   }
 
   async getOrderHistory(pickupLocationId: string | null, orderId: string) {
