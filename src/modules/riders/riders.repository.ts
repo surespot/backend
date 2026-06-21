@@ -203,7 +203,7 @@ export class RidersRepository {
     const { page = 1, limit = 20 } = pagination;
     const skip = (page - 1) * limit;
 
-    const query: Record<string, unknown> = {};
+    const query: Record<string, unknown> = { anonymizedAt: null };
 
     if (filters.status) {
       query.status = filters.status;
