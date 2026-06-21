@@ -289,6 +289,25 @@ export class RidersController {
     return this.ridersService.suspendRider(id);
   }
 
+  @Post('profiles/:id/anonymize')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Anonymize rider completely (Admin only)',
+    description:
+      'Irreversibly wipes all rider PII, zeroes wallet balance, removes payment details, deletes location, and revokes all active sessions. The rider may register a fresh account afterwards.',
+  })
+  @ApiParam({ name: 'id', description: 'Rider profile ID' })
+  @ApiResponse({ status: 200, description: 'Rider anonymized successfully' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Admin access required' })
+  @ApiResponse({ status: 404, description: 'Rider profile not found' })
+  async anonymize(@Param('id') id: string) {
+    return this.ridersService.anonymizeRiderCompletely(id);
+  }
+
   @Post('profiles/:id/resend-code')
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard, RolesGuard)

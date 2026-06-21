@@ -69,6 +69,9 @@ export class RiderProfile {
   @Prop({ default: false })
   isDemo: boolean;
 
+  @Prop({ type: Date })
+  anonymizedAt?: Date;
+
   @Prop({ type: Number, default: 0 })
   totalDistanceToday: number; // in meters
 
