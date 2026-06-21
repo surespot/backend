@@ -29,6 +29,7 @@ import { RegionsModule } from '../regions/regions.module';
 import { OrdersModule } from '../orders/orders.module';
 import { TransactionsModule } from '../transactions/transactions.module';
 import { PickupLocationsModule } from '../pickup-locations/pickup-locations.module';
+import { WalletsModule } from '../wallets/wallets.module';
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { PickupLocationsModule } from '../pickup-locations/pickup-locations.modu
     forwardRef(() => OrdersModule),
     TransactionsModule,
     PickupLocationsModule,
+    forwardRef(() => WalletsModule),
   ],
   controllers: [RidersController, RiderLocationController],
   providers: [

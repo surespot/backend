@@ -36,6 +36,8 @@ import {
 import { UserRole } from '../auth/schemas/user.schema';
 import { OrdersRepository } from '../orders/orders.repository';
 import { TransactionsRepository } from '../transactions/transactions.repository';
+import { WalletsRepository } from '../wallets/wallets.repository';
+import { RiderLocationRepository } from './rider-location.repository';
 import { encryptNin, decryptNin } from '../../common/security/encryption.util';
 
 @Injectable()
@@ -51,6 +53,8 @@ export class RidersService {
     @Inject(STORAGE_SERVICE) private readonly storageService: IStorageService,
     private readonly ordersRepository: OrdersRepository,
     private readonly transactionsRepository: TransactionsRepository,
+    private readonly walletsRepository: WalletsRepository,
+    private readonly riderLocationRepository: RiderLocationRepository,
   ) {}
 
   // ============ ADMIN METHODS ============
@@ -428,6 +432,15 @@ export class RidersService {
 
     const updated = await this.ridersRepository.updateProfile(id, updates);
 
+    // Sync phone/email changes to the associated User document
+    if (profile.userId && (dto.phone !== undefined || dto.firstName !== undefined || dto.lastName !== undefined)) {
+      const userUpdates: Partial<{ phone: string; firstName: string; lastName: string }> = {};
+      if (dto.phone !== undefined) userUpdates.phone = dto.phone;
+      if (dto.firstName !== undefined) userUpdates.firstName = dto.firstName;
+      if (dto.lastName !== undefined) userUpdates.lastName = dto.lastName;
+      await this.authRepository.updateUser(profile.userId.toString(), userUpdates);
+    }
+
     this.logger.log(`Rider ${id} profile updated by admin`);
 
     return {
@@ -447,6 +460,52 @@ export class RidersService {
     return {
       ...result,
       message: 'Rider suspended successfully',
+    };
+  }
+
+  /**
+   * Completely anonymize a rider (Admin only). Irreversible.
+   * Wipes all PII, zeroes wallet, deletes location, revokes all sessions.
+   * The rider may create a new account afterwards.
+   */
+  async anonymizeRiderCompletely(id: string) {
+    const profile = await this.ridersRepository.findById(id);
+    if (!profile) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'RIDER_PROFILE_NOT_FOUND',
+          message: 'Rider profile not found',
+        },
+      });
+    }
+
+    const profileId = profile._id.toString();
+    const userId = profile.userId;
+
+    await Promise.all([
+      // Wipe RiderProfile PII + suspend
+      this.ridersRepository.anonymizeProfileById(profileId),
+      // Wipe all documentation fields
+      this.ridersRepository.wipeDocumentationByProfileId(profileId),
+      // Zero wallet balance + wipe payment details
+      this.walletsRepository.anonymizeWallet(profileId),
+      // Delete geolocation record
+      this.riderLocationRepository.delete(profileId),
+      // Revoke all refresh tokens so existing sessions die immediately
+      ...(userId ? [this.authRepository.revokeAllUserTokens(userId)] : []),
+    ]);
+
+    // Wipe + deactivate User record (done after token revocation to avoid login race)
+    if (userId) {
+      await this.authRepository.anonymizeUser(userId);
+    }
+
+    this.logger.log(`Rider ${id} fully anonymized by admin`);
+
+    return {
+      success: true,
+      message: 'Rider anonymized successfully',
     };
   }
 
@@ -659,6 +718,7 @@ export class RidersService {
         isRider: boolean;
         email?: string;
         isEmailVerified?: boolean;
+        phone?: string;
       } = {
         firstName: profile.firstName,
         lastName: profile.lastName,
@@ -667,10 +727,13 @@ export class RidersService {
         isRider: true,
       };
 
-      // Sync email from rider profile if available
+      // Sync email and phone from rider profile if available
       if (profile.email) {
         userUpdates.email = profile.email;
-        userUpdates.isEmailVerified = true; // Email from rider profile is considered verified
+        userUpdates.isEmailVerified = true;
+      }
+      if (profile.phone) {
+        userUpdates.phone = profile.phone;
       }
 
       await this.authRepository.updateUser(userId, userUpdates);

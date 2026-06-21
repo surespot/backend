@@ -122,6 +122,54 @@ export class RidersRepository {
       .exec();
   }
 
+  async anonymizeProfileById(
+    id: string | Types.ObjectId,
+  ): Promise<RiderProfileDocument | null> {
+    const profileId =
+      typeof id === 'string' ? new Types.ObjectId(id) : id;
+    return this.riderProfileModel
+      .findByIdAndUpdate(
+        profileId,
+        {
+          $set: {
+            firstName: null,
+            lastName: null,
+            phone: null,
+            email: null,
+            dateOfBirth: null,
+            address: null,
+            nin: null,
+            status: RiderStatus.SUSPENDED,
+            anonymizedAt: new Date(),
+          },
+        },
+        { new: true },
+      )
+      .exec();
+  }
+
+  async wipeDocumentationByProfileId(
+    id: string | Types.ObjectId,
+  ): Promise<void> {
+    const profileId =
+      typeof id === 'string' ? new Types.ObjectId(id) : id;
+    await this.riderDocumentationModel
+      .findOneAndUpdate(
+        { riderProfileId: profileId },
+        {
+          $set: {
+            governmentId: null,
+            proofOfAddress: null,
+            passportPhotograph: null,
+            bankAccountDetails: null,
+            vehicleDocumentation: null,
+            emergencyContact: null,
+          },
+        },
+      )
+      .exec();
+  }
+
   async updateProfile(
     id: string | Types.ObjectId,
     updates: Partial<RiderProfile>,

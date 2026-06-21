@@ -186,4 +186,24 @@ export class WalletsRepository {
   async findAll(limit: number = 100): Promise<RiderWalletDocument[]> {
     return this.walletModel.find().limit(limit).exec();
   }
+
+  async anonymizeWallet(riderProfileId: string): Promise<void> {
+    this.validateObjectId(riderProfileId, 'riderProfileId');
+    await this.walletModel
+      .findOneAndUpdate(
+        { riderProfileId: new Types.ObjectId(riderProfileId) },
+        {
+          $set: {
+            walletBalance: 0,
+            paystackRecipientCode: null,
+            accountNumber: null,
+            bankCode: null,
+            bankName: null,
+            accountName: null,
+            isVerified: false,
+          },
+        },
+      )
+      .exec();
+  }
 }
