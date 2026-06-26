@@ -1,11 +1,13 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { BullModule } from '@nestjs/bullmq';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { OrdersController, CheckoutController } from './orders.controller';
 import { OrdersService } from './orders.service';
 import { OrdersRepository } from './orders.repository';
 import { OrdersGateway } from './orders.gateway';
+import { OrdersRiderSearchProcessor } from './orders-rider-search.processor';
 import { Order, OrderSchema } from './schemas/order.schema';
 import { OrderItem, OrderItemSchema } from './schemas/order-item.schema';
 import { OrderExtra, OrderExtraSchema } from './schemas/order-extra.schema';
@@ -41,6 +43,7 @@ import { SettingsModule } from '../settings/settings.module';
         secret: configService.get<string>('JWT_SECRET') ?? 'default-secret-key',
       }),
     }),
+    BullModule.registerQueue({ name: 'rider-search' }),
     forwardRef(() => AuthModule),
     forwardRef(() => CartModule),
     PickupLocationsModule,
@@ -60,6 +63,7 @@ import { SettingsModule } from '../settings/settings.module';
     OrdersService,
     OrdersRepository,
     OrdersGateway,
+    OrdersRiderSearchProcessor,
     {
       provide: 'AdminGateway',
       useFactory: (adminModule: any) => {
