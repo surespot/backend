@@ -496,6 +496,7 @@ export class PickupLocationsService implements OnModuleInit {
 
   async findNearest(dto: FindNearestPickupLocationDto) {
     const MAX_DISTANCE_METERS = 10000;
+    const DOOR_DELIVERY_MAX_KM = 5;
     const pickupLocation = await this.pickupLocationsRepository.findNearest(
       dto.latitude,
       dto.longitude,
@@ -512,10 +513,23 @@ export class PickupLocationsService implements OnModuleInit {
       });
     }
 
+    const locationLat = pickupLocation.location.coordinates[1];
+    const locationLng = pickupLocation.location.coordinates[0];
+    const distanceKm = this.haversineDistance(
+      dto.latitude,
+      dto.longitude,
+      locationLat,
+      locationLng,
+    );
+
     return {
       success: true,
       message: 'Nearest pickup location retrieved successfully',
-      data: this.formatPickupLocation(pickupLocation),
+      data: {
+        ...this.formatPickupLocation(pickupLocation),
+        distanceKm,
+        isDoorDeliveryAvailable: distanceKm <= DOOR_DELIVERY_MAX_KM,
+      },
     };
   }
 

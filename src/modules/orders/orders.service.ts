@@ -448,6 +448,13 @@ export class OrdersService {
             nearest.data.latitude,
             nearest.data.longitude,
           );
+          if (distanceKm > 5) {
+            errors.push({
+              field: 'deliveryType',
+              message:
+                'Door delivery is not available for your location. Please select pickup.',
+            });
+          }
         } catch {
           errors.push({
             field: 'deliveryAddress',
