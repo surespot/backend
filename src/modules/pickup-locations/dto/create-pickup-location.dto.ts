@@ -99,11 +99,9 @@ export class CreatePickupLocationDto {
 
   @ApiProperty({
     example: '+2349012345678',
-    description:
-      'Optional phone number for the pickup location admin (for contact only)',
-    required: false,
+    description: 'Phone number for the pickup location admin',
   })
   @IsString()
-  @IsOptional()
-  adminPhone?: string;
+  @IsNotEmpty()
+  adminPhone: string;
 }
