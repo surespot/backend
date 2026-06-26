@@ -540,7 +540,7 @@ export class OrdersService {
     }
 
     // Calculate packaging fee:
-    // - per_portion items: 1 fee per unique food item (regardless of quantity)
+    // - per_portion items: 1 pack per 3 portions (ceil), e.g. 7 portions = 3 packs
     // - per_pack items: 1 fee per unit ordered
     let packagingFee = 0;
     if (!this.isDemoUser(isDemo)) {
@@ -549,7 +549,10 @@ export class OrdersService {
       let packCount = 0;
       for (const item of items) {
         const type = pricingTypes.get(item.foodItemId.toString()) ?? PricingType.PER_PORTION;
-        packCount += type === PricingType.PER_PACK ? item.quantity : 1;
+        packCount +=
+          type === PricingType.PER_PACK
+            ? item.quantity
+            : Math.ceil(item.quantity / 3);
       }
       const settings = await this.settingsService.get();
       packagingFee = packCount * settings.packagingFeeKobo;
