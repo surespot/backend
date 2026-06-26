@@ -2338,8 +2338,8 @@ export class OrdersService {
       // Get rider profile IDs
       const riderProfileIds = profiles.map((p) => p._id);
 
-      // Find riders within 20KM of both pickup location and delivery address
-      const MAX_DISTANCE_METERS = 20000; // 20KM
+      // Find riders within 10KM of both pickup location and delivery address
+      const MAX_DISTANCE_METERS = 10000; // 10KM
 
       const nearbyRiders =
         await this.riderLocationRepository.findNearbyMultiplePoints(
@@ -2567,8 +2567,8 @@ export class OrdersService {
       },
     );
 
-    // Filter orders by proximity: rider must be within 20KM of both pickup and delivery
-    const MAX_DISTANCE_KM = 20;
+    // Filter orders by proximity: rider must be within 10KM of both pickup and delivery
+    const MAX_DISTANCE_KM = 10;
     const eligibleOrders = orders.items.filter((order) => {
       // Check pickup location proximity
       const pickupLocationDoc = order.pickupLocationId as any;

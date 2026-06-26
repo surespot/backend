@@ -495,7 +495,7 @@ export class PickupLocationsService implements OnModuleInit {
   }
 
   async findNearest(dto: FindNearestPickupLocationDto) {
-    const MAX_DISTANCE_METERS = 20000;
+    const MAX_DISTANCE_METERS = 10000;
     const pickupLocation = await this.pickupLocationsRepository.findNearest(
       dto.latitude,
       dto.longitude,
