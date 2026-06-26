@@ -50,6 +50,8 @@ import { AdminMenuRepository } from '../admin/admin-menu.repository';
 import { ConfigService } from '@nestjs/config';
 import { SettingsService } from '../settings/settings.service';
 import { PricingType } from '../food-items/schemas/food-item.schema';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 
 export interface OrderExtraResponse {
   id: string;
@@ -170,6 +172,7 @@ export class OrdersService {
     private readonly pickupLocationsRepository: PickupLocationsRepository,
     private readonly configService: ConfigService,
     private readonly settingsService: SettingsService,
+    @InjectQueue('rider-search') private readonly riderSearchQueue: Queue,
   ) {}
 
   private formatPrice(price: number, currency: string = 'NGN'): string {
@@ -445,6 +448,13 @@ export class OrdersService {
             nearest.data.latitude,
             nearest.data.longitude,
           );
+          if (distanceKm > 5) {
+            errors.push({
+              field: 'deliveryType',
+              message:
+                'Door delivery is not available for your location. Please select pickup.',
+            });
+          }
         } catch {
           errors.push({
             field: 'deliveryAddress',
@@ -1672,7 +1682,29 @@ export class OrdersService {
 
         // Find nearby active riders for door delivery orders
         if (order.deliveryType === DeliveryType.DOOR_DELIVERY) {
-          await this.findAndNotifyNearbyRiders(order);
+          const ridersFound = await this.findAndNotifyNearbyRiders(order);
+          if (!ridersFound) {
+            await this.riderSearchQueue.add(
+              'search',
+              { orderId: order._id.toString(), attempt: 1 },
+              { delay: 20 * 60 * 1000 },
+            );
+            this.logger.log(
+              `No riders found for order ${order.orderNumber} on first attempt. Queued retry.`,
+            );
+            await this.notificationsService.queueNotification(
+              userId,
+              NotificationType.GENERAL,
+              'Delay finding a rider',
+              `We're having trouble finding a rider for order ${order.orderNumber}. We'll keep trying and update you shortly, or you'll be fully refunded.`,
+              { orderId: order._id.toString(), orderNumber: order.orderNumber },
+              [
+                NotificationChannel.IN_APP,
+                NotificationChannel.PUSH,
+                NotificationChannel.EMAIL,
+              ],
+            );
+          }
         }
         break;
       }
@@ -2251,11 +2283,13 @@ export class OrdersService {
    * Find nearby active riders when order is ready
    * Riders must be within 15KM of both pickup location and delivery address
    */
-  private async findAndNotifyNearbyRiders(order: OrderDocument): Promise<void> {
+  private async findAndNotifyNearbyRiders(
+    order: OrderDocument,
+  ): Promise<boolean> {
     try {
       // Get pickup location to get region and coordinates
       if (!order.pickupLocationId) {
-        return; // No pickup location, skip
+        return false;
       }
 
       // Handle both ObjectId and populated object cases
@@ -2289,7 +2323,7 @@ export class OrdersService {
           order._id.toString(),
         );
         if (!fetchedOrder) {
-          return; // Order not found, skip
+          return false;
         }
         orderWithPickup = fetchedOrder;
       }
@@ -2300,12 +2334,12 @@ export class OrdersService {
         !populatedPickupLocation ||
         !populatedPickupLocation.location?.coordinates
       ) {
-        return; // No pickup location coordinates, skip
+        return false;
       }
 
       const regionId = populatedPickupLocation.regionId?.toString();
       if (!regionId) {
-        return; // No region, skip
+        return false;
       }
 
       // Get delivery address coordinates
@@ -2313,7 +2347,7 @@ export class OrdersService {
         !order.deliveryAddress?.coordinates?.latitude ||
         !order.deliveryAddress?.coordinates?.longitude
       ) {
-        return; // No delivery coordinates, skip
+        return false;
       }
 
       // Extract coordinates in same format as getRiderEligibleOrders
@@ -2332,14 +2366,14 @@ export class OrdersService {
       );
 
       if (profiles.length === 0) {
-        return; // No active riders in region
+        return false;
       }
 
       // Get rider profile IDs
       const riderProfileIds = profiles.map((p) => p._id);
 
-      // Find riders within 20KM of both pickup location and delivery address
-      const MAX_DISTANCE_METERS = 20000; // 20KM
+      // Find riders within 10KM of both pickup location and delivery address
+      const MAX_DISTANCE_METERS = 10000; // 10KM
 
       const nearbyRiders =
         await this.riderLocationRepository.findNearbyMultiplePoints(
@@ -2433,10 +2467,12 @@ export class OrdersService {
         this.logger.log(
           `Order ready notifications (WebSocket + Notifications) sent to ${nearbyRiders.length} nearby rider(s) for order ${order.orderNumber}`,
         );
+        return true;
       } else {
         this.logger.debug(
-          `No nearby riders found within 15KM of both pickup and delivery locations for order ${order.orderNumber}`,
+          `No nearby riders found within 10KM of both pickup and delivery locations for order ${order.orderNumber}`,
         );
+        return false;
       }
     } catch (error) {
       // Log error but don't fail the order status update
@@ -2444,7 +2480,72 @@ export class OrdersService {
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
       });
+      return false;
     }
+  }
+
+  async notifyNearbyRidersForOrder(orderId: string): Promise<boolean> {
+    const order = await this.ordersRepository.findById(orderId);
+    if (!order || order.status !== OrderStatus.READY) {
+      return false;
+    }
+    return this.findAndNotifyNearbyRiders(order);
+  }
+
+  async cancelOrderBySystem(orderId: string, reason: string): Promise<void> {
+    const order = await this.ordersRepository.findById(orderId);
+    if (!order) {
+      this.logger.warn(`cancelOrderBySystem: order ${orderId} not found`);
+      return;
+    }
+
+    if (order.paymentStatus === PaymentStatus.PAID) {
+      const paymentReference =
+        order.paymentIntentId ??
+        (await this.transactionsService.getTransactionByOrderId(orderId))
+          ?.reference;
+
+      if (paymentReference) {
+        try {
+          const refundResult =
+            await this.transactionsService.requestRefund(paymentReference);
+          if (!refundResult.success) {
+            this.logger.error(
+              `System refund failed for order ${orderId}: ${refundResult.data?.error ?? 'unknown error'}`,
+            );
+          }
+        } catch (err) {
+          this.logger.error(
+            `System refund threw for order ${orderId}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      } else {
+        this.logger.warn(
+          `cancelOrderBySystem: no payment reference for order ${orderId}`,
+        );
+      }
+    }
+
+    await this.ordersRepository.updateOrder(orderId, {
+      status: OrderStatus.CANCELLED,
+      cancelledAt: new Date(),
+      cancellationReason: reason,
+    });
+
+    await this.ordersRepository.createDeliveryStatus({
+      orderId,
+      status: DeliveryStatus.CANCELLED,
+      message: reason,
+    });
+
+    await this.notificationsService.sendOrderCancelledNotification(
+      order.userId.toString(),
+      order.orderNumber,
+      orderId,
+      reason,
+    );
+
+    this.logger.log(`Order ${order.orderNumber} cancelled by system: ${reason}`);
   }
 
   /**
@@ -2567,8 +2668,8 @@ export class OrdersService {
       },
     );
 
-    // Filter orders by proximity: rider must be within 20KM of both pickup and delivery
-    const MAX_DISTANCE_KM = 20;
+    // Filter orders by proximity: rider must be within 10KM of both pickup and delivery
+    const MAX_DISTANCE_KM = 10;
     const eligibleOrders = orders.items.filter((order) => {
       // Check pickup location proximity
       const pickupLocationDoc = order.pickupLocationId as any;
