@@ -748,10 +748,12 @@ export class PromotionsService {
       }
     }
 
+    const totalCartItems = cartItems.reduce((sum, i) => sum + i.quantity, 0);
     qualifying.sort((a, b) => a.price - b.price);
     const toTake = Math.min(
-      Math.max(0, qualifying.length - 1),
+      qualifying.length,
       promotion.maxFreeQuantity,
+      Math.max(0, totalCartItems - 1),
     );
     return qualifying.slice(0, toTake).reduce((sum, u) => sum + u.price, 0);
   }
