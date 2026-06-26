@@ -10,7 +10,7 @@ export interface RiderSearchJobData {
 }
 
 const MAX_ATTEMPTS = 3;
-const RETRY_DELAY_MS = 60 * 60 * 1000; // 1 hour
+const RETRY_DELAY_MS = 20 * 60 * 1000; // 20 minutes
 
 @Processor('rider-search')
 export class OrdersRiderSearchProcessor extends WorkerHost {

@@ -1680,7 +1680,7 @@ export class OrdersService {
             await this.riderSearchQueue.add(
               'search',
               { orderId: order._id.toString(), attempt: 1 },
-              { delay: 60 * 60 * 1000 },
+              { delay: 20 * 60 * 1000 },
             );
             this.logger.log(
               `No riders found for order ${order.orderNumber} on first attempt. Queued retry.`,
