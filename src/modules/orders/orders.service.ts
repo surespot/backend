@@ -1685,6 +1685,18 @@ export class OrdersService {
             this.logger.log(
               `No riders found for order ${order.orderNumber} on first attempt. Queued retry.`,
             );
+            await this.notificationsService.queueNotification(
+              userId,
+              NotificationType.GENERAL,
+              'Delay finding a rider',
+              `We're having trouble finding a rider for order ${order.orderNumber}. We'll keep trying and update you shortly, or you'll be fully refunded.`,
+              { orderId: order._id.toString(), orderNumber: order.orderNumber },
+              [
+                NotificationChannel.IN_APP,
+                NotificationChannel.PUSH,
+                NotificationChannel.EMAIL,
+              ],
+            );
           }
         }
         break;
