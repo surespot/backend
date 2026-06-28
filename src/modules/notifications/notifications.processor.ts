@@ -84,9 +84,15 @@ export class NotificationsProcessor extends WorkerHost {
       await this.updateChannelStatus(notificationId, channel, result.success);
     }
 
+    const failed = channelResults.filter((r) => !r.success);
     this.logger.log(
-      `Notification job ${job.id} completed: ${channelResults.filter((r) => r.success).length}/${channelResults.length} channels successful`,
+      `Notification job ${job.id} completed: ${channelResults.length - failed.length}/${channelResults.length} channels successful`,
     );
+    for (const r of failed) {
+      this.logger.warn(
+        `Notification job ${job.id} channel ${r.channel} failed: ${r.error ?? 'unknown error'}`,
+      );
+    }
 
     return {
       notificationId,
