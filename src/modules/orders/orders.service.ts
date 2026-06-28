@@ -667,6 +667,23 @@ export class OrdersService {
     let order: OrderDocument | null = null;
 
     try {
+      // Idempotency: if an order already exists for this payment reference, return it
+      if (dto.paymentIntentId) {
+        const existing = await this.ordersRepository.findByPaymentIntentId(
+          dto.paymentIntentId,
+        );
+        if (existing) {
+          this.logger.log(
+            `Order already exists for paymentIntentId ${dto.paymentIntentId}, returning existing order`,
+          );
+          return {
+            success: true,
+            message: 'Order placed successfully',
+            data: await this.formatOrder(existing),
+          };
+        }
+      }
+
       // Demo mode: resolve pickup location fallback ONCE before validation
       let resolvedPickupLocationId = dto.pickupLocationId;
       if (
