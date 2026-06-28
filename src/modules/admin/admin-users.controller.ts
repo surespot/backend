@@ -7,6 +7,7 @@ import {
   HttpCode,
   HttpStatus,
   NotFoundException,
+  ConflictException,
   Patch,
   Body,
 } from '@nestjs/common';
@@ -18,7 +19,14 @@ import {
   ApiQuery,
   ApiBody,
 } from '@nestjs/swagger';
-import { IsBoolean, IsOptional } from 'class-validator';
+import {
+  IsBoolean,
+  IsEmail,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -31,6 +39,28 @@ class UpdateUserDto {
   @IsBoolean()
   @IsOptional()
   isDemo?: boolean;
+}
+
+class UpdateAdminProfileDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(50)
+  @IsOptional()
+  firstName?: string;
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(50)
+  @IsOptional()
+  lastName?: string;
+
+  @IsEmail()
+  @IsOptional()
+  email?: string;
+
+  @IsString()
+  @IsOptional()
+  phone?: string;
 }
 
 @ApiTags('admin-users')
@@ -330,6 +360,53 @@ export class AdminUsersController {
       data: {
         id: updated!._id.toString(),
         isDemo: updated!.isDemo ?? false,
+      },
+    };
+  }
+
+  @Patch(':id/profile')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Update an admin or pickup admin profile (super admin only)' })
+  @ApiBody({ type: UpdateAdminProfileDto })
+  @ApiResponse({ status: 200, description: 'Admin profile updated successfully' })
+  async updateAdminProfile(
+    @Param('id') targetId: string,
+    @Body() dto: UpdateAdminProfileDto,
+  ) {
+    const target = await this.authRepository.findUserById(targetId);
+
+    if (
+      !target ||
+      (target.role !== UserRole.ADMIN && target.role !== UserRole.PICKUP_ADMIN)
+    ) {
+      throw new NotFoundException('Admin user not found');
+    }
+
+    if (dto.email && dto.email !== target.email) {
+      const existing = await this.authRepository.findUserByEmail(dto.email);
+      if (existing) {
+        throw new ConflictException('Email is already in use');
+      }
+    }
+
+    const updates: Partial<User> = {};
+    if (dto.firstName !== undefined) updates.firstName = dto.firstName.trim();
+    if (dto.lastName !== undefined) updates.lastName = dto.lastName.trim();
+    if (dto.email !== undefined) updates.email = dto.email.trim().toLowerCase();
+    if (dto.phone !== undefined) updates.phone = dto.phone.trim();
+
+    const updated = await this.authRepository.updateUser(targetId, updates);
+
+    return {
+      success: true,
+      message: 'Admin profile updated successfully',
+      data: {
+        id: updated!._id.toString(),
+        firstName: updated!.firstName,
+        lastName: updated!.lastName,
+        email: updated!.email,
+        phone: updated!.phone,
+        role: updated!.role,
       },
     };
   }
