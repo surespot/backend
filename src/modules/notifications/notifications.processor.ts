@@ -294,6 +294,7 @@ export class NotificationsProcessor extends WorkerHost {
     return {
       channel: NotificationChannel.IN_APP,
       success,
+      error: success ? undefined : 'User not connected to WebSocket',
     };
   }
 
@@ -548,6 +549,7 @@ export class NotificationsProcessor extends WorkerHost {
     return {
       channel: NotificationChannel.PUSH,
       success,
+      error: success ? undefined : 'Push delivery failed (Expo rejected or token invalid)',
     };
   }
 
