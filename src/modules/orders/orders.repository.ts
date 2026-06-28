@@ -203,6 +203,22 @@ export class OrdersRepository {
     return order;
   }
 
+  async findStalePendingCardOrders(
+    olderThanMs: number,
+  ): Promise<OrderDocument[]> {
+    const cutoff = new Date(Date.now() - olderThanMs);
+    return this.orderModel
+      .find({
+        paymentStatus: PaymentStatus.PENDING,
+        status: OrderStatus.PENDING,
+        paymentMethod: 'card',
+        paymentIntentId: { $exists: true, $ne: null },
+        createdAt: { $lt: cutoff },
+      })
+      .select('_id paymentIntentId orderNumber')
+      .exec();
+  }
+
   async findByUserId(
     userId: string,
     filter: {

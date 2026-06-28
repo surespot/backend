@@ -793,7 +793,7 @@ export class PickupLocationsService implements OnModuleInit {
   private async emailNearbyUsers(
     pickupLocation: PickupLocationDocument,
   ): Promise<void> {
-    const MAX_DISTANCE_METERS = 20000;
+    const MAX_DISTANCE_METERS = 10000;
     const [lng, lat] = pickupLocation.location.coordinates;
 
     const userIds =
@@ -828,7 +828,7 @@ export class PickupLocationsService implements OnModuleInit {
   private async notifyNearbyWaitlist(
     pickupLocation: PickupLocationDocument,
   ): Promise<void> {
-    const MAX_DISTANCE_METERS = 20000;
+    const MAX_DISTANCE_METERS = 10000;
     const [lng, lat] = pickupLocation.location.coordinates;
 
     const entries = await this.waitlistModel.find().lean().exec();
