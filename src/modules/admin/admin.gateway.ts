@@ -376,4 +376,38 @@ export class AdminGateway
       timestamp: new Date().toISOString(),
     });
   }
+
+  async emitRiderSearchAttempt(
+    pickupLocationId: string,
+    orderData: {
+      orderId: string;
+      orderNumber: string;
+      attempt: number;
+      maxAttempts: number;
+    },
+  ): Promise<boolean> {
+    return this.emitToPickupLocation(pickupLocationId, 'rider_search_attempt', {
+      orderId: orderData.orderId,
+      orderNumber: orderData.orderNumber,
+      attempt: orderData.attempt,
+      maxAttempts: orderData.maxAttempts,
+      message: `Searching for a rider for order ${orderData.orderNumber} (attempt ${orderData.attempt}/${orderData.maxAttempts}).`,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  async emitRiderUnassigned(
+    pickupLocationId: string,
+    orderData: {
+      orderId: string;
+      orderNumber: string;
+    },
+  ): Promise<boolean> {
+    return this.emitToPickupLocation(pickupLocationId, 'rider_unassigned', {
+      orderId: orderData.orderId,
+      orderNumber: orderData.orderNumber,
+      message: `Rider did not pick up order ${orderData.orderNumber} within 3 hours — returning to pool.`,
+      timestamp: new Date().toISOString(),
+    });
+  }
 }

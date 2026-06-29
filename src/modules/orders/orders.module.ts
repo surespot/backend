@@ -8,6 +8,7 @@ import { OrdersService } from './orders.service';
 import { OrdersRepository } from './orders.repository';
 import { OrdersGateway } from './orders.gateway';
 import { OrdersRiderSearchProcessor } from './orders-rider-search.processor';
+import { OrdersPickupTimeoutProcessor } from './orders-pickup-timeout.processor';
 import { Order, OrderSchema } from './schemas/order.schema';
 import { OrderItem, OrderItemSchema } from './schemas/order-item.schema';
 import { OrderExtra, OrderExtraSchema } from './schemas/order-extra.schema';
@@ -44,6 +45,7 @@ import { SettingsModule } from '../settings/settings.module';
       }),
     }),
     BullModule.registerQueue({ name: 'rider-search' }),
+    BullModule.registerQueue({ name: 'pickup-timeout' }),
     forwardRef(() => AuthModule),
     forwardRef(() => CartModule),
     PickupLocationsModule,
@@ -64,6 +66,7 @@ import { SettingsModule } from '../settings/settings.module';
     OrdersRepository,
     OrdersGateway,
     OrdersRiderSearchProcessor,
+    OrdersPickupTimeoutProcessor,
     {
       provide: 'AdminGateway',
       useFactory: (adminModule: any) => {

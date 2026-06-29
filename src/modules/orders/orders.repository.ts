@@ -468,6 +468,30 @@ export class OrdersRepository {
   }
 
   /**
+   * Atomically unassign a rider only if the order is still READY and still assigned to that rider.
+   * Returns null (no-op) if the order was already picked up, cancelled, or reassigned to someone else.
+   */
+  async unassignRiderIfStillAssigned(
+    orderId: string,
+    riderProfileId: string,
+  ): Promise<OrderDocument | null> {
+    this.validateObjectId(orderId, 'orderId');
+    this.validateObjectId(riderProfileId, 'riderProfileId');
+    return this.orderModel
+      .findOneAndUpdate(
+        {
+          _id: new Types.ObjectId(orderId),
+          status: OrderStatus.READY,
+          assignedRiderId: new Types.ObjectId(riderProfileId),
+        },
+        { $unset: { assignedRiderId: '', assignedAt: '', assignedBy: '' } },
+        { new: true },
+      )
+      .populate('pickupLocationId')
+      .exec();
+  }
+
+  /**
    * Find orders assigned to a specific rider
    */
   async findByAssignedRider(

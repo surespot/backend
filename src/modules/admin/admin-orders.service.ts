@@ -749,6 +749,11 @@ export class AdminOrdersService {
       riderName,
     );
 
+    await this.ordersService.schedulePickupTimeout(
+      updatedOrder._id.toString(),
+      riderProfile._id.toString(),
+    );
+
     const orderDetails = await this.formatOrderDetails(updatedOrder);
     return { success: true, message: 'Rider assigned successfully', data: orderDetails };
   }
