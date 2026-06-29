@@ -27,7 +27,7 @@ export class OrdersRiderSearchProcessor extends WorkerHost {
     const { orderId, attempt } = job.data;
 
     this.logger.log(
-      `Rider search retry attempt ${attempt}/${MAX_ATTEMPTS} for order ${orderId}`,
+      `Rider search attempt ${attempt}/${MAX_ATTEMPTS} for order ${orderId}`,
     );
 
     const ridersFound =
@@ -37,8 +37,19 @@ export class OrdersRiderSearchProcessor extends WorkerHost {
       this.logger.log(
         `Riders found on attempt ${attempt} for order ${orderId}`,
       );
+      await this.ordersService.notifyAdminRiderSearch(orderId, attempt);
       return;
     }
+
+    // Order may have been assigned, cancelled, or delivered since this job was queued
+    if (await this.ordersService.isOrderResolved(orderId)) {
+      this.logger.log(
+        `Rider search attempt ${attempt} skipped for order ${orderId} — order already resolved`,
+      );
+      return;
+    }
+
+    await this.ordersService.notifyAdminRiderSearch(orderId, attempt);
 
     if (attempt < MAX_ATTEMPTS) {
       await this.riderSearchQueue.add(
@@ -47,7 +58,7 @@ export class OrdersRiderSearchProcessor extends WorkerHost {
         { delay: RETRY_DELAY_MS },
       );
       this.logger.log(
-        `No riders found on attempt ${attempt} for order ${orderId}. Retrying in 1 hour (attempt ${attempt + 1}/${MAX_ATTEMPTS}).`,
+        `No riders found on attempt ${attempt} for order ${orderId}. Retrying in 20 min (attempt ${attempt + 1}/${MAX_ATTEMPTS}).`,
       );
     } else {
       this.logger.warn(

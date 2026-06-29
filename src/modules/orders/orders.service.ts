@@ -173,6 +173,7 @@ export class OrdersService {
     private readonly configService: ConfigService,
     private readonly settingsService: SettingsService,
     @InjectQueue('rider-search') private readonly riderSearchQueue: Queue,
+    @InjectQueue('pickup-timeout') private readonly pickupTimeoutQueue: Queue,
   ) {}
 
   private formatPrice(price: number, currency: string = 'NGN'): string {
@@ -2506,10 +2507,36 @@ export class OrdersService {
 
   async notifyNearbyRidersForOrder(orderId: string): Promise<boolean> {
     const order = await this.ordersRepository.findById(orderId);
-    if (!order || order.status !== OrderStatus.READY) {
+    if (!order || order.status !== OrderStatus.READY || order.assignedRiderId) {
       return false;
     }
     return this.findAndNotifyNearbyRiders(order);
+  }
+
+  async isOrderResolved(orderId: string): Promise<boolean> {
+    const order = await this.ordersRepository.findById(orderId);
+    if (!order || order.status !== OrderStatus.READY || order.assignedRiderId) return true;
+    return false;
+  }
+
+  async notifyAdminRiderSearch(orderId: string, attempt: number): Promise<void> {
+    try {
+      const order = await this.ordersRepository.findById(orderId);
+      if (!order) return;
+      const pickupLocationIdStr = this.getPickupLocationIdString(order.pickupLocationId);
+      if (pickupLocationIdStr && this.adminGateway?.emitRiderSearchAttempt) {
+        await this.adminGateway.emitRiderSearchAttempt(pickupLocationIdStr, {
+          orderId: order._id.toString(),
+          orderNumber: order.orderNumber,
+          attempt,
+          maxAttempts: 3,
+        });
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Failed to notify admin of rider search for order ${orderId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   async cancelOrderBySystem(orderId: string, reason: string): Promise<void> {
@@ -2812,6 +2839,104 @@ export class OrdersService {
     }
   }
 
+  async schedulePickupTimeout(orderId: string, riderProfileId: string): Promise<void> {
+    const jobId = `pt:${orderId}`;
+    const existing = await this.pickupTimeoutQueue.getJob(jobId);
+    if (existing) await existing.remove().catch(() => {});
+    await this.pickupTimeoutQueue.add(
+      'check',
+      { orderId, riderProfileId },
+      { jobId, delay: 3 * 60 * 60 * 1000 },
+    );
+  }
+
+  async releaseTimedOutAssignment(orderId: string, riderProfileId: string): Promise<void> {
+    const order = await this.ordersRepository.unassignRiderIfStillAssigned(
+      orderId,
+      riderProfileId,
+    );
+
+    if (!order) {
+      this.logger.log(
+        `Pickup timeout no-op for order ${orderId} — already picked up, cancelled, or reassigned`,
+      );
+      return;
+    }
+
+    this.logger.warn(
+      `Rider ${riderProfileId} did not pick up order ${order.orderNumber} within 3 hours — returning to pool`,
+    );
+
+    // Notify the rider their assignment was released
+    const riderProfile = await this.ridersRepository.findById(riderProfileId);
+    if (riderProfile?.userId) {
+      await this.notificationsService
+        .queueNotification(
+          riderProfile.userId.toString(),
+          NotificationType.GENERAL,
+          'Assignment Released',
+          `Order ${order.orderNumber} was returned to the pool because it wasn't picked up within 3 hours.`,
+          { orderId: order._id.toString(), orderNumber: order.orderNumber },
+          [NotificationChannel.IN_APP, NotificationChannel.PUSH],
+        )
+        .catch((err) =>
+          this.logger.warn(
+            `Failed to notify rider of released assignment for order ${order.orderNumber}: ${err instanceof Error ? err.message : String(err)}`,
+          ),
+        );
+    }
+
+    // Notify the customer we're finding them a new rider
+    await this.notificationsService
+      .queueNotification(
+        order.userId.toString(),
+        NotificationType.GENERAL,
+        'Finding a new rider',
+        `Your rider for order ${order.orderNumber} was unable to pick up your order in time. We're finding you a new rider.`,
+        { orderId: order._id.toString(), orderNumber: order.orderNumber },
+        [NotificationChannel.IN_APP, NotificationChannel.PUSH],
+      )
+      .catch((err) =>
+        this.logger.warn(
+          `Failed to notify customer of re-pool for order ${order.orderNumber}: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+      );
+
+    // Notify the admin dashboard
+    const pickupLocationIdStr = this.getPickupLocationIdString(order.pickupLocationId);
+    if (pickupLocationIdStr && this.adminGateway?.emitRiderUnassigned) {
+      await this.adminGateway
+        .emitRiderUnassigned(pickupLocationIdStr, {
+          orderId: order._id.toString(),
+          orderNumber: order.orderNumber,
+        })
+        .catch((err) =>
+          this.logger.warn(
+            `Failed to notify admin of rider unassignment for order ${order.orderNumber}: ${err instanceof Error ? err.message : String(err)}`,
+          ),
+        );
+    }
+
+    // Re-pool: broadcast to nearby riders, fall back to queued search if none online
+    try {
+      const ridersFound = await this.notifyNearbyRidersForOrder(orderId);
+      if (!ridersFound) {
+        await this.riderSearchQueue.add(
+          'search',
+          { orderId: order._id.toString(), attempt: 1 },
+          { delay: 20 * 60 * 1000 },
+        );
+        this.logger.log(
+          `No riders online for re-pooled order ${order.orderNumber} — queued rider-search retry`,
+        );
+      }
+    } catch (err) {
+      this.logger.error(
+        `Failed to re-pool order ${order.orderNumber} after pickup timeout — order may need manual intervention: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   /**
    * Accept an order (Rider only)
    * Atomically assigns a rider to an order, preventing race conditions
@@ -2921,6 +3046,8 @@ export class OrdersService {
     const formattedOrder = await this.formatOrder(order);
 
     await this.notifyRiderAssigned(order, riderProfile._id.toString(), `${riderProfile.firstName || ''} ${riderProfile.lastName || ''}`.trim() || 'A rider');
+
+    await this.schedulePickupTimeout(order._id.toString(), riderProfile._id.toString());
 
     return {
       success: true,
