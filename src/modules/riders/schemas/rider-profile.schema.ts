@@ -11,6 +11,11 @@ export enum RiderStatus {
   SUSPENDED = 'suspended',
 }
 
+export enum VehicleType {
+  MOTORCYCLE = 'MOTORCYCLE',
+  BICYCLE = 'BICYCLE',
+}
+
 @Schema({ timestamps: true })
 export class RiderProfile {
   _id: Types.ObjectId;
@@ -83,6 +88,9 @@ export class RiderProfile {
 
   @Prop({ type: Date })
   lastEarningsReminderSentAt?: Date;
+
+  @Prop({ type: String, enum: VehicleType, default: VehicleType.BICYCLE })
+  vehicleType: VehicleType;
 
   createdAt?: Date;
   updatedAt?: Date;

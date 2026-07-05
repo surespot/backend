@@ -36,6 +36,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { UserRole } from '../auth/schemas/user.schema';
+import { VehicleType } from './schemas/rider-profile.schema';
 
 @ApiTags('riders')
 @Controller('riders')
@@ -525,5 +526,24 @@ export class RidersController {
     @Body() dto: { schedule: number[] },
   ) {
     return this.ridersService.updateSchedule(user.id, dto.schedule);
+  }
+
+  @Patch('me/vehicle-type')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Update vehicle type',
+    description: 'Update the vehicle type for the currently authenticated rider',
+  })
+  @ApiResponse({ status: 200, description: 'Vehicle type updated successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid vehicle type' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Rider profile not found' })
+  async updateVehicleType(
+    @CurrentUser() user: { id: string },
+    @Body() body: { vehicleType: VehicleType },
+  ) {
+    return this.ridersService.updateVehicleType(user.id, body.vehicleType);
   }
 }

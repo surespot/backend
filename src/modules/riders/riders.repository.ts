@@ -5,6 +5,7 @@ import {
   RiderProfile,
   RiderProfileDocument,
   RiderStatus,
+  VehicleType,
 } from './schemas/rider-profile.schema';
 import {
   RiderDocumentation,
@@ -22,6 +23,7 @@ export interface CreateRiderProfileData {
   regionId: Types.ObjectId;
   registrationCode: string;
   schedule?: number[];
+  vehicleType?: VehicleType;
 }
 
 export interface CreateRiderDocumentationData {

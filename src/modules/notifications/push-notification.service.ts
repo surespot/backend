@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { AuthRepository } from '../auth/auth.repository';
+import { UserRole } from '../auth/schemas/user.schema';
 import { NotificationType } from './schemas/notification.schema';
 import { FcmSenderService } from './fcm-sender.service';
 import { ApnsSenderService } from './apns-sender.service';
@@ -73,6 +74,7 @@ export class PushNotificationService {
               data: options.data,
               sound: options.sound ?? 'default',
               badge: options.badge,
+              isRider: user.role === UserRole.RIDER,
             })
           : Promise.resolve([]),
       ]);

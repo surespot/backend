@@ -26,6 +26,7 @@ import { TransactionsService } from '../transactions/transactions.service';
 import { RiderLocationRepository } from '../riders/rider-location.repository';
 import { RidersRepository } from '../riders/riders.repository';
 import { RiderStatus } from '../riders/schemas/rider-profile.schema';
+import { PlacesService } from '../places/places.service';
 import { Types, ClientSession } from 'mongoose';
 import { ValidateCheckoutDto } from './dto/validate-checkout.dto';
 import { PlaceOrderDto } from './dto/place-order.dto';
@@ -170,6 +171,7 @@ export class OrdersService {
     private readonly configService: ConfigService,
     private readonly settingsService: SettingsService,
     private readonly redisService: RedisService,
+    private readonly placesService: PlacesService,
     @InjectQueue('rider-search') private readonly riderSearchQueue: Queue,
     @InjectQueue('pickup-timeout') private readonly pickupTimeoutQueue: Queue,
   ) {}
@@ -253,6 +255,39 @@ export class OrdersService {
       prepTime,
       deliveryTime,
       total: prepTime + deliveryTime,
+    };
+  }
+
+  /**
+   * Get road distance + duration via Google Routes API.
+   * Falls back to Haversine + DELIVERY_TIME_PER_KM if the API is unavailable.
+   */
+  private async getRouteWithFallback(
+    originLat: number,
+    originLng: number,
+    destLat: number,
+    destLng: number,
+  ): Promise<{ distanceKm: number; durationMinutes: number }> {
+    try {
+      const route = await this.placesService.getRoute(
+        originLat,
+        originLng,
+        destLat,
+        destLng,
+      );
+      if (route) {
+        return {
+          distanceKm: route.distanceMeters / 1000,
+          durationMinutes: Math.round(route.durationSeconds / 60),
+        };
+      }
+    } catch {
+      // fall through to Haversine
+    }
+    const distanceKm = this.calculateDistance(originLat, originLng, destLat, destLng);
+    return {
+      distanceKm,
+      durationMinutes: Math.round(distanceKm * this.DELIVERY_TIME_PER_KM),
     };
   }
 
@@ -383,6 +418,7 @@ export class OrdersService {
     let deliveryAddress: any = null;
     let pickupLocation: any = null;
     let distanceKm = 0;
+    let routeDurationMinutes = 0;
 
     if (dto.deliveryType === DeliveryType.DOOR_DELIVERY) {
       // Need delivery address
@@ -440,7 +476,7 @@ export class OrdersService {
             longitude: deliveryAddress.coordinates.longitude,
           });
           pickupLocation = nearest.data;
-          // Calculate distance manually
+          // Haversine for eligibility gate (fast, no external call)
           distanceKm = this.calculateDistance(
             deliveryAddress.coordinates.latitude,
             deliveryAddress.coordinates.longitude,
@@ -453,6 +489,16 @@ export class OrdersService {
               message:
                 'Door delivery is not available for your location. Please select pickup.',
             });
+          } else if (!this.isDemoUser(isDemo)) {
+            // Road distance + duration for accurate fee and ETA
+            const road = await this.getRouteWithFallback(
+              deliveryAddress.coordinates.latitude,
+              deliveryAddress.coordinates.longitude,
+              nearest.data.latitude,
+              nearest.data.longitude,
+            );
+            distanceKm = road.distanceKm;
+            routeDurationMinutes = road.durationMinutes;
           }
         } catch {
           errors.push({
@@ -615,7 +661,7 @@ export class OrdersService {
 
     const ridingMinutes = this.isDemoUser(isDemo)
       ? 0
-      : Math.round(distanceKm * this.DELIVERY_TIME_PER_KM);
+      : (routeDurationMinutes || Math.round(distanceKm * this.DELIVERY_TIME_PER_KM));
     const totalMinutes = this.isDemoUser(isDemo)
       ? 5
       : this.PREP_TIME_MINUTES + ridingMinutes;
