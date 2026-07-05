@@ -11,6 +11,12 @@ export class SiteSettings {
   @Prop({ type: Number, default: 30000, min: 0 })
   packagingFeeKobo: number; // packaging fee added to orders with per_pack items (in kobo)
 
+  @Prop({ type: Number, default: 40000, min: 0 })
+  deliveryFeePerKmKobo: number; // customer-facing delivery fee per km (in kobo)
+
+  @Prop({ type: Number, default: 50000, min: 0 })
+  riderBaseFeeKobo: number; // platform-funded base fee credited to rider on every delivery (in kobo)
+
   @Prop({ type: Number, default: 20, min: 0, max: 23 })
   orderCutoffHour: number; // hour (WAT, 24h) after which new orders are rejected (default 20 = 8PM)
 }

@@ -36,7 +36,7 @@ export class NotificationContextService {
         email: user.email || '',
         phone: user.phone || '',
         isEmailVerified: user.isEmailVerified || false,
-        expoPushTokens: (user.expoPushTokens as string[] | undefined) || [],
+        pushTokens: user.pushTokens || [],
       };
     } catch (error: unknown) {
       this.logger.error(`Failed to fetch user context for ${userId}`, {

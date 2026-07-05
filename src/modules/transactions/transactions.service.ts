@@ -675,6 +675,9 @@ export class TransactionsService {
       case 'refund.needs-attention':
         await this.handleRefundNeedsAttention(data);
         break;
+      case 'refund.pending':
+        // Refund initiated but not yet settled — no action needed, refund.processed fires when done
+        break;
       default:
         this.logger.warn(`Unhandled webhook event: ${event}`);
     }

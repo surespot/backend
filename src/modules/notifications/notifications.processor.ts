@@ -346,8 +346,20 @@ export class NotificationsProcessor extends WorkerHost {
         );
         break;
 
+      case NotificationType.GENERAL: {
+        const message = data?.message as string | undefined;
+        if (!message) {
+          return {
+            channel: NotificationChannel.SMS,
+            success: false,
+            error: 'GENERAL SMS requires a message in notification data',
+          };
+        }
+        result = await this.smsService.sendSms({ to: user.phone, body: message });
+        break;
+      }
+
       default:
-        // SMS not supported for this notification type
         return {
           channel: NotificationChannel.SMS,
           success: false,
@@ -471,7 +483,7 @@ export class NotificationsProcessor extends WorkerHost {
     message: string,
     data?: Record<string, unknown>,
   ): Promise<ChannelDeliveryResult> {
-    if (!user.expoPushTokens || user.expoPushTokens.length === 0) {
+    if (!user.pushTokens || user.pushTokens.length === 0) {
       return {
         channel: NotificationChannel.PUSH,
         success: false,
@@ -528,22 +540,33 @@ export class NotificationsProcessor extends WorkerHost {
             orderNumber,
             orderId,
           );
+        } else if (data?.isMondayEarningsReminder) {
+          success = await this.pushService.sendMondayEarningsReminder(
+            user.userId,
+          );
         } else {
-          // Generic push not supported
-          return {
-            channel: NotificationChannel.PUSH,
-            success: false,
-            error: `Push not supported for generic notification`,
-          };
+          success = await this.sendGenericPush(user.userId, title, message, data);
         }
         break;
 
+      // Types with dynamic, already-correct copy (set at the call site) — no
+      // canned per-type wording needed, just relay title/message as-is.
+      case NotificationType.CHAT_MESSAGE:
+      case NotificationType.WALLET_CREDITED:
+      case NotificationType.WALLET_WITHDRAWAL_INITIATED:
+      case NotificationType.RIDER_SEARCH_DELAYED:
+      case NotificationType.RIDER_ASSIGNMENT_RELEASED:
+      case NotificationType.ORDER_FINDING_NEW_RIDER:
+      case NotificationType.RIDER_ORDER_AVAILABLE:
+        success = await this.sendGenericPush(user.userId, title, message, data);
+        break;
+
       default:
-        return {
-          channel: NotificationChannel.PUSH,
-          success: false,
-          error: `Push not supported for notification type: ${type}`,
-        };
+        // Fallback for any other type that requests PUSH without a dedicated
+        // handler above — relay the title/message already computed by the caller
+        // rather than silently dropping the push.
+        success = await this.sendGenericPush(user.userId, title, message, data);
+        break;
     }
 
     return {
@@ -551,6 +574,24 @@ export class NotificationsProcessor extends WorkerHost {
       success,
       error: success ? undefined : 'Push delivery failed (Expo rejected or token invalid)',
     };
+  }
+
+  /**
+   * Relay the notification's own title/message as a push, for types that don't
+   * need canned per-type copy (their copy is already dynamic and correct at the call site).
+   */
+  private async sendGenericPush(
+    userId: string,
+    title: string,
+    message: string,
+    data?: Record<string, unknown>,
+  ): Promise<boolean> {
+    return this.pushService.sendToUser(userId, {
+      title,
+      body: message,
+      data,
+      priority: 'high',
+    });
   }
 
   /**

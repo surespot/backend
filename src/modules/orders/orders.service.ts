@@ -49,6 +49,8 @@ import { AuthRepository } from '../auth/auth.repository';
 import { AdminMenuRepository } from '../admin/admin-menu.repository';
 import { ConfigService } from '@nestjs/config';
 import { SettingsService } from '../settings/settings.service';
+import { RedisService } from '../../common/redis/redis.service';
+import { createHash } from 'crypto';
 import { PricingType } from '../food-items/schemas/food-item.schema';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -133,11 +135,6 @@ export interface OrderResponse {
 
 @Injectable()
 export class OrdersService {
-  // Delivery fee configuration (in kobo)
-  private readonly DELIVERY_FEE_PER_3KM = 40000; // ₦400 per 3km
-  private readonly MIN_DELIVERY_FEE = 30000; // ₦300 minimum
-  private readonly EXTRA_ITEMS_FEE = 60000; // ₦600 for more than 5 items
-  private readonly EXTRA_ITEMS_THRESHOLD = 5;
 
   // Delivery time estimation (in minutes)
   // Riders travel at 15 km/h → 60/15 = 4 minutes per km
@@ -172,9 +169,18 @@ export class OrdersService {
     private readonly pickupLocationsRepository: PickupLocationsRepository,
     private readonly configService: ConfigService,
     private readonly settingsService: SettingsService,
+    private readonly redisService: RedisService,
     @InjectQueue('rider-search') private readonly riderSearchQueue: Queue,
     @InjectQueue('pickup-timeout') private readonly pickupTimeoutQueue: Queue,
   ) {}
+
+  private orderIdempotencyKey(userId: string, itemNames: string[]): string {
+    const hash = createHash('sha256')
+      .update(`${userId}:${[...itemNames].sort().join(',')}`)
+      .digest('hex');
+    return `order:idempotency:${hash}`;
+  }
+
 
   private formatPrice(price: number, currency: string = 'NGN'): string {
     if (price === 0) return 'Free';
@@ -190,25 +196,17 @@ export class OrdersService {
   }
 
   /**
-   * Calculate delivery fee based on distance and item count
-   * - ₦400 per 3km from pickup location
-   * - Minimum ₦300
-   * - ₦600 extra if more than 5 items
+   * Calculate delivery fee charged to the customer.
+   * - ₦deliveryFeePerKmKobo per whole km (floor), minimum 1km charge
+   * The platform separately credits riders a base fee on delivery (see riderBaseFeeKobo in settings).
    */
-  private calculateDeliveryFee(distanceKm: number, itemCount: number): number {
+  private calculateDeliveryFee(
+    distanceKm: number,
+    deliveryFeePerKmKobo: number,
+  ): number {
     if (distanceKm === 0) return 0; // Pickup orders
 
-    // Distance-based fee: ₦400 per 3km (rounded up), minimum ₦300
-    const distanceFee = Math.max(
-      this.MIN_DELIVERY_FEE,
-      Math.ceil(distanceKm / 3) * this.DELIVERY_FEE_PER_3KM,
-    );
-
-    // Extra fee for more than 5 items
-    const extraFee =
-      itemCount > this.EXTRA_ITEMS_THRESHOLD ? this.EXTRA_ITEMS_FEE : 0;
-
-    return distanceFee + extraFee;
+    return Math.max(1, Math.floor(distanceKm)) * deliveryFeePerKmKobo;
   }
 
   /**
@@ -540,6 +538,8 @@ export class OrdersService {
       }, 0);
     }
 
+    const settings = await this.settingsService.get();
+
     // Calculate packaging fee:
     // - per_portion items: 1 pack per 3 portions (ceil), e.g. 7 portions = 3 packs
     // - per_pack items: 1 fee per unit ordered
@@ -555,14 +555,16 @@ export class OrdersService {
             ? item.quantity
             : Math.ceil(item.quantity / 3);
       }
-      const settings = await this.settingsService.get();
       packagingFee = packCount * settings.packagingFeeKobo;
     }
 
-    // Calculate delivery fee
+    // Calculate delivery fee (customer-facing: floor(km) × per-km rate)
     const deliveryFee =
       dto.deliveryType === DeliveryType.DOOR_DELIVERY
-        ? this.calculateDeliveryFee(distanceKm, cart.itemCount)
+        ? this.calculateDeliveryFee(
+            distanceKm,
+            settings.deliveryFeePerKmKobo ?? 40000,
+          )
         : 0;
 
     // Validate promo code - always re-validate when promo present (needed for free_delivery + deliveryFee context)
@@ -732,6 +734,33 @@ export class OrdersService {
 
       const { cart, items, extras } = cartData;
 
+      // Idempotency: prevent placing the same order twice within 10 minutes.
+      // Key is derived from userId + sorted item names — different items or different
+      // user both get a different key, so legitimate back-to-back orders are allowed.
+      if (!this.isDemoUser(isDemo)) {
+        const itemNames = items.map((i) => i.name);
+        const idempotencyKey = this.orderIdempotencyKey(userId, itemNames);
+        const existingOrderId = await this.redisService.get(idempotencyKey);
+        if (existingOrderId) {
+          const existingOrder = await this.ordersRepository.findById(existingOrderId);
+          if (existingOrder) {
+            this.logger.log(
+              `Idempotency hit for user ${userId} — blocking duplicate of order ${existingOrder.orderNumber}`,
+            );
+            throw new ConflictException({
+              success: false,
+              error: {
+                code: 'DUPLICATE_ORDER',
+                message:
+                  'You placed this same order recently. Please wait a few minutes before trying again.',
+              },
+            });
+          }
+          // Stale key (order was deleted/cancelled) — proceed to create a new one
+          await this.redisService.del(idempotencyKey);
+        }
+      }
+
       // Build delivery address
       let deliveryAddress: any = null;
       let pickupLocationId: string | undefined;
@@ -796,8 +825,6 @@ export class OrdersService {
           );
         if (promotion) {
           promotionId = promotion._id.toString();
-          // Increment usage count
-          await this.promotionsService.incrementPromoUsage(promotionId);
         }
       }
 
@@ -933,32 +960,6 @@ export class OrdersService {
       // Assigned inside withTransaction; TS does not narrow `order` across that callback.
       let activeOrder: OrderDocument = order;
 
-      // Clear cart (outside transaction — recoverable if it fails)
-      try {
-        await this.cartService.clearCartAfterOrder(userId);
-      } catch (cartError) {
-        this.logger.warn(
-          `Failed to clear cart after order ${orderNumber} — cart may show stale items`,
-          {
-            error:
-              cartError instanceof Error
-                ? cartError.message
-                : String(cartError),
-          },
-        );
-      }
-
-      // Send order placed notification to customer
-      await this.notificationsService.sendOrderPlacedNotification(
-        userId,
-        orderNumber,
-        activeOrder._id.toString(),
-        activeOrder.total,
-      );
-
-      // Note: Admin notification for confirmed orders is sent in updatePaymentStatusByReference
-      // when payment is confirmed. We don't emit here to avoid duplicate notifications.
-
       // Demo users bypass Paystack entirely — mark order paid + confirmed immediately
       if (this.isDemoUser(isDemo)) {
         await this.ordersRepository.updateOrder(activeOrder._id.toString(), {
@@ -970,114 +971,68 @@ export class OrdersService {
           order = updatedOrder;
           activeOrder = updatedOrder;
         }
+        return {
+          success: true,
+          message: 'Order placed successfully',
+          data: await this.formatOrder(activeOrder),
+        };
       }
 
-      // If payment was already successful (webhook/verify ran before order creation),
-      // verify and update payment status now
-      if (
-        !this.isDemoUser(isDemo) &&
-        activeOrder.paymentIntentId &&
-        activeOrder.paymentStatus === PaymentStatus.PENDING
-      ) {
+      // Card payment: initialize Paystack and return the authorization URL.
+      // The order will be confirmed via webhook / reconciliation once payment succeeds.
+      if (activeOrder.paymentMethod === 'card' || activeOrder.paymentMethod === 'paystack') {
+        const userRecord = await this.authRepository.findUserById(userId);
         try {
-          const verification = await this.transactionsService.verifyPayment(
-            activeOrder.paymentIntentId,
+          const paystackResult = await this.transactionsService.initializePayment(
+            activeOrder._id.toString(),
+            userId,
+            userRecord?.email ?? '',
+            activeOrder.total,
+            'paystack',
           );
-          if (verification.success) {
-            const updateData: any = {
-              paymentStatus: PaymentStatus.PAID,
-              status: OrderStatus.CONFIRMED,
-            };
 
-            await this.ordersRepository.updateOrder(
-              activeOrder._id.toString(),
-              updateData,
-            );
-            const updatedOrder = await this.ordersRepository.findById(
-              activeOrder._id.toString(),
-            );
-            if (updatedOrder) {
-              order = updatedOrder;
-              activeOrder = updatedOrder;
+          // Persist the Paystack reference on the order so webhook/verify can find it
+          await this.ordersRepository.updateOrder(activeOrder._id.toString(), {
+            paymentIntentId: paystackResult.data.reference,
+          });
 
-              // Send confirmation code if generated
-              if (
-                activeOrder.deliveryType === DeliveryType.DOOR_DELIVERY &&
-                activeOrder.deliveryConfirmationCode
-              ) {
-                const confirmationCode = activeOrder.deliveryConfirmationCode;
+          // Set idempotency key — expires in 10 minutes
+          const idempotencyKey = this.orderIdempotencyKey(
+            userId,
+            items.map((i) => i.name),
+          );
+          await this.redisService.set(idempotencyKey, activeOrder._id.toString(), 600);
 
-                // Send SMS
-                try {
-                  const user = await this.authRepository.findUserById(userId);
-                  if (user && user.phone) {
-                    await this.notificationsService.queueNotification(
-                      userId,
-                      NotificationType.GENERAL,
-                      'Delivery Confirmation Code',
-                      `Your delivery confirmation code for order ${orderNumber} is ${confirmationCode}. Share this code with your rider when they deliver your order.`,
-                      {
-                        orderId: activeOrder._id.toString(),
-                        orderNumber,
-                        confirmationCode,
-                        type: 'delivery_confirmation',
-                      },
-                      [NotificationChannel.SMS],
-                    );
-                  }
-                } catch (error) {
-                  this.logger.warn(
-                    `Failed to send confirmation code SMS for order ${orderNumber}`,
-                    {
-                      error:
-                        error instanceof Error ? error.message : String(error),
-                    },
-                  );
-                }
-
-                // Emit WebSocket event
-                await this.notificationsGateway.sendToUser(
-                  userId,
-                  'order:confirm_delivery',
-                  {
-                    orderId: activeOrder._id.toString(),
-                    orderNumber,
-                    confirmationCode,
-                    message: `Your delivery confirmation code is ${confirmationCode}. Share this code with your rider when they deliver your order.`,
-                    timestamp: new Date().toISOString(),
-                  },
-                );
-              }
-            }
-          }
-        } catch (error) {
-          // Payment verification failed or payment not found yet; order remains pending
+          return {
+            success: true,
+            message: 'Order placed successfully',
+            data: {
+              ...(await this.formatOrder(activeOrder)),
+              authorizationUrl: paystackResult.data.authorizationUrl,
+              reference: paystackResult.data.reference,
+            },
+          };
+        } catch (paystackError) {
+          this.logger.error(
+            `Failed to initialize Paystack payment for order ${orderNumber}`,
+            paystackError instanceof Error ? paystackError.message : String(paystackError),
+          );
+          await this.ordersRepository.updateOrder(activeOrder._id.toString(), {
+            status: OrderStatus.CANCELLED,
+            cancelledAt: new Date(),
+            cancellationReason: 'Payment initialization failed',
+          });
+          throw paystackError;
         }
       }
 
-      // Get formatted order
-      const formattedOrder = await this.formatOrder(activeOrder);
-
+      // All other payment methods
       return {
         success: true,
         message: 'Order placed successfully',
-        data: formattedOrder,
+        data: await this.formatOrder(activeOrder),
       };
     } catch (error) {
-      // If payment was taken (Paystack) but order was not created, attempt a refund
-      if (!order && dto.paymentIntentId) {
-        try {
-          await this.transactionsService.requestRefund(dto.paymentIntentId);
-        } catch (refundError) {
-          this.logger.error(
-            `Failed to request refund for payment reference ${dto.paymentIntentId}`,
-            refundError instanceof Error
-              ? refundError.message
-              : String(refundError),
-          );
-        }
-      }
-
       throw error;
     }
   }
@@ -1138,7 +1093,7 @@ export class OrdersService {
     if (
       order.paymentStatus === PaymentStatus.PENDING &&
       order.paymentIntentId &&
-      order.paymentMethod === 'card'
+      (order.paymentMethod === 'card' || order.paymentMethod === 'paystack')
     ) {
       try {
         const verification = await this.transactionsService.verifyPayment(
@@ -1715,7 +1670,7 @@ export class OrdersService {
             );
             await this.notificationsService.queueNotification(
               userId,
-              NotificationType.GENERAL,
+              NotificationType.RIDER_SEARCH_DELAYED,
               'Delay finding a rider',
               `We're having trouble finding a rider for order ${order.orderNumber}. We'll keep trying and update you shortly, or you'll be fully refunded.`,
               { orderId: order._id.toString(), orderNumber: order.orderNumber },
@@ -1906,60 +1861,63 @@ export class OrdersService {
     refundId?: number,
     session?: ClientSession,
   ): Promise<void> {
-    const order = await this.ordersRepository.findByPaymentIntentId(reference);
+    // Atomic conditional update: only transitions from PENDING → new status.
+    // If two callers race (webhook + verify, or duplicate webhooks), exactly one
+    // gets a non-null document back and runs side effects; the other exits here.
+    const extra: Parameters<typeof this.ordersRepository.atomicUpdatePaymentStatus>[2] = {};
 
-    if (!order) {
-      // Order might not exist yet, that's okay
-      return;
+    if (refundId !== undefined) extra.refundId = refundId;
+
+    if (paymentStatus === PaymentStatus.PAID) {
+      extra.status = OrderStatus.CONFIRMED;
+    } else if (paymentStatus === PaymentStatus.FAILED) {
+      extra.status = OrderStatus.CANCELLED;
+      extra.cancelledAt = new Date();
+      extra.cancellationReason = 'Payment failed';
     }
 
-    // Update payment status and order status if payment is successful
-    const updateData: {
-      paymentStatus: PaymentStatus;
-      status?: OrderStatus;
-      refundId?: number;
-    } = {
+    const order = await this.ordersRepository.atomicUpdatePaymentStatus(
+      reference,
       paymentStatus,
-    };
-    if (refundId !== undefined) updateData.refundId = refundId;
-
-    // When payment is successful, set order status to CONFIRMED if it's currently PENDING
-    // Pickup location will manually set it to PREPARING when they start preparing
-    if (
-      paymentStatus === PaymentStatus.PAID &&
-      order.status === OrderStatus.PENDING
-    ) {
-      updateData.status = OrderStatus.CONFIRMED;
-    }
-
-    await this.ordersRepository.updateOrder(
-      order._id.toString(),
-      updateData,
+      extra,
       session,
     );
 
-    // Reload order to get updated fields (like confirmation code)
-    const updatedOrder = await this.ordersRepository.findById(
-      order._id.toString(),
-    );
+    // null means the order was already processed (or doesn't exist) — nothing to do
+    if (!order) return;
 
-    // Send notification based on payment status
     if (paymentStatus === PaymentStatus.PAID) {
-      await this.notificationsService.sendPaymentSuccessNotification(
+      // Clear cart now that payment is confirmed
+      try {
+        await this.cartService.clearCartAfterOrder(order.userId.toString());
+      } catch (e) {
+        this.logger.warn(
+          `Could not clear cart for order ${order.orderNumber}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+
+      // Burn promo code now that payment is confirmed
+      if (order.promotionId) {
+        try {
+          await this.promotionsService.incrementPromoUsage(order.promotionId.toString());
+        } catch (e) {
+          this.logger.warn(
+            `Could not increment promo usage for order ${order.orderNumber}: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      }
+
+      // Notify customer — order placed
+      await this.notificationsService.sendOrderPlacedNotification(
         order.userId.toString(),
         order.orderNumber,
         order._id.toString(),
         order.total,
       );
 
-      // Notify pickup location's admins when order is newly confirmed (was PENDING, now CONFIRMED)
-      const pickupLocationIdStrForConfirm = this.getPickupLocationIdString(
-        order.pickupLocationId,
-      );
-      if (
-        order.status === OrderStatus.PENDING &&
-        pickupLocationIdStrForConfirm
-      ) {
+      // Notify pickup location admins
+      const pickupLocationIdStrForConfirm = this.getPickupLocationIdString(order.pickupLocationId);
+      if (pickupLocationIdStrForConfirm) {
         this.notificationsService
           .notifyPickupLocationAdminsNewOrderConfirmed(
             pickupLocationIdStrForConfirm,
@@ -1991,19 +1949,15 @@ export class OrdersService {
           });
       }
 
-      // Send delivery confirmation code to customer (for door delivery orders)
+      // Send delivery confirmation code (door delivery only)
       if (
-        updatedOrder &&
-        updatedOrder.deliveryType === DeliveryType.DOOR_DELIVERY &&
-        updatedOrder.deliveryConfirmationCode
+        order.deliveryType === DeliveryType.DOOR_DELIVERY &&
+        order.deliveryConfirmationCode
       ) {
-        const confirmationCode = updatedOrder.deliveryConfirmationCode;
+        const confirmationCode = order.deliveryConfirmationCode;
 
-        // Send SMS with confirmation code
         try {
-          const user = await this.authRepository.findUserById(
-            order.userId.toString(),
-          );
+          const user = await this.authRepository.findUserById(order.userId.toString());
           if (user && user.phone) {
             await this.notificationsService.queueNotification(
               order.userId.toString(),
@@ -2015,6 +1969,7 @@ export class OrdersService {
                 orderNumber: order.orderNumber,
                 confirmationCode,
                 type: 'delivery_confirmation',
+                message: `Your delivery confirmation code for order ${order.orderNumber} is ${confirmationCode}. Share this code with your rider when they deliver your order.`,
               },
               [NotificationChannel.SMS],
             );
@@ -2022,13 +1977,10 @@ export class OrdersService {
         } catch (error) {
           this.logger.warn(
             `Failed to send confirmation code SMS for order ${order.orderNumber}`,
-            {
-              error: error instanceof Error ? error.message : String(error),
-            },
+            { error: error instanceof Error ? error.message : String(error) },
           );
         }
 
-        // Emit WebSocket event to customer
         await this.notificationsGateway.sendToUser(
           order.userId.toString(),
           'order:confirm_delivery',
@@ -2042,36 +1994,23 @@ export class OrdersService {
         );
       }
 
-      // Notify pickup location about the paid order
-      const pickupLocationIdStr = this.getPickupLocationIdString(
-        order.pickupLocationId,
-      );
+      // Notify admin dashboard
+      const pickupLocationIdStr = this.getPickupLocationIdString(order.pickupLocationId);
       if (pickupLocationIdStr) {
-        // Emit to admin dashboard via /admin namespace with full order details
         if (this.adminGateway && this.adminGateway.emitOrderCreated) {
-          // Get formatted order for admin
-          const formattedOrder = updatedOrder
-            ? await this.formatOrder(updatedOrder)
-            : null;
+          const formattedOrder = await this.formatOrder(order);
 
           await this.adminGateway.emitOrderCreated(pickupLocationIdStr, {
             orderId: order._id.toString(),
             orderNumber: order.orderNumber,
             total: order.total,
             itemCount: order.itemCount,
-            order: formattedOrder, // Include full order details
+            order: formattedOrder,
           });
 
-          // Emit updated stats
-          const pickupLocationObjId = this.getPickupLocationObjectId(
-            order.pickupLocationId,
-          );
-          const stats =
-            await this.ordersRepository.getOrderCountsByStatus(
-              pickupLocationObjId,
-            );
-          const todayRevenue =
-            await this.ordersRepository.getTodayRevenue(pickupLocationObjId);
+          const pickupLocationObjId = this.getPickupLocationObjectId(order.pickupLocationId);
+          const stats = await this.ordersRepository.getOrderCountsByStatus(pickupLocationObjId);
+          const todayRevenue = await this.ordersRepository.getTodayRevenue(pickupLocationObjId);
           await this.adminGateway.emitOrderStatsUpdate(pickupLocationIdStr, {
             totalOrders:
               stats.pending +
@@ -2092,7 +2031,6 @@ export class OrdersService {
           });
         }
 
-        // Keep backward compatibility for old notification system
         await this.notificationsGateway.emitOrderPlacedToPickupLocation(
           pickupLocationIdStr,
           order.orderNumber,
@@ -2456,7 +2394,7 @@ export class OrdersService {
               if (rider && rider.userId) {
                 await this.notificationsService.queueNotification(
                   rider.userId.toString(),
-                  NotificationType.ORDER_READY,
+                  NotificationType.RIDER_ORDER_AVAILABLE,
                   'New Delivery Available',
                   `Order ${order.orderNumber} is ready for pickup. Total: ₦${(order.total / 100).toLocaleString('en-NG')}`,
                   {
@@ -2467,7 +2405,7 @@ export class OrdersService {
                     total: order.total,
                     formattedTotal: `₦${(order.total / 100).toLocaleString('en-NG')}`,
                     itemCount: order.itemCount,
-                    source: 'order_ready',
+                    source: 'rider_order_available',
                   },
                   [NotificationChannel.IN_APP, NotificationChannel.PUSH],
                 );
@@ -2873,7 +2811,7 @@ export class OrdersService {
       await this.notificationsService
         .queueNotification(
           riderProfile.userId.toString(),
-          NotificationType.GENERAL,
+          NotificationType.RIDER_ASSIGNMENT_RELEASED,
           'Assignment Released',
           `Order ${order.orderNumber} was returned to the pool because it wasn't picked up within 3 hours.`,
           { orderId: order._id.toString(), orderNumber: order.orderNumber },
@@ -2890,7 +2828,7 @@ export class OrdersService {
     await this.notificationsService
       .queueNotification(
         order.userId.toString(),
-        NotificationType.GENERAL,
+        NotificationType.ORDER_FINDING_NEW_RIDER,
         'Finding a new rider',
         `Your rider for order ${order.orderNumber} was unable to pick up your order in time. We're finding you a new rider.`,
         { orderId: order._id.toString(), orderNumber: order.orderNumber },
@@ -3265,20 +3203,22 @@ export class OrdersService {
       // Don't throw - this is not critical
     }
 
-    // Credit rider wallet immediately with delivery earnings
+    // Credit rider wallet immediately with delivery earnings + platform base fee
     // (do not block delivery flow if this fails)
     try {
       if (
-        order.deliveryFee > 0 &&
+        order.deliveryType === DeliveryType.DOOR_DELIVERY &&
         riderProfile._id &&
         order.assignedRiderId &&
         order.assignedRiderId.toString() === riderProfile._id.toString()
       ) {
+        const siteSettings = await this.settingsService.get().catch(() => null);
+        const riderBaseFeeKobo = siteSettings?.riderBaseFeeKobo ?? 50000;
         await this.walletsService.creditRiderEarningForOrder({
           riderProfileId: riderProfile._id.toString(),
           orderId,
           orderNumber: order.orderNumber,
-          amount: order.deliveryFee,
+          amount: order.deliveryFee + riderBaseFeeKobo,
         });
       }
     } catch (error) {

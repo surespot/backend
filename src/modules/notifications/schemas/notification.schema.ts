@@ -19,6 +19,12 @@ export enum NotificationType {
   CHAT_MESSAGE = 'chat_message',
   NEW_REVIEW = 'new_review',
   PICKUP_LOCATION_AVAILABLE = 'pickup_location_available',
+  WALLET_CREDITED = 'wallet_credited',
+  WALLET_WITHDRAWAL_INITIATED = 'wallet_withdrawal_initiated',
+  RIDER_SEARCH_DELAYED = 'rider_search_delayed',
+  RIDER_ASSIGNMENT_RELEASED = 'rider_assignment_released',
+  ORDER_FINDING_NEW_RIDER = 'order_finding_new_rider',
+  RIDER_ORDER_AVAILABLE = 'rider_order_available',
 }
 
 export enum NotificationChannel {

@@ -8,6 +8,8 @@ import { NotificationsService } from './notifications.service';
 import { NotificationsRepository } from './notifications.repository';
 import { NotificationsGateway } from './notifications.gateway';
 import { PushNotificationService } from './push-notification.service';
+import { FcmSenderService } from './fcm-sender.service';
+import { ApnsSenderService } from './apns-sender.service';
 import { NotificationContextService } from './notification-context.service';
 import { NotificationsProcessor } from './notifications.processor';
 import {
@@ -51,6 +53,8 @@ import { PickupLocationsModule } from '../pickup-locations/pickup-locations.modu
     NotificationsRepository,
     NotificationsGateway,
     PushNotificationService,
+    FcmSenderService,
+    ApnsSenderService,
     NotificationContextService,
     NotificationsProcessor,
   ],

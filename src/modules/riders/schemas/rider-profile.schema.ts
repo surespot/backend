@@ -81,6 +81,9 @@ export class RiderProfile {
   @Prop({ type: Number, default: 0 })
   totalOnlineTimeToday: number; // in minutes
 
+  @Prop({ type: Date })
+  lastEarningsReminderSentAt?: Date;
+
   createdAt?: Date;
   updatedAt?: Date;
 }

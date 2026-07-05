@@ -11,6 +11,19 @@ export enum UserRole {
   PICKUP_ADMIN = 'pickup_admin',
 }
 
+export type PushPlatform = 'ios' | 'android';
+
+@Schema({ _id: false })
+export class PushToken {
+  @Prop({ required: true })
+  token: string;
+
+  @Prop({ type: String, enum: ['ios', 'android'], required: true })
+  platform: PushPlatform;
+}
+
+export const PushTokenSchema = SchemaFactory.createForClass(PushToken);
+
 @Schema({ timestamps: true })
 export class User {
   @Prop({ required: true })
@@ -79,8 +92,8 @@ export class User {
   @Prop()
   anonymizedAt?: Date;
 
-  @Prop({ type: [String], default: [] })
-  expoPushTokens?: string[];
+  @Prop({ type: [PushTokenSchema], default: [] })
+  pushTokens?: PushToken[];
 
   createdAt?: Date;
   updatedAt?: Date;
