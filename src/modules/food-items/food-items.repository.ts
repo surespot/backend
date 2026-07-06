@@ -450,21 +450,21 @@ export class FoodItemsRepository {
 
   async findPricingTypesByIds(
     ids: string[],
-  ): Promise<Map<string, PricingType>> {
+  ): Promise<Map<string, { pricingType: PricingType; category: string | undefined }>> {
     const objectIds = ids
       .filter((id) => Types.ObjectId.isValid(id))
       .map((id) => new Types.ObjectId(id));
     const items = await this.foodItemModel
       .find({ _id: { $in: objectIds } })
-      .select('_id pricingType')
+      .select('_id pricingType category')
       .lean()
       .exec();
-    const map = new Map<string, PricingType>();
+    const map = new Map<string, { pricingType: PricingType; category: string | undefined }>();
     for (const item of items) {
-      map.set(
-        (item._id as Types.ObjectId).toString(),
-        (item.pricingType as PricingType) ?? PricingType.PER_PORTION,
-      );
+      map.set((item._id as Types.ObjectId).toString(), {
+        pricingType: (item.pricingType as PricingType) ?? PricingType.PER_PORTION,
+        category: item.category as string | undefined,
+      });
     }
     return map;
   }
