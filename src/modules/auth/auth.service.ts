@@ -1364,6 +1364,26 @@ export class AuthService {
     };
   }
 
+  async requestCompletionToken(userId: string): Promise<{
+    success: boolean;
+    data: { signupVerificationToken: string };
+  }> {
+    const user = await this.authRepository.findUserById(userId);
+    if (!user) {
+      throw new UnauthorizedException({ success: false, error: { code: 'USER_NOT_FOUND', message: 'User not found' } });
+    }
+    if (userIsOnboardedForResponse(user)) {
+      throw new BadRequestException({ success: false, error: { code: 'ALREADY_ONBOARDED', message: 'Profile is already complete' } });
+    }
+    const identifier = user.phone || user.email;
+    if (!identifier) {
+      throw new BadRequestException({ success: false, error: { code: 'NO_CONTACT', message: 'No phone or email on account' } });
+    }
+    const payload = user.phone ? { phone: user.phone } : { email: user.email };
+    const signupVerificationToken = this.jwtService.sign(payload, { expiresIn: '1h' });
+    return { success: true, data: { signupVerificationToken } };
+  }
+
   async completeProfile(
     verificationToken: string,
     dto: CompleteProfileDto,

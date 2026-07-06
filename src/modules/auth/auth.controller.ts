@@ -410,6 +410,17 @@ export class AuthController {
     );
   }
 
+  @Post('profile/request-completion-token')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get a fresh verification token for authenticated users who need to complete their profile' })
+  @ApiResponse({ status: 200, description: 'Verification token issued' })
+  @ApiResponse({ status: 400, description: 'Profile already complete or no contact info on account' })
+  async requestCompletionToken(@CurrentUser() user: { id: string }) {
+    return this.authService.requestCompletionToken(user.id);
+  }
+
   @Post('profile/complete')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Complete user profile during onboarding' })
