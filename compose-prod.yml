@@ -67,6 +67,9 @@ services:
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       LOKI_URL: http://loki:3100
+      FIREBASE_SERVICE_ACCOUNT_PATH: /run/secrets/firebase-service-account.json
+    volumes:
+      - /opt/surespot-backend-prod/surespot-app-firebase.json:/run/secrets/firebase-service-account.json:ro
     depends_on:
       redis-prod:
         condition: service_healthy
