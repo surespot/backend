@@ -85,7 +85,7 @@ function userIsOnboardedForResponse(user: UserDocument): boolean {
     return true;
   }
   if (user.role === UserRole.ADMIN) {
-    return Boolean(user.pickupLocationId);
+    return true;
   }
   if (user.isOnboarded === true) return true;
   return Boolean(
