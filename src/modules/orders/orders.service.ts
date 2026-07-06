@@ -1024,9 +1024,41 @@ export class OrdersService {
         };
       }
 
-      // Card payment: initialize Paystack and return the authorization URL.
-      // The order will be confirmed via webhook / reconciliation once payment succeeds.
+      // Card payment path.
       if (activeOrder.paymentMethod === 'card' || activeOrder.paymentMethod === 'paystack') {
+        // Legacy "pay-first" flow: client initialized payment separately before creating the
+        // order, so a successful transaction already exists for dto.paymentIntentId.
+        // Do NOT re-initialize — that would overwrite paymentIntentId with a new reference
+        // that was never paid, leaving the order stuck in PENDING forever.
+        if (dto.paymentIntentId) {
+          try {
+            await this.transactionsService.linkTransactionToOrder(
+              dto.paymentIntentId,
+              activeOrder._id.toString(),
+            );
+          } catch (e) {
+            this.logger.warn(
+              `Could not link transaction ${dto.paymentIntentId} to order ${orderNumber}: ${e instanceof Error ? e.message : String(e)}`,
+            );
+          }
+
+          try {
+            await this.transactionsService.verifyPayment(dto.paymentIntentId);
+          } catch (e) {
+            this.logger.warn(
+              `Could not verify pre-existing payment ${dto.paymentIntentId} for order ${orderNumber}: ${e instanceof Error ? e.message : String(e)}`,
+            );
+          }
+
+          const finalOrder = await this.ordersRepository.findById(activeOrder._id.toString());
+          return {
+            success: true,
+            message: 'Order placed successfully',
+            data: await this.formatOrder(finalOrder ?? activeOrder),
+          };
+        }
+
+        // New "order-first" flow: initialize a fresh Paystack payment now.
         const userRecord = await this.authRepository.findUserById(userId);
         try {
           const paystackResult = await this.transactionsService.initializePayment(
