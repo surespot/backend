@@ -52,7 +52,7 @@ import { ConfigService } from '@nestjs/config';
 import { SettingsService } from '../settings/settings.service';
 import { RedisService } from '../../common/redis/redis.service';
 import { createHash } from 'crypto';
-import { PricingType } from '../food-items/schemas/food-item.schema';
+import { FoodCategory, PricingType } from '../food-items/schemas/food-item.schema';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 
@@ -612,13 +612,16 @@ export class OrdersService {
     // Calculate packaging fee:
     // - per_portion items: 1 pack per 3 portions (ceil), e.g. 7 portions = 3 packs
     // - per_pack items: 1 fee per unit ordered
+    // - Protein category items are excluded (they share packaging with the main food)
     let packagingFee = 0;
     if (!this.isDemoUser(isDemo)) {
       const itemIds = items.map((item) => item.foodItemId.toString());
-      const pricingTypes = await this.foodItemsRepository.findPricingTypesByIds(itemIds);
+      const itemInfo = await this.foodItemsRepository.findPricingTypesByIds(itemIds);
       let packCount = 0;
       for (const item of items) {
-        const type = pricingTypes.get(item.foodItemId.toString()) ?? PricingType.PER_PORTION;
+        const info = itemInfo.get(item.foodItemId.toString());
+        if (info?.category === FoodCategory.PROTEIN) continue;
+        const type = info?.pricingType ?? PricingType.PER_PORTION;
         packCount +=
           type === PricingType.PER_PACK
             ? item.quantity
