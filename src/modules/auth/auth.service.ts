@@ -89,7 +89,7 @@ function userIsOnboardedForResponse(user: UserDocument): boolean {
   }
   if (user.isOnboarded === true) return true;
   return Boolean(
-    user.birthday && !(user.firstName === 'New' && user.lastName === 'User'),
+    !(user.firstName === 'New' && user.lastName === 'User'),
   );
 }
 
