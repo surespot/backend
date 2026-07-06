@@ -367,6 +367,29 @@ export class OrdersService {
       hasPromoCode: Boolean(dto.promoCode),
     });
 
+    // Email and phone are required before checkout
+    if (!this.isDemoUser(isDemo)) {
+      const userRecord = await this.authRepository.findUserById(userId);
+      if (!userRecord?.email) {
+        throw new BadRequestException({
+          success: false,
+          error: {
+            code: 'EMAIL_REQUIRED',
+            message: 'An email address is required to place an order. Please add one in your profile.',
+          },
+        });
+      }
+      if (!userRecord?.phone) {
+        throw new BadRequestException({
+          success: false,
+          error: {
+            code: 'PHONE_REQUIRED',
+            message: 'A phone number is required to place an order. Please add one in your profile.',
+          },
+        });
+      }
+    }
+
     // Enforce order cutoff time (default 8PM WAT = UTC+1)
     if (!this.isDemoUser(isDemo)) {
       const settings = await this.settingsService.get();
