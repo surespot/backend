@@ -16,6 +16,7 @@ import { PrometheusModule } from '@willsoto/nestjs-prometheus';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { StorageModule } from './common/storage/storage.module';
+import { RedisModule } from './common/redis/redis.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { SavedLocationsModule } from './modules/saved-locations/saved-locations.module';
 import { PromotionsModule } from './modules/promotions/promotions.module';
@@ -141,6 +142,9 @@ import { HttpMetricsMiddleware } from './common/metrics/http-metrics.middleware'
 
     // Storage (Cloudinary or S3 - switchable via STORAGE_PROVIDER)
     StorageModule.forRoot(),
+
+    // Redis (shared client for idempotency keys, caching)
+    RedisModule,
 
     // Scheduling (cron jobs)
     ScheduleModule.forRoot(),

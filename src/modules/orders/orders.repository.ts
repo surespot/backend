@@ -211,11 +211,30 @@ export class OrdersRepository {
       .find({
         paymentStatus: PaymentStatus.PENDING,
         status: OrderStatus.PENDING,
-        paymentMethod: 'card',
+        paymentMethod: { $in: ['card', 'paystack'] },
         paymentIntentId: { $exists: true, $ne: null },
         createdAt: { $lt: cutoff },
       })
       .select('_id paymentIntentId orderNumber')
+      .exec();
+  }
+
+  async findOrphanedPendingCardOrders(
+    olderThanMs: number,
+  ): Promise<OrderDocument[]> {
+    const cutoff = new Date(Date.now() - olderThanMs);
+    return this.orderModel
+      .find({
+        paymentStatus: PaymentStatus.PENDING,
+        status: OrderStatus.PENDING,
+        paymentMethod: { $in: ['card', 'paystack'] },
+        $or: [
+          { paymentIntentId: { $exists: false } },
+          { paymentIntentId: null },
+        ],
+        createdAt: { $lt: cutoff },
+      })
+      .select('_id orderNumber')
       .exec();
   }
 
@@ -236,6 +255,7 @@ export class OrdersRepository {
 
     const query: Record<string, unknown> = {
       userId: new Types.ObjectId(userId),
+      $nor: [{ paymentMethod: 'card', paymentStatus: 'pending' }, { paymentMethod: 'paystack', paymentStatus: 'pending' }],
     };
 
     if (filter.status) {
@@ -393,6 +413,35 @@ export class OrdersRepository {
     const options = session ? { new: true, session } : { new: true };
     return this.orderModel
       .findByIdAndUpdate(id, { $set: updateData }, options)
+      .populate('pickupLocationId')
+      .exec();
+  }
+
+  /**
+   * Atomically transition an order's paymentStatus from PENDING to a new status.
+   * Returns the updated document if the transition happened, or null if the order
+   * was already in a non-PENDING payment state (i.e. already processed).
+   * Use this instead of read-then-write in payment webhooks to prevent double side effects.
+   */
+  async atomicUpdatePaymentStatus(
+    reference: string,
+    paymentStatus: PaymentStatus,
+    extra: Partial<{
+      status: OrderStatus;
+      cancelledAt: Date;
+      cancellationReason: string;
+      refundId: number;
+    }>,
+    session?: ClientSession,
+  ): Promise<OrderDocument | null> {
+    const updateData: Record<string, unknown> = { paymentStatus, ...extra };
+    const options = session ? { new: true, session } : { new: true };
+    return this.orderModel
+      .findOneAndUpdate(
+        { paymentIntentId: reference, paymentStatus: PaymentStatus.PENDING },
+        { $set: updateData },
+        options,
+      )
       .populate('pickupLocationId')
       .exec();
   }
@@ -1272,6 +1321,7 @@ export class OrdersRepository {
     const query: Record<string, unknown> = {
       pickupLocationId: new Types.ObjectId(pickupLocationId),
       paymentMethod: { $ne: 'demo' },
+      $nor: [{ paymentMethod: 'card', paymentStatus: 'pending' }, { paymentMethod: 'paystack', paymentStatus: 'pending' }],
     };
 
     // Apply status filter
@@ -1344,7 +1394,10 @@ export class OrdersRepository {
   async getOrderCountsByStatus(
     pickupLocationId: Types.ObjectId | undefined,
   ): Promise<Record<OrderStatus, number>> {
-    const matchStage: Record<string, unknown> = { paymentMethod: { $ne: 'demo' } };
+    const matchStage: Record<string, unknown> = {
+      paymentMethod: { $ne: 'demo' },
+      $nor: [{ paymentMethod: 'card', paymentStatus: 'pending' }, { paymentMethod: 'paystack', paymentStatus: 'pending' }],
+    };
     if (pickupLocationId) {
       matchStage.pickupLocationId = pickupLocationId;
     }

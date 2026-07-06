@@ -978,7 +978,11 @@ export class NotificationsService {
   /**
    * Register or update push notification token
    */
-  async registerPushToken(userId: string, token: string) {
+  async registerPushToken(
+    userId: string,
+    token: string,
+    platform: 'ios' | 'android',
+  ) {
     try {
       const user = await this.authRepository.findUserById(userId);
       if (!user) {
@@ -992,13 +996,14 @@ export class NotificationsService {
       }
 
       // Get existing tokens or initialize empty array
-      const existingTokens: string[] = user.expoPushTokens || [];
+      const existingTokens = user.pushTokens || [];
 
-      // Add token if it doesn't exist
-      if (!existingTokens.includes(token)) {
-        const updatedTokens = [...existingTokens, token];
+      // Add token if it doesn't exist; update platform if it does (device re-registers under new platform is not expected, but keep it correct)
+      const existing = existingTokens.find((t) => t.token === token);
+      if (!existing) {
+        const updatedTokens = [...existingTokens, { token, platform }];
         await this.authRepository.updateUser(userId, {
-          expoPushTokens: updatedTokens,
+          pushTokens: updatedTokens,
         });
 
         this.logger.log(`Push token registered for user ${userId}`);
@@ -1037,13 +1042,11 @@ export class NotificationsService {
         });
       }
 
-      const existingTokens: string[] = user.expoPushTokens || [];
-      const updatedTokens: string[] = existingTokens.filter(
-        (t: string) => t !== token,
-      );
+      const existingTokens = user.pushTokens || [];
+      const updatedTokens = existingTokens.filter((t) => t.token !== token);
 
       await this.authRepository.updateUser(userId, {
-        expoPushTokens: updatedTokens,
+        pushTokens: updatedTokens,
       });
 
       this.logger.log(`Push token removed for user ${userId}`);

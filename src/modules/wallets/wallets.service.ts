@@ -276,7 +276,7 @@ export class WalletsService {
       if (rider && rider.userId) {
         await this.notificationsService.queueNotification(
           rider.userId.toString(),
-          NotificationType.PAYMENT_SUCCESS,
+          NotificationType.WALLET_CREDITED,
           'Wallet Credited',
           `You received ₦${(amount / 100).toFixed(2)} for order ${orderNumber}.`,
           {
@@ -604,7 +604,7 @@ export class WalletsService {
         if (rider && rider.userId) {
           await this.notificationsService.queueNotification(
             rider.userId.toString(),
-            NotificationType.GENERAL,
+            NotificationType.WALLET_WITHDRAWAL_INITIATED,
             'Withdrawal Initiated',
             `Your withdrawal of ₦${(amount / 100).toFixed(2)} has been initiated to your bank account.`,
             {

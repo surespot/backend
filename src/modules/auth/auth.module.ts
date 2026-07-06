@@ -24,6 +24,7 @@ import { SmsModule } from '../sms/sms.module';
 import { RidersModule } from '../riders/riders.module';
 import { SavedLocationsModule } from '../saved-locations/saved-locations.module';
 import { CartModule } from '../cart/cart.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { UserCleanupScheduler } from './user-cleanup.scheduler';
 
 @Module({
@@ -55,6 +56,7 @@ import { UserCleanupScheduler } from './user-cleanup.scheduler';
     forwardRef(() => RidersModule),
     forwardRef(() => SavedLocationsModule),
     forwardRef(() => CartModule),
+    forwardRef(() => NotificationsModule),
   ],
   controllers: [AuthController],
   providers: [

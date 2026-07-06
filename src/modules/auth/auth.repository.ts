@@ -410,7 +410,7 @@ export class AuthRepository {
           googleId: null,
           appleId: null,
           birthday: null,
-          expoPushTokens: [],
+          pushTokens: [],
           anonymizedAt: new Date(),
         },
       })

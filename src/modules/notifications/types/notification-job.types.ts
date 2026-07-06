@@ -46,7 +46,7 @@ export interface UserContext {
   email: string;
   phone: string;
   isEmailVerified: boolean;
-  expoPushTokens: string[];
+  pushTokens: { token: string; platform: 'ios' | 'android' }[];
 }
 
 /**

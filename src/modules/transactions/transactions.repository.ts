@@ -99,6 +99,19 @@ export class TransactionsRepository {
     return this.transactionModel.findOne({ reference }).exec();
   }
 
+  async findStalePending(olderThanMs: number): Promise<TransactionDocument[]> {
+    const cutoff = new Date(Date.now() - olderThanMs);
+    return this.transactionModel
+      .find({
+        status: TransactionStatus.PENDING,
+        type: TransactionType.PAYMENT,
+        provider: PaymentProvider.PAYSTACK,
+        createdAt: { $lt: cutoff },
+      })
+      .select('_id reference')
+      .exec();
+  }
+
   async findByOrderId(orderId: string): Promise<TransactionDocument | null> {
     this.validateObjectId(orderId, 'orderId');
     return this.transactionModel

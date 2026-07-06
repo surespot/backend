@@ -5,7 +5,9 @@ import {
   IsDateString,
   IsMongoId,
   IsPhoneNumber,
+  IsEnum,
 } from 'class-validator';
+import { VehicleType } from '../schemas/rider-profile.schema';
 
 export class AdminUpdateRiderProfileDto {
   @ApiPropertyOptional({ example: 'John' })
@@ -32,4 +34,9 @@ export class AdminUpdateRiderProfileDto {
   @IsOptional()
   @IsMongoId()
   regionId?: string;
+
+  @ApiPropertyOptional({ enum: VehicleType, example: VehicleType.MOTORCYCLE })
+  @IsOptional()
+  @IsEnum(VehicleType)
+  vehicleType?: VehicleType;
 }

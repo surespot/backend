@@ -12,7 +12,9 @@ import {
   Max,
   IsInt,
   IsPhoneNumber,
+  IsEnum,
 } from 'class-validator';
+import { VehicleType } from '../schemas/rider-profile.schema';
 
 export class CreateRiderProfileDto {
   @ApiProperty({
@@ -90,4 +92,12 @@ export class CreateRiderProfileDto {
   @Min(0, { each: true })
   @Max(6, { each: true })
   schedule?: number[];
+
+  @ApiProperty({
+    description: 'Vehicle type used for deliveries',
+    enum: VehicleType,
+    example: VehicleType.MOTORCYCLE,
+  })
+  @IsEnum(VehicleType)
+  vehicleType: VehicleType;
 }

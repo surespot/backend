@@ -14,7 +14,14 @@ export interface AddressSuggestion {
   placeId: string;
 }
 
+export interface RouteResult {
+  distanceMeters: number;
+  durationSeconds: number;
+  travelMode: 'BICYCLE' | 'TWO_WHEELER';
+}
+
 const PLACES_BASE = 'https://places.googleapis.com/v1';
+const ROUTES_BASE = 'https://routes.googleapis.com/directions/v2:computeRoutes';
 
 @Injectable()
 export class PlacesService {
@@ -151,5 +158,64 @@ export class PlacesService {
       state,
       country,
     };
+  }
+
+  async getRoute(
+    originLat: number,
+    originLng: number,
+    destLat: number,
+    destLng: number,
+  ): Promise<RouteResult | null> {
+    const key = this.ensureApiKey();
+
+    const callRoutes = async (
+      travelMode: 'BICYCLE' | 'TWO_WHEELER',
+    ): Promise<RouteResult | null> => {
+      const body: Record<string, unknown> = {
+        origin: { location: { latLng: { latitude: originLat, longitude: originLng } } },
+        destination: { location: { latLng: { latitude: destLat, longitude: destLng } } },
+        travelMode,
+      };
+      if (travelMode === 'TWO_WHEELER') {
+        body.routingPreference = 'TRAFFIC_AWARE';
+      }
+
+      const { data } = await axios.post(ROUTES_BASE, body, {
+        headers: {
+          'X-Goog-Api-Key': key,
+          'X-Goog-FieldMask': 'routes.distanceMeters,routes.duration',
+        },
+      });
+
+      if (!data.routes?.length) return null;
+
+      const route = data.routes[0];
+      const durationSeconds = parseInt(
+        String(route.duration).replace('s', ''),
+        10,
+      );
+      return { distanceMeters: route.distanceMeters, durationSeconds, travelMode };
+    };
+
+    try {
+      const bicycleResult = await callRoutes('BICYCLE');
+      if (!bicycleResult) return null;
+
+      if (bicycleResult.distanceMeters / 1000 > 5) {
+        const motoResult = await callRoutes('TWO_WHEELER');
+        return motoResult ?? bicycleResult;
+      }
+
+      return bicycleResult;
+    } catch (error) {
+      if (error instanceof AxiosError) {
+        this.logger.warn(
+          `Routes API call failed (${error.response?.status ?? 'network'}): ${JSON.stringify(error.response?.data ?? {})}`,
+        );
+      } else {
+        this.logger.warn(`Routes API unexpected error: ${String(error)}`);
+      }
+      return null;
+    }
   }
 }

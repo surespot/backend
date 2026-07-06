@@ -45,6 +45,11 @@ import { VerifyBootstrapCodeDto } from './dto/verify-bootstrap-code.dto';
 import { CreateAdminBootstrapDto } from './dto/create-admin-bootstrap.dto';
 import { RidersRepository } from '../riders/riders.repository';
 import { RiderStatus } from '../riders/schemas/rider-profile.schema';
+import { NotificationsService } from '../notifications/notifications.service';
+import {
+  NotificationType,
+  NotificationChannel,
+} from '../notifications/schemas/notification.schema';
 import { GoogleProfile } from './strategies/google.strategy';
 import verifyAppleToken from 'verify-apple-id-token';
 
@@ -107,6 +112,9 @@ export class AuthService {
     @Optional()
     @Inject(forwardRef(() => RidersRepository))
     private readonly ridersRepository: RidersRepository | null,
+    @Optional()
+    @Inject(forwardRef(() => NotificationsService))
+    private readonly notificationsService: NotificationsService | null,
   ) {
     this.otpExpiryMinutes = Number(
       this.configService.get('OTP_EXPIRY_MINUTES') ?? 5,
@@ -1611,10 +1619,61 @@ export class AuthService {
           },
         });
       }
+
+      // Monday earnings-withdrawal reminder — once per Monday, on login
+      if (riderProfile && new Date().getDay() === 1) {
+        const alreadySentToday =
+          riderProfile.lastEarningsReminderSentAt &&
+          riderProfile.lastEarningsReminderSentAt.toDateString() ===
+            new Date().toDateString();
+
+        if (!alreadySentToday) {
+          this.ridersRepository
+            .updateProfile(riderProfile._id, {
+              lastEarningsReminderSentAt: new Date(),
+            })
+            .catch((err) => {
+              this.logger.warn(
+                `Failed to record earnings reminder timestamp for rider ${riderProfile._id.toString()}: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            });
+
+          this.notificationsService
+            ?.queueNotification(
+              user._id.toString(),
+              NotificationType.GENERAL,
+              'Withdraw Your Earnings',
+              "It's Monday! You can withdraw your earnings today.",
+              { isMondayEarningsReminder: true },
+              [NotificationChannel.IN_APP, NotificationChannel.PUSH],
+            )
+            .catch((err) => {
+              this.logger.warn(
+                `Failed to send Monday earnings reminder to rider ${user._id.toString()}: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            });
+        }
+      }
     }
 
     // Update last login
     await this.authRepository.updateLastLoginAt(user._id);
+
+    // TEMP: push-notification pipeline smoke test — remove once FCM/APNS delivery is verified end-to-end
+    this.notificationsService
+      ?.queueNotification(
+        user._id.toString(),
+        NotificationType.GENERAL,
+        'Welcome to Surespot',
+        'Welcome to Surespot!',
+        { isLoginPushTest: true },
+        [NotificationChannel.IN_APP, NotificationChannel.PUSH],
+      )
+      .catch((err) => {
+        this.logger.warn(
+          `Failed to send login push test notification to user ${user._id.toString()}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
 
     // Generate tokens
     const tokens = await this.generateTokenPair(user._id.toString(), user.role);
@@ -1977,10 +2036,10 @@ export class AuthService {
       const user = await this.authRepository.findUserById(
         tokenRecord.userId.toString(),
       );
-      if (user?.expoPushTokens?.length) {
+      if (user?.pushTokens?.length) {
         await this.authRepository.updateUser(tokenRecord.userId.toString(), {
-          expoPushTokens: user.expoPushTokens.filter(
-            (t) => t !== dto.expoPushToken,
+          pushTokens: user.pushTokens.filter(
+            (t) => t.token !== dto.expoPushToken,
           ),
         });
       }
@@ -3469,7 +3528,7 @@ export class AuthService {
 
     await this.authRepository.softDeleteUser(userId);
     await this.authRepository.revokeAllUserTokens(new Types.ObjectId(userId));
-    await this.authRepository.updateUser(userId, { expoPushTokens: [] });
+    await this.authRepository.updateUser(userId, { pushTokens: [] });
 
     if (user.email) {
       try {

@@ -29,6 +29,7 @@ import { WalletsModule } from '../wallets/wallets.module';
 import { ChatModule } from '../chat/chat.module';
 import { AdminModule } from '../admin/admin.module';
 import { SettingsModule } from '../settings/settings.module';
+import { PlacesModule } from '../places/places.module';
 
 @Module({
   imports: [
@@ -59,6 +60,7 @@ import { SettingsModule } from '../settings/settings.module';
     forwardRef(() => ChatModule),
     forwardRef(() => AdminModule),
     SettingsModule,
+    forwardRef(() => PlacesModule),
   ],
   controllers: [OrdersController, CheckoutController],
   providers: [

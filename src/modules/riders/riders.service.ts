@@ -27,6 +27,7 @@ import {
 import {
   RiderProfileDocument,
   RiderStatus,
+  VehicleType,
   SCHEDULE_TYPE_MAP,
 } from './schemas/rider-profile.schema';
 import {
@@ -117,6 +118,7 @@ export class RidersService {
       regionId: new Types.ObjectId(dto.regionId),
       registrationCode,
       schedule: dto.schedule || [...SCHEDULE_TYPE_MAP['full-time']],
+      vehicleType: dto.vehicleType,
     });
 
     // Send registration code (don't fail if delivery fails)
@@ -429,6 +431,7 @@ export class RidersService {
       updates.dateOfBirth = new Date(dto.dateOfBirth);
     if (dto.regionId !== undefined)
       updates.regionId = new Types.ObjectId(dto.regionId);
+    if (dto.vehicleType !== undefined) updates.vehicleType = dto.vehicleType;
 
     const updated = await this.ridersRepository.updateProfile(id, updates);
 
@@ -447,6 +450,28 @@ export class RidersService {
       success: true,
       message: 'Rider profile updated successfully',
       data: this.formatProfile(updated!, false),
+    };
+  }
+
+  async updateVehicleType(userId: string, vehicleType: VehicleType) {
+    const profile = await this.ridersRepository.findByUserId(userId);
+    if (!profile) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'RIDER_PROFILE_NOT_FOUND',
+          message: 'Rider profile not found',
+        },
+      });
+    }
+    const updated = await this.ridersRepository.updateProfile(
+      profile._id.toString(),
+      { vehicleType },
+    );
+    return {
+      success: true,
+      message: 'Vehicle type updated successfully',
+      data: { vehicleType: updated!.vehicleType },
     };
   }
 
@@ -1086,6 +1111,7 @@ export class RidersService {
       schedule: profile.schedule,
       rating: profile.rating,
       status: profile.status,
+      vehicleType: profile.vehicleType,
       isDemo: profile.isDemo ?? false,
       ...(!mask && { registrationCode: profile.registrationCode }),
       createdAt: profile.createdAt,
