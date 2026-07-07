@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsEnum, IsOptional, IsString } from 'class-validator';
 
 export enum AdminOrderStatus {
   PENDING = 'Pending',
@@ -28,4 +28,12 @@ export class AdminUpdateOrderStatusDto {
   @IsOptional()
   @IsString()
   reason?: string;
+
+  @ApiPropertyOptional({
+    description: 'Skip refund when cancelling a paid order',
+    example: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  skipRefund?: boolean;
 }
