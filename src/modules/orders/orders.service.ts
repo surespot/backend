@@ -1569,6 +1569,7 @@ export class OrdersService {
     orderId: string,
     dto: UpdateOrderStatusDto,
     updatedById: string,
+    skipRefund = false,
   ) {
     const order = await this.ordersRepository.findById(orderId);
 
@@ -1628,8 +1629,8 @@ export class OrdersService {
           },
         });
       }
-      // If paid via Paystack, request refund before cancelling
-      if (order.paymentStatus === PaymentStatus.PAID) {
+      // If paid via Paystack, request refund before cancelling (unless explicitly skipped)
+      if (order.paymentStatus === PaymentStatus.PAID && !skipRefund) {
         const paymentReference =
           order.paymentIntentId ??
           (await this.transactionsService.getTransactionByOrderId(orderId))

@@ -452,6 +452,7 @@ export class AdminOrdersService {
         message: dto.reason,
       },
       updatedById,
+      dto.skipRefund ?? false,
     );
 
     // Return formatted order details
