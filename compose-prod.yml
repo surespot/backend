@@ -68,8 +68,10 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       LOKI_URL: http://loki:3100
       FIREBASE_SERVICE_ACCOUNT_PATH: /run/secrets/firebase-service-account.json
+      APNS_KEY_PATH: /run/secrets/apns-key.p8
     volumes:
       - /opt/surespot-backend-prod/surespot-app-firebase.json:/run/secrets/firebase-service-account.json:ro
+      - /opt/surespot-backend-prod/AuthKey_A9LVQNRNH6.p8:/run/secrets/apns-key.p8:ro
     depends_on:
       redis-prod:
         condition: service_healthy
