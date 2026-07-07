@@ -612,7 +612,7 @@ export class OrdersService {
     // Calculate packaging fee:
     // - per_portion items: 1 pack per 3 portions (ceil), e.g. 7 portions = 3 packs
     // - per_pack items: 1 fee per unit ordered
-    // - Protein category items are excluded (they share packaging with the main food)
+    // - Protein and Drinks category items are excluded (they share packaging with the main food)
     let packagingFee = 0;
     if (!this.isDemoUser(isDemo)) {
       const itemIds = items.map((item) => item.foodItemId.toString());
@@ -620,7 +620,7 @@ export class OrdersService {
       let packCount = 0;
       for (const item of items) {
         const info = itemInfo.get(item.foodItemId.toString());
-        if (info?.category === FoodCategory.PROTEIN) continue;
+        if (info?.category === FoodCategory.PROTEIN || info?.category === FoodCategory.DRINKS) continue;
         const type = info?.pricingType ?? PricingType.PER_PORTION;
         packCount +=
           type === PricingType.PER_PACK
