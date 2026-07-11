@@ -2010,10 +2010,6 @@ export class OrdersService {
 
     if (paymentStatus === PaymentStatus.PAID) {
       extra.status = OrderStatus.CONFIRMED;
-    } else if (paymentStatus === PaymentStatus.FAILED) {
-      extra.status = OrderStatus.CANCELLED;
-      extra.cancelledAt = new Date();
-      extra.cancellationReason = 'Payment failed';
     }
 
     const order = await this.ordersRepository.atomicUpdatePaymentStatus(
@@ -2206,6 +2202,13 @@ export class OrdersService {
         order.orderNumber,
         order._id.toString(),
       );
+      try {
+        await this.ordersRepository.deleteById(order._id.toString());
+      } catch (e) {
+        this.logger.warn(
+          `Could not delete failed-payment order ${order.orderNumber}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
     }
   }
 

@@ -2,7 +2,6 @@ import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { TransactionsService } from './transactions.service';
 import { OrdersRepository } from '../orders/orders.repository';
-import { OrderStatus, PaymentStatus } from '../orders/schemas/order.schema';
 
 // Orders older than this with paymentStatus=PENDING are eligible for reconciliation.
 const STALE_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
@@ -17,6 +16,7 @@ export class PaymentReconciliationScheduler implements OnApplicationBootstrap {
   ) {}
 
   async onApplicationBootstrap() {
+    await this.cleanupFailedPaymentOrders();
     await this.reconcilePendingPayments();
   }
 
@@ -85,23 +85,19 @@ export class PaymentReconciliationScheduler implements OnApplicationBootstrap {
     }
 
     this.logger.log(
-      `Force-cancelling ${stale.length} abandoned + ${orphaned.length} orphaned order(s)...`,
+      `Deleting ${stale.length} abandoned + ${orphaned.length} orphaned order(s)...`,
     );
 
-    for (const order of all) {
-      try {
-        await this.ordersRepository.updateOrder(order._id.toString(), {
-          status: OrderStatus.CANCELLED,
-          paymentStatus: PaymentStatus.FAILED,
-          cancelledAt: new Date(),
-          cancellationReason: 'Payment not completed',
-        });
-        this.logger.warn(`Force-cancelled order ${order.orderNumber}`);
-      } catch (err) {
-        this.logger.warn(
-          `Could not force-cancel order ${order.orderNumber}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
+    const deleted = await this.ordersRepository.deleteManyByIds(
+      all.map((o) => o._id),
+    );
+    this.logger.warn(`Deleted ${deleted} abandoned/orphaned order(s)`);
+  }
+
+  private async cleanupFailedPaymentOrders() {
+    const count = await this.ordersRepository.deleteOrdersWithFailedPayment();
+    if (count > 0) {
+      this.logger.log(`Startup cleanup: deleted ${count} failed-payment order(s)`);
     }
   }
 }
