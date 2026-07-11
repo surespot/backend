@@ -70,7 +70,8 @@ export class CartRepository {
       discountAmount: number;
       discountPercent: number;
       promoCode: string;
-      promotionId: string;
+      promotionId: string | null;
+      marketerId: string | null;
       total: number;
       itemCount: number;
       extrasCount: number;
@@ -102,6 +103,12 @@ export class CartRepository {
         : null;
     }
 
+    if (data.marketerId !== undefined) {
+      updateData.marketerId = data.marketerId
+        ? new Types.ObjectId(data.marketerId)
+        : null;
+    }
+
     const options = session ? { new: true, session } : { new: true };
     return this.cartModel
       .findByIdAndUpdate(cartId, { $set: updateData }, options)
@@ -114,7 +121,7 @@ export class CartRepository {
       .findByIdAndUpdate(
         cartId,
         {
-          $unset: { promoCode: '', promotionId: '', discountPercent: '' },
+          $unset: { promoCode: '', promotionId: '', marketerId: '', discountPercent: '' },
           $set: { discountAmount: 0 },
         },
         { new: true },

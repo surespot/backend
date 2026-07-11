@@ -37,6 +37,7 @@ import { IntegrationsTestModule } from './modules/integrations-test/integrations
 import { HealthModule } from './modules/health/health.module';
 import { PlacesModule } from './modules/places/places.module';
 import { SettingsModule } from './modules/settings/settings.module';
+import { MarketersModule } from './modules/marketers/marketers.module';
 import { CorrelationMiddleware } from './common/correlation/correlation.middleware';
 import { HttpMetricsMiddleware } from './common/metrics/http-metrics.middleware';
 
@@ -157,6 +158,9 @@ import { HttpMetricsMiddleware } from './common/metrics/http-metrics.middleware'
 
     // Promotions module
     PromotionsModule,
+
+    // Marketers (affiliate) module
+    MarketersModule,
 
     // Food Items module
     FoodItemsModule,

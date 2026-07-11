@@ -14,6 +14,7 @@ import { CartService } from '../cart/cart.service';
 import { PickupLocationsService } from '../pickup-locations/pickup-locations.service';
 import { SavedLocationsService } from '../saved-locations/saved-locations.service';
 import { PromotionsService } from '../promotions/promotions.service';
+import { MarketersService } from '../marketers/marketers.service';
 import { FoodItemsRepository } from '../food-items/food-items.repository';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
@@ -109,7 +110,9 @@ export interface OrderResponse {
     coordinates?: { latitude: number; longitude: number };
     instructions?: string;
     contactPhone?: string;
+    contactName?: string;
   };
+  riderPayout?: number; // deliveryFee + platform base fee — only present in rider-context responses
   pickupLocation?: {
     id: string;
     name: string;
@@ -150,6 +153,7 @@ export class OrdersService {
     private readonly pickupLocationsService: PickupLocationsService,
     private readonly savedLocationsService: SavedLocationsService,
     private readonly promotionsService: PromotionsService,
+    private readonly marketersService: MarketersService,
     private readonly foodItemsRepository: FoodItemsRepository,
     private readonly notificationsService: NotificationsService,
     private readonly notificationsGateway: NotificationsGateway,
@@ -657,23 +661,39 @@ export class OrdersService {
           lineTotal: effectivePrice * item.quantity,
         };
       });
-      const validation = await this.promotionsService.validateDiscountCode(
+      const promoContext = {
+        orderAmount: cartTotal,
+        deliveryFee,
+        cartItems: cartItemsForPromo,
+      };
+      const promoValidation = await this.promotionsService.validateDiscountCode(
         codeToValidate,
-        {
-          orderAmount: cartTotal,
-          deliveryFee,
-          cartItems: cartItemsForPromo,
-        },
+        promoContext,
       );
-      if (!validation.valid) {
-        errors.push({
-          field: 'promoCode',
-          message: validation.message || 'Invalid promo code',
-        });
-      } else {
-        discountAmount = validation.discountAmount || 0;
-        discountPercent = validation.promotion?.discountValue;
+      if (promoValidation.valid) {
+        discountAmount = promoValidation.discountAmount || 0;
+        discountPercent = promoValidation.promotion?.discountValue;
         promoCode = codeToValidate.toUpperCase();
+      } else {
+        const marketerValidation = await this.marketersService.validateMarketerCode(
+          codeToValidate,
+          userId,
+          promoContext,
+        );
+        if (marketerValidation.valid) {
+          discountAmount = marketerValidation.discountAmount || 0;
+          discountPercent = marketerValidation.marketer?.discountValue;
+          promoCode = codeToValidate.toUpperCase();
+        } else {
+          const message =
+            promoValidation.message !== 'Invalid or expired discount code'
+              ? promoValidation.message
+              : marketerValidation.message || promoValidation.message;
+          errors.push({
+            field: 'promoCode',
+            message: message || 'Invalid promo code',
+          });
+        }
       }
     }
 
@@ -838,6 +858,15 @@ export class OrdersService {
       let pickupLocationId: string | undefined;
 
       if (dto.deliveryType === DeliveryType.DOOR_DELIVERY) {
+        // Fetch user name once to store as contactName on the order
+        const placeOrderUser = this.isDemoUser(isDemo)
+          ? null
+          : await this.authRepository.findUserById(userId).catch(() => null);
+        const contactName =
+          placeOrderUser
+            ? [placeOrderUser.firstName, placeOrderUser.lastName].filter(Boolean).join(' ') || undefined
+            : undefined;
+
         if (dto.deliveryAddressId) {
           const savedLocation = await this.savedLocationsService.findOne(
             dto.deliveryAddressId,
@@ -852,6 +881,7 @@ export class OrdersService {
               latitude: savedLocation.data.latitude,
               longitude: savedLocation.data.longitude,
             },
+            contactName,
           };
         } else if (dto.deliveryAddress) {
           deliveryAddress = {
@@ -869,6 +899,7 @@ export class OrdersService {
                 : undefined,
             instructions: dto.instructions || dto.deliveryAddress.instructions,
             contactPhone: dto.deliveryAddress.contactPhone,
+            contactName,
           };
         }
 
@@ -888,15 +919,18 @@ export class OrdersService {
       // Generate order number
       const orderNumber = await this.generateOrderNumber();
 
-      // Get promo details
+      // Get promo/marketer details for the discount code used
       let promotionId: string | undefined;
+      let marketerId: string | undefined;
       if (dto.promoCode) {
-        const promotion =
-          await this.promotionsService.getPromotionByDiscountCode(
-            dto.promoCode,
-          );
+        const promotion = await this.promotionsService.getPromotionByDiscountCode(dto.promoCode);
         if (promotion) {
           promotionId = promotion._id.toString();
+        } else {
+          const marketer = await this.marketersService.findByCode(dto.promoCode);
+          if (marketer && marketer.isActive) {
+            marketerId = marketer._id.toString();
+          }
         }
       }
 
@@ -931,6 +965,7 @@ export class OrdersService {
               discountPercent: validation.data.cart.discountPercent,
               promoCode: validation.data.cart.promoCode,
               promotionId,
+              marketerId,
               total: validation.data.cart.total,
               itemCount: cart.itemCount,
               extrasCount: cart.extrasCount,
@@ -2012,6 +2047,23 @@ export class OrdersService {
         }
       }
 
+      // Record marketer code usage now that payment is confirmed
+      if (order.marketerId) {
+        try {
+          await this.marketersService.recordUsage(
+            order.marketerId.toString(),
+            order.userId.toString(),
+            order._id.toString(),
+            order.subtotal,
+            order.discountAmount,
+          );
+        } catch (e) {
+          this.logger.warn(
+            `Could not record marketer usage for order ${order.orderNumber}: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      }
+
       // Notify customer — order placed
       await this.notificationsService.sendOrderPlacedNotification(
         order.userId.toString(),
@@ -2188,7 +2240,10 @@ export class OrdersService {
     return new Types.ObjectId(str);
   }
 
-  private async formatOrder(order: OrderDocument): Promise<OrderResponse> {
+  private async formatOrder(
+    order: OrderDocument,
+    riderBaseFeeKobo?: number,
+  ): Promise<OrderResponse> {
     const orderItems = await this.ordersRepository.findOrderItemsByOrderId(
       order._id.toString(),
     );
@@ -2204,20 +2259,25 @@ export class OrdersService {
 
     const pickupLocationDoc = order.pickupLocationId as any;
 
-    // Ensure deliveryAddress.contactPhone is populated, falling back to user's phone
+    // Backfill contactPhone and contactName from the user record if missing on the order
     let deliveryAddress = order.deliveryAddress;
-    if (deliveryAddress && !deliveryAddress.contactPhone) {
+    if (deliveryAddress && (!deliveryAddress.contactPhone || !deliveryAddress.contactName)) {
       try {
         const user = await this.authRepository.findUserById(
           order.userId.toString(),
         );
-        if (user && user.phone) {
-          deliveryAddress = {
-            ...deliveryAddress,
-            contactPhone: user.phone,
-          };
+        if (user) {
+          const patch: Partial<typeof deliveryAddress> = {};
+          if (!deliveryAddress.contactPhone && user.phone) patch.contactPhone = user.phone;
+          if (!deliveryAddress.contactName) {
+            const name = [user.firstName, user.lastName].filter(Boolean).join(' ');
+            if (name) patch.contactName = name;
+          }
+          if (Object.keys(patch).length > 0) {
+            deliveryAddress = { ...deliveryAddress, ...patch };
+          }
         }
-      } catch (error) {
+      } catch {
         // If user fetch fails, continue without overriding deliveryAddress
       }
     }
@@ -2265,6 +2325,9 @@ export class OrdersService {
       deliveryConfirmationCode: order.deliveryConfirmationCode,
       refundId: order.refundId,
       hasBeenRefunded: order.hasBeenRefunded ?? false,
+      ...(riderBaseFeeKobo !== undefined && {
+        riderPayout: order.deliveryFee + riderBaseFeeKobo,
+      }),
     };
   }
 
@@ -2675,6 +2738,9 @@ export class OrdersService {
       };
     }
 
+    const siteSettings = await this.settingsService.get().catch(() => null);
+    const riderBaseFeeKobo = siteSettings?.riderBaseFeeKobo ?? 50000;
+
     // Demo riders: skip location check and return only their seeded demo orders
     if (isDemo) {
       const demoCustomer = await this.authRepository.findDemoCustomerUser();
@@ -2690,7 +2756,7 @@ export class OrdersService {
       }
       const demoOrders = await this.ordersRepository.findDemoReadyOrders(demoCustomer._id.toString());
       const validDemoOrders = demoOrders.filter((o) => o.deliveryAddress?.address);
-      const formattedOrders = await Promise.all(validDemoOrders.map((o) => this.formatOrder(o)));
+      const formattedOrders = await Promise.all(validDemoOrders.map((o) => this.formatOrder(o, riderBaseFeeKobo)));
       return {
         success: true,
         message: 'Eligible orders retrieved successfully',
@@ -2811,7 +2877,7 @@ export class OrdersService {
     const totalPages = Math.ceil(total / limit);
 
     const formattedOrders = await Promise.all(
-      paginatedOrders.map((order) => this.formatOrder(order)),
+      paginatedOrders.map((order) => this.formatOrder(order, riderBaseFeeKobo)),
     );
 
     return {
@@ -3086,7 +3152,8 @@ export class OrdersService {
     }
 
     // At this point, order is guaranteed to be non-null
-    const formattedOrder = await this.formatOrder(order);
+    const acceptSiteSettings = await this.settingsService.get().catch(() => null);
+    const formattedOrder = await this.formatOrder(order, acceptSiteSettings?.riderBaseFeeKobo ?? 50000);
 
     await this.notifyRiderAssigned(order, riderProfile._id.toString(), `${riderProfile.firstName || ''} ${riderProfile.lastName || ''}`.trim() || 'A rider');
 
@@ -3126,8 +3193,11 @@ export class OrdersService {
       },
     );
 
+    const assignedSiteSettings = await this.settingsService.get().catch(() => null);
+    const assignedRiderBaseFee = assignedSiteSettings?.riderBaseFeeKobo ?? 50000;
+
     const formattedOrders = await Promise.all(
-      orders.items.map((order) => this.formatOrder(order)),
+      orders.items.map((order) => this.formatOrder(order, assignedRiderBaseFee)),
     );
 
     return {
@@ -3308,6 +3378,10 @@ export class OrdersService {
       // Don't throw - this is not critical
     }
 
+    // Fetch settings once — used both for wallet credit and riderPayout in response
+    const deliverySiteSettings = await this.settingsService.get().catch(() => null);
+    const deliveryRiderBaseFee = deliverySiteSettings?.riderBaseFeeKobo ?? 50000;
+
     // Credit rider wallet immediately with delivery earnings + platform base fee
     // (do not block delivery flow if this fails)
     try {
@@ -3317,13 +3391,11 @@ export class OrdersService {
         order.assignedRiderId &&
         order.assignedRiderId.toString() === riderProfile._id.toString()
       ) {
-        const siteSettings = await this.settingsService.get().catch(() => null);
-        const riderBaseFeeKobo = siteSettings?.riderBaseFeeKobo ?? 50000;
         await this.walletsService.creditRiderEarningForOrder({
           riderProfileId: riderProfile._id.toString(),
           orderId,
           orderNumber: order.orderNumber,
-          amount: order.deliveryFee + riderBaseFeeKobo,
+          amount: order.deliveryFee + deliveryRiderBaseFee,
         });
       }
     } catch (error) {
@@ -3336,7 +3408,7 @@ export class OrdersService {
     return {
       success: true,
       message: 'Order marked as delivered successfully',
-      data: await this.formatOrder(updatedOrder),
+      data: await this.formatOrder(updatedOrder, deliveryRiderBaseFee),
     };
   }
 
@@ -3457,10 +3529,12 @@ export class OrdersService {
       riderName,
     );
 
+    const pickupSiteSettings = await this.settingsService.get().catch(() => null);
+
     return {
       success: true,
       message: 'Order marked as picked up successfully',
-      data: await this.formatOrder(updatedOrder),
+      data: await this.formatOrder(updatedOrder, pickupSiteSettings?.riderBaseFeeKobo ?? 50000),
     };
   }
 

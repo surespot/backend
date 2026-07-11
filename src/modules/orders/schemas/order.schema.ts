@@ -64,6 +64,9 @@ export class DeliveryAddress {
 
   @Prop()
   contactPhone?: string;
+
+  @Prop()
+  contactName?: string;
 }
 
 @Schema({ timestamps: true })
@@ -111,6 +114,9 @@ export class Order {
 
   @Prop({ type: Types.ObjectId, ref: 'Promotion' })
   promotionId?: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'Marketer' })
+  marketerId?: Types.ObjectId;
 
   @Prop({ type: Number, default: 0, min: 0 })
   total: number; // Final total (in kobo)

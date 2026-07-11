@@ -77,6 +77,7 @@ export class OrdersRepository {
       discountPercent?: number;
       promoCode?: string;
       promotionId?: string;
+      marketerId?: string;
       total: number;
       itemCount: number;
       extrasCount: number;
@@ -133,6 +134,10 @@ export class OrdersRepository {
 
     if (data.promotionId) {
       orderData.promotionId = new Types.ObjectId(data.promotionId);
+    }
+
+    if (data.marketerId) {
+      orderData.marketerId = new Types.ObjectId(data.marketerId);
     }
 
     if (data.pickupLocationId) {

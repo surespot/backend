@@ -32,6 +32,9 @@ export class Cart {
   @Prop({ type: Types.ObjectId, ref: 'Promotion' })
   promotionId?: Types.ObjectId; // Reference to promotion for tracking
 
+  @Prop({ type: Types.ObjectId, ref: 'Marketer' })
+  marketerId?: Types.ObjectId; // Reference to marketer if a marketer code was applied
+
   @Prop({ type: Number, default: 0, min: 0 })
   total: number; // Final total (subtotal + extras - discount) (in kobo)
 

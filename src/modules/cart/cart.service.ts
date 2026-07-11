@@ -6,6 +6,7 @@ import {
 import { CartRepository } from './cart.repository';
 import { FoodItemsRepository } from '../food-items/food-items.repository';
 import { PromotionsService } from '../promotions/promotions.service';
+import { MarketersService } from '../marketers/marketers.service';
 import { AdminMenuRepository } from '../admin/admin-menu.repository';
 import { AddItemToCartDto } from './dto/add-item-to-cart.dto';
 import { CartDocument } from './schemas/cart.schema';
@@ -70,6 +71,7 @@ export class CartService {
     private readonly cartRepository: CartRepository,
     private readonly foodItemsRepository: FoodItemsRepository,
     private readonly promotionsService: PromotionsService,
+    private readonly marketersService: MarketersService,
     private readonly adminMenuRepository: AdminMenuRepository,
   ) {}
 
@@ -603,30 +605,55 @@ export class CartService {
       lineTotal: item.lineTotal,
     }));
 
-    const validation = await this.promotionsService.validateDiscountCode(code, {
+    const promoContext = {
       orderAmount: cartTotalBeforeDiscount,
       cartItems: cartItemsForPromo,
-    });
+    };
 
-    if (!validation.valid) {
-      throw new BadRequestException({
-        success: false,
-        error: {
-          code: 'PROMO_CODE_INVALID',
-          message: validation.message || 'Invalid promo code',
-        },
-      });
+    const promoResult = await this.promotionsService.validateDiscountCode(code, promoContext);
+
+    let discountAmount: number;
+    let discountPercent: number | undefined;
+    let waivesDelivery: boolean | undefined;
+    let promotionId: string | undefined;
+    let marketerId: string | undefined;
+
+    if (promoResult.valid) {
+      discountAmount = promoResult.discountAmount || 0;
+      discountPercent = promoResult.promotion?.discountValue;
+      waivesDelivery = promoResult.waivesDelivery;
+      promotionId = promoResult.promotion?.id;
+    } else {
+      const marketerResult = await this.marketersService.validateMarketerCode(
+        code,
+        userId,
+        promoContext,
+      );
+      if (marketerResult.valid) {
+        discountAmount = marketerResult.discountAmount || 0;
+        discountPercent = marketerResult.marketer?.discountValue;
+        waivesDelivery = marketerResult.waivesDelivery;
+        marketerId = marketerResult.marketer?.id;
+      } else {
+        const message =
+          promoResult.message !== 'Invalid or expired discount code'
+            ? promoResult.message
+            : marketerResult.message || promoResult.message;
+        throw new BadRequestException({
+          success: false,
+          error: { code: 'PROMO_CODE_INVALID', message: message || 'Invalid promo code' },
+        });
+      }
     }
 
-    // Apply discount
-    const discountAmount = validation.discountAmount || 0;
     const total = Math.max(0, cartTotalBeforeDiscount - discountAmount);
 
     await this.cartRepository.updateCart(cart._id.toString(), {
       promoCode: code.toUpperCase(),
-      promotionId: validation.promotion?.id,
+      promotionId: promotionId ?? null,
+      marketerId: marketerId ?? null,
       discountAmount,
-      discountPercent: validation.promotion?.discountValue,
+      discountPercent,
       total,
     });
 
@@ -640,9 +667,9 @@ export class CartService {
         cart: await this.formatCart(updatedCart!),
         promoCode: {
           code: code.toUpperCase(),
-          discountPercent: validation.promotion?.discountValue,
+          discountPercent,
           discountAmount,
-          waivesDelivery: validation.waivesDelivery,
+          waivesDelivery,
         },
       },
     };
@@ -707,7 +734,7 @@ export class CartService {
     let discountAmount = 0;
     let total = subtotal + extrasTotal;
 
-    // Reapply promo if exists
+    // Reapply promo/marketer code if one exists on the cart
     let discountPercent: number | undefined;
     if (cart?.promoCode && cart.promoCode.length > 0) {
       const cartItemsForPromo = cartItems.map((item) => ({
@@ -716,14 +743,35 @@ export class CartService {
         price: item.price,
         lineTotal: item.lineTotal,
       }));
-      const validation = await this.promotionsService.validateDiscountCode(
+      const promoContext = { orderAmount: total, cartItems: cartItemsForPromo };
+
+      const promoValidation = await this.promotionsService.validateDiscountCode(
         cart.promoCode,
-        { orderAmount: total, cartItems: cartItemsForPromo },
+        promoContext,
       );
-      if (validation.valid) {
-        discountAmount = validation.discountAmount || 0;
-        discountPercent = validation.promotion?.discountValue;
+
+      if (promoValidation.valid) {
+        discountAmount = promoValidation.discountAmount || 0;
+        discountPercent = promoValidation.promotion?.discountValue;
         total = Math.max(0, total - discountAmount);
+      } else if (cart.marketerId) {
+        // Cart has a marketer code applied — re-validate it
+        const userId = cart.userId.toString();
+        const marketerValidation = await this.marketersService.validateMarketerCode(
+          cart.promoCode,
+          userId,
+          promoContext,
+        );
+        if (marketerValidation.valid) {
+          discountAmount = marketerValidation.discountAmount || 0;
+          discountPercent = marketerValidation.marketer?.discountValue;
+          total = Math.max(0, total - discountAmount);
+        } else {
+          // Marketer code no longer valid, remove it
+          await this.cartRepository.clearCartPromo(cartId);
+          discountAmount = 0;
+          discountPercent = undefined;
+        }
       } else {
         // Promo no longer valid, remove it
         await this.cartRepository.clearCartPromo(cartId);
