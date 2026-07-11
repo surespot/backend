@@ -10,6 +10,7 @@ import { CartExtra, CartExtraSchema } from './schemas/cart-extra.schema';
 import { AuthModule } from '../auth/auth.module';
 import { FoodItemsModule } from '../food-items/food-items.module';
 import { PromotionsModule } from '../promotions/promotions.module';
+import { MarketersModule } from '../marketers/marketers.module';
 import { AdminMenuRepository } from '../admin/admin-menu.repository';
 import {
   PickupLocationItemAvailability,
@@ -32,6 +33,7 @@ import {
     forwardRef(() => AuthModule),
     forwardRef(() => FoodItemsModule),
     PromotionsModule,
+    MarketersModule,
   ],
   controllers: [CartController],
   providers: [CartService, CartRepository, CartScheduler, AdminMenuRepository],

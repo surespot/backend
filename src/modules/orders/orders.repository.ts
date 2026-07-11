@@ -77,6 +77,7 @@ export class OrdersRepository {
       discountPercent?: number;
       promoCode?: string;
       promotionId?: string;
+      marketerId?: string;
       total: number;
       itemCount: number;
       extrasCount: number;
@@ -133,6 +134,10 @@ export class OrdersRepository {
 
     if (data.promotionId) {
       orderData.promotionId = new Types.ObjectId(data.promotionId);
+    }
+
+    if (data.marketerId) {
+      orderData.marketerId = new Types.ObjectId(data.marketerId);
     }
 
     if (data.pickupLocationId) {
@@ -255,7 +260,7 @@ export class OrdersRepository {
 
     const query: Record<string, unknown> = {
       userId: new Types.ObjectId(userId),
-      $nor: [{ paymentMethod: 'card', paymentStatus: 'pending' }, { paymentMethod: 'paystack', paymentStatus: 'pending' }],
+      paymentStatus: { $nin: [PaymentStatus.PENDING, PaymentStatus.FAILED] },
     };
 
     if (filter.status) {
@@ -1321,7 +1326,7 @@ export class OrdersRepository {
     const query: Record<string, unknown> = {
       pickupLocationId: new Types.ObjectId(pickupLocationId),
       paymentMethod: { $ne: 'demo' },
-      $nor: [{ paymentMethod: 'card', paymentStatus: 'pending' }, { paymentMethod: 'paystack', paymentStatus: 'pending' }],
+      paymentStatus: { $nin: [PaymentStatus.PENDING, PaymentStatus.FAILED] },
     };
 
     // Apply status filter
@@ -1503,6 +1508,25 @@ export class OrdersRepository {
       status: { $in: [OrderStatus.DELIVERED, OrderStatus.CANCELLED] },
       createdAt: { $lt: before },
     }).exec();
+    return result.deletedCount ?? 0;
+  }
+
+  async deleteById(id: string): Promise<boolean> {
+    this.validateObjectId(id, 'orderId');
+    const result = await this.orderModel.deleteOne({ _id: new Types.ObjectId(id) }).exec();
+    return result.deletedCount > 0;
+  }
+
+  async deleteManyByIds(ids: Types.ObjectId[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    const result = await this.orderModel.deleteMany({ _id: { $in: ids } }).exec();
+    return result.deletedCount ?? 0;
+  }
+
+  async deleteOrdersWithFailedPayment(): Promise<number> {
+    const result = await this.orderModel
+      .deleteMany({ paymentStatus: PaymentStatus.FAILED })
+      .exec();
     return result.deletedCount ?? 0;
   }
 }

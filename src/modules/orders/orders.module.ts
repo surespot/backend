@@ -21,6 +21,7 @@ import { CartModule } from '../cart/cart.module';
 import { PickupLocationsModule } from '../pickup-locations/pickup-locations.module';
 import { SavedLocationsModule } from '../saved-locations/saved-locations.module';
 import { PromotionsModule } from '../promotions/promotions.module';
+import { MarketersModule } from '../marketers/marketers.module';
 import { FoodItemsModule } from '../food-items/food-items.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { TransactionsModule } from '../transactions/transactions.module';
@@ -52,6 +53,7 @@ import { PlacesModule } from '../places/places.module';
     PickupLocationsModule,
     SavedLocationsModule,
     PromotionsModule,
+    MarketersModule,
     forwardRef(() => FoodItemsModule),
     NotificationsModule,
     forwardRef(() => TransactionsModule),
