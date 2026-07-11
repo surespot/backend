@@ -203,7 +203,7 @@ export class OrdersService {
 
   /**
    * Calculate delivery fee charged to the customer.
-   * - ₦deliveryFeePerKmKobo per whole km (floor), minimum 1km charge
+   * - ₦deliveryFeePerKmKobo per whole km (round), minimum 1km charge
    * The platform separately credits riders a base fee on delivery (see riderBaseFeeKobo in settings).
    */
   private calculateDeliveryFee(
@@ -212,7 +212,7 @@ export class OrdersService {
   ): number {
     if (distanceKm === 0) return 0; // Pickup orders
 
-    return Math.max(1, Math.floor(distanceKm)) * deliveryFeePerKmKobo;
+    return Math.max(1, Math.round(distanceKm)) * deliveryFeePerKmKobo;
   }
 
   /**
@@ -2952,7 +2952,7 @@ export class OrdersService {
   }
 
   async schedulePickupTimeout(orderId: string, riderProfileId: string): Promise<void> {
-    const jobId = `pt:${orderId}`;
+    const jobId = `pt-${orderId}`;
     const existing = await this.pickupTimeoutQueue.getJob(jobId);
     if (existing) await existing.remove().catch(() => {});
     await this.pickupTimeoutQueue.add(
