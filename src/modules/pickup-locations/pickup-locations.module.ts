@@ -19,6 +19,7 @@ import { SavedLocationsModule } from '../saved-locations/saved-locations.module'
 import { AdminUsersController } from './admin-users.controller';
 import { AdminOnboardingController } from './admin-onboarding.controller';
 import { AdminPickupLocationsController } from './admin-pickup-locations.controller';
+import { PlacesModule } from '../places/places.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { AdminPickupLocationsController } from './admin-pickup-locations.control
     SmsModule,
     forwardRef(() => NotificationsModule),
     SavedLocationsModule,
+    PlacesModule,
   ],
   controllers: [
     PickupLocationsController,

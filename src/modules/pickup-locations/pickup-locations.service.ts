@@ -38,6 +38,7 @@ import {
   NotificationType,
 } from '../notifications/schemas/notification.schema';
 import { SavedLocationsRepository } from '../saved-locations/saved-locations.repository';
+import { PlacesService } from '../places/places.service';
 
 @Injectable()
 export class PickupLocationsService implements OnModuleInit {
@@ -55,6 +56,7 @@ export class PickupLocationsService implements OnModuleInit {
     @Inject(forwardRef(() => NotificationsService))
     private readonly notificationsService: NotificationsService,
     private readonly savedLocationsRepository: SavedLocationsRepository,
+    private readonly placesService: PlacesService,
   ) {}
 
   async onModuleInit() {
@@ -495,12 +497,15 @@ export class PickupLocationsService implements OnModuleInit {
   }
 
   async findNearest(dto: FindNearestPickupLocationDto) {
-    const MAX_DISTANCE_METERS = 10000;
+    const MAX_ROAD_DISTANCE_KM = 10;
     const DOOR_DELIVERY_MAX_KM = 5;
+    // Wider straight-line radius so road-winding doesn't exclude the nearest candidate
+    const CANDIDATE_SEARCH_METERS = 15000;
+
     const pickupLocation = await this.pickupLocationsRepository.findNearest(
       dto.latitude,
       dto.longitude,
-      MAX_DISTANCE_METERS,
+      CANDIDATE_SEARCH_METERS,
     );
 
     if (!pickupLocation) {
@@ -515,12 +520,38 @@ export class PickupLocationsService implements OnModuleInit {
 
     const locationLat = pickupLocation.location.coordinates[1];
     const locationLng = pickupLocation.location.coordinates[0];
-    const distanceKm = this.haversineDistance(
+
+    const route = await this.placesService.getRoute(
       dto.latitude,
       dto.longitude,
       locationLat,
       locationLng,
     );
+
+    let distanceKm: number;
+    if (route) {
+      distanceKm = route.distanceMeters / 1000;
+    } else {
+      this.logger.warn(
+        'Routes API unavailable for findNearest; falling back to Haversine distance',
+      );
+      distanceKm = this.haversineDistance(
+        dto.latitude,
+        dto.longitude,
+        locationLat,
+        locationLng,
+      );
+    }
+
+    if (distanceKm > MAX_ROAD_DISTANCE_KM) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'PICKUP_LOCATION_NOT_FOUND',
+          message: 'No open branches near your location, try again later',
+        },
+      });
+    }
 
     return {
       success: true,

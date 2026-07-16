@@ -185,6 +185,7 @@ export class PlacesService {
           'X-Goog-Api-Key': key,
           'X-Goog-FieldMask': 'routes.distanceMeters,routes.duration',
         },
+        timeout: 5000,
       });
 
       if (!data.routes?.length) return null;
