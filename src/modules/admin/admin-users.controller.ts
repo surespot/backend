@@ -99,25 +99,50 @@ export class AdminUsersController {
     enum: ['active', 'inactive'],
     description: 'Filter by user status',
   })
+  @ApiQuery({
+    name: 'search',
+    required: false,
+    type: String,
+    description: 'Search by first/last name, phone, or email',
+  })
+  @ApiQuery({
+    name: 'role',
+    required: false,
+    enum: ['user', 'rider'],
+    description: 'Filter by role (defaults to customers only)',
+  })
   @ApiResponse({ status: 200, description: 'Users retrieved successfully' })
   async listUsers(
     @Query('page') page: string = '1',
     @Query('limit') limit: string = '20',
     @Query('status') status?: 'active' | 'inactive',
+    @Query('search') search?: string,
+    @Query('role') role?: 'user' | 'rider',
   ) {
     const pageNum = Math.max(1, parseInt(page) || 1);
     const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 20));
-    // role: { $in: [UserRole.USER, UserRole.RIDER] },
 
     const query: Record<string, unknown> = {
       deletedAt: { $exists: false },
-      role: { $in: [UserRole.USER] },
+      role: role === 'rider' ? UserRole.RIDER : UserRole.USER,
     };
 
     if (status === 'active') {
       query.isActive = true;
     } else if (status === 'inactive') {
       query.isActive = false;
+    }
+
+    const trimmedSearch = search?.trim();
+    if (trimmedSearch) {
+      const escaped = trimmedSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(escaped, 'i');
+      query.$or = [
+        { firstName: regex },
+        { lastName: regex },
+        { phone: regex },
+        { email: regex },
+      ];
     }
 
     const [users, total] = await Promise.all([
