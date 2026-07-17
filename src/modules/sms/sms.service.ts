@@ -128,24 +128,36 @@ export class SmsService {
   }
 
   /**
-   * Send bulk SMS to multiple phone numbers
+   * Send the same message to multiple phone numbers individually.
+   * Provider APIs (Termii, BulkSMS) only accept one recipient per call,
+   * so this fans out sequentially and reports per-recipient results.
    */
   async sendBulkSms(
     phoneNumbers: string[],
     message: string,
     from?: string,
-  ): Promise<SmsResponse> {
+  ): Promise<{ successCount: number; failureCount: number }> {
     const senderId = from || this.senderId;
-    const formattedNumbers = phoneNumbers.map((num) =>
-      this.formatPhoneNumber(num),
-    );
-    const to = formattedNumbers.join(',');
+    let successCount = 0;
+    let failureCount = 0;
 
-    return this.provider.sendSms({
-      from: senderId,
-      to,
-      body: message,
-    });
+    for (const phoneNumber of phoneNumbers) {
+      const result = await this.provider.sendSms({
+        from: senderId,
+        to: this.formatPhoneNumber(phoneNumber),
+        body: message,
+      });
+      if (result.success) {
+        successCount++;
+      } else {
+        failureCount++;
+        this.logger.error(
+          `Bulk SMS failed for ${phoneNumber}: ${result.error}`,
+        );
+      }
+    }
+
+    return { successCount, failureCount };
   }
 
   /**

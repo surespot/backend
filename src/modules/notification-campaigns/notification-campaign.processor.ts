@@ -65,14 +65,8 @@ export class NotificationCampaignProcessor extends WorkerHost {
             eligible.map((u) => u.phone),
             campaign.body,
           );
-          if (result.success) {
-            successCount = eligible.length;
-          } else {
-            failureCount = eligible.length;
-            this.logger.error(
-              `Bulk SMS send failed for campaign ${campaignId}: ${result.error}`,
-            );
-          }
+          successCount = result.successCount;
+          failureCount = result.failureCount;
         }
         break;
       }
