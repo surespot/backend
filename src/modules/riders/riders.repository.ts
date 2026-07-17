@@ -238,6 +238,21 @@ export class RidersRepository {
     };
   }
 
+  /**
+   * Find the user IDs of active riders assigned to any of the given regions.
+   */
+  async findUserIdsByRegionIds(
+    regionIds: (string | Types.ObjectId)[],
+  ): Promise<Types.ObjectId[]> {
+    const objectIds = regionIds.map((id) =>
+      typeof id === 'string' ? new Types.ObjectId(id) : id,
+    );
+    return this.riderProfileModel.distinct('userId', {
+      regionId: { $in: objectIds },
+      anonymizedAt: null,
+    });
+  }
+
   // ============ RIDER DOCUMENTATION METHODS ============
 
   async createDocumentation(

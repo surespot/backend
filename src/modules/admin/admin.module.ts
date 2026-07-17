@@ -17,6 +17,7 @@ import { AdminSupportController } from '../support/admin-support.controller';
 import { AdminSupportService } from '../support/admin-support.service';
 import { AdminRefundsController } from './admin-refunds.controller';
 import { AdminNewslettersController } from './admin-newsletters.controller';
+import { AdminNotificationCampaignsController } from './admin-notification-campaigns.controller';
 import { AdminUsersController } from './admin-users.controller';
 import { AuthModule } from '../auth/auth.module';
 import { TransactionsModule } from '../transactions/transactions.module';
@@ -37,6 +38,7 @@ import {
 import { RegionsModule } from '../regions/regions.module';
 import { PickupLocationsModule } from '../pickup-locations/pickup-locations.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { NotificationCampaignsModule } from '../notification-campaigns/notification-campaigns.module';
 
 @Module({
   imports: [
@@ -45,6 +47,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     RegionsModule,
     PickupLocationsModule,
     NotificationsModule,
+    NotificationCampaignsModule,
     forwardRef(() => SupportModule),
     forwardRef(() => FoodItemsModule),
     forwardRef(() => AuthModule),
@@ -75,6 +78,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     AdminSupportController,
     AdminRefundsController,
     AdminNewslettersController,
+    AdminNotificationCampaignsController,
     AdminUsersController,
   ],
   providers: [
