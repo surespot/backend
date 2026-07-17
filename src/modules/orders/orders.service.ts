@@ -614,7 +614,8 @@ export class OrdersService {
     const settings = await this.settingsService.get();
 
     // Calculate packaging fee:
-    // - per_portion items: 1 pack per 3 portions (ceil), e.g. 7 portions = 3 packs
+    // - per_portion items: portions pooled across all food items, 1 pack per 3 total
+    //   portions (ceil) — no per-item pack minimum
     // - per_pack items: 1 fee per unit ordered
     // - Protein and Drinks category items are excluded (they share packaging with the main food)
     let packagingFee = 0;
@@ -622,15 +623,37 @@ export class OrdersService {
       const itemIds = items.map((item) => item.foodItemId.toString());
       const itemInfo = await this.foodItemsRepository.findPricingTypesByIds(itemIds);
       let packCount = 0;
+
+      // --- Previous behavior: pack minimum allocated per food item, i.e. every
+      // distinct per_portion item independently rounded up to its own pack.
+      // Commented out at client's request; uncomment and remove the pooled
+      // block below to revert.
+      // for (const item of items) {
+      //   const info = itemInfo.get(item.foodItemId.toString());
+      //   if (info?.category === FoodCategory.PROTEIN || info?.category === FoodCategory.DRINKS) continue;
+      //   const type = info?.pricingType ?? PricingType.PER_PORTION;
+      //   packCount +=
+      //     type === PricingType.PER_PACK
+      //       ? item.quantity
+      //       : Math.ceil(item.quantity / 3);
+      // }
+
+      // --- Current behavior: per_portion quantities pooled across all food
+      // items first, then rounded up once. per_pack items are unaffected —
+      // each unit still packs individually.
+      let totalPortions = 0;
       for (const item of items) {
         const info = itemInfo.get(item.foodItemId.toString());
         if (info?.category === FoodCategory.PROTEIN || info?.category === FoodCategory.DRINKS) continue;
         const type = info?.pricingType ?? PricingType.PER_PORTION;
-        packCount +=
-          type === PricingType.PER_PACK
-            ? item.quantity
-            : Math.ceil(item.quantity / 3);
+        if (type === PricingType.PER_PACK) {
+          packCount += item.quantity;
+        } else {
+          totalPortions += item.quantity;
+        }
       }
+      packCount += Math.ceil(totalPortions / 3);
+
       packagingFee = packCount * settings.packagingFeeKobo;
     }
 
