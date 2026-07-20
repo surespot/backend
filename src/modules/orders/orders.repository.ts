@@ -1009,16 +1009,18 @@ export class OrdersRepository {
   }
 
   /**
-   * Get count of active orders (not delivered or cancelled)
+   * Get count of active orders (not delivered or cancelled, placed within the last 72 hours)
    */
   async getActiveOrdersCount(
     pickupLocationId: Types.ObjectId | undefined,
   ): Promise<number> {
+    const seventyTwoHoursAgo = new Date(Date.now() - 72 * 60 * 60 * 1000);
     const query: Record<string, unknown> = {
       status: {
         $nin: [OrderStatus.DELIVERED, OrderStatus.CANCELLED],
       },
       paymentMethod: { $ne: 'demo' },
+      createdAt: { $gte: seventyTwoHoursAgo },
     };
 
     if (pickupLocationId) {
