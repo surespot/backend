@@ -510,7 +510,8 @@ export class OrdersService {
             nearest.data.latitude,
             nearest.data.longitude,
           );
-          if (distanceKm > 5) {
+          if (distanceKm > 10) {
+            // if (distanceKm > 5) { // original limit; revert to this to restore
             errors.push({
               field: 'deliveryType',
               message:

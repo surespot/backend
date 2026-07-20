@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
   Param,
@@ -31,6 +32,18 @@ export class AdminUsersController {
   constructor(
     private readonly pickupLocationsService: PickupLocationsService,
   ) {}
+
+  @Get('unlinked-pickup-locations')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'List pickup locations with no admin assigned (Super admin only)',
+    description:
+      'Used to populate the location picker when assigning an existing pickup location to another admin user.',
+  })
+  @ApiResponse({ status: 200, description: 'Unlinked pickup locations list' })
+  async getUnlinkedPickupLocations() {
+    return this.pickupLocationsService.findUnlinkedPickupLocations();
+  }
 
   @Post(':userId/pickup-location')
   @HttpCode(HttpStatus.CREATED)
@@ -86,8 +99,14 @@ export class AdminUsersController {
     description: 'ID of the user to promote',
     example: '507f1f77bcf86cd799439011',
   })
-  @ApiResponse({ status: 200, description: 'User promoted to pickup admin successfully' })
-  @ApiResponse({ status: 400, description: 'User is not a regular user (already has an admin role)' })
+  @ApiResponse({
+    status: 200,
+    description: 'User promoted to pickup admin successfully',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'User is not a regular user (already has an admin role)',
+  })
   @ApiResponse({ status: 404, description: 'User not found' })
   async promoteToPickupAdmin(@Param('userId') userId: string) {
     return this.pickupLocationsService.promoteUserToPickupAdmin(userId);
