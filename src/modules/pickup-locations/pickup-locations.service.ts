@@ -497,10 +497,10 @@ export class PickupLocationsService implements OnModuleInit {
   }
 
   async findNearest(dto: FindNearestPickupLocationDto) {
-    const MAX_ROAD_DISTANCE_KM = 10;
-    const DOOR_DELIVERY_MAX_KM = 5;
+    const MAX_ROAD_DISTANCE_KM = 20;
+    const DOOR_DELIVERY_MAX_KM = 15;
     // Wider straight-line radius so road-winding doesn't exclude the nearest candidate
-    const CANDIDATE_SEARCH_METERS = 15000;
+    const CANDIDATE_SEARCH_METERS = 25000;
 
     const pickupLocation = await this.pickupLocationsRepository.findNearest(
       dto.latitude,
