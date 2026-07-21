@@ -61,6 +61,7 @@ async function bootstrap() {
       'Authorization',
       'x-verification-token',
       'x-bootstrap-token',
+      'x-reset-token',
       'X-Requested-With',
     ],
   });
