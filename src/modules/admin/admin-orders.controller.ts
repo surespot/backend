@@ -208,7 +208,11 @@ export class AdminOrdersController {
   }
 
   @Patch(':orderId/redirect')
-  @ApiOperation({ summary: 'Redirect order to another pickup location' })
+  @ApiOperation({
+    summary: 'Redirect order to another pickup location',
+    description:
+      'Pickup admins may only redirect orders currently at their own location. Super admins may redirect any order between any two locations.',
+  })
   @ApiResponse({ status: 200, description: 'Order redirected successfully' })
   @ApiResponse({ status: 400, description: 'Order cannot be redirected (already preparing or beyond)' })
   @ApiResponse({ status: 403, description: 'Forbidden - no pickup location assigned' })
@@ -218,7 +222,7 @@ export class AdminOrdersController {
     @Body() dto: AdminRedirectOrderDto,
     @CurrentUser() user: CurrentUserType,
   ) {
-    if (!user.pickupLocationId) {
+    if (user.role !== UserRole.ADMIN && !user.pickupLocationId) {
       throw new ForbiddenException({
         success: false,
         error: {
@@ -229,8 +233,11 @@ export class AdminOrdersController {
       });
     }
 
+    const pickupLocationId =
+      user.role === UserRole.ADMIN ? null : user.pickupLocationId!;
+
     return this.adminOrdersService.redirectOrder(
-      user.pickupLocationId,
+      pickupLocationId,
       orderId,
       dto,
       user.id,
