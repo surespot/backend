@@ -322,6 +322,24 @@ export class AdminOrdersService {
   }
 
   /**
+   * Extract the pickup location ID an order currently belongs to.
+   * Handles both ObjectId and populated document cases.
+   */
+  private getOrderPickupLocationId(order: OrderDocument): string | null {
+    const pl: any = order.pickupLocationId;
+    if (!pl) {
+      return null;
+    }
+    if (pl instanceof Types.ObjectId) {
+      return pl.toString();
+    }
+    if (pl._id) {
+      return pl._id.toString();
+    }
+    return null;
+  }
+
+  /**
    * Get order statistics for a pickup location
    */
   async getOrderStats(pickupLocationId: string) {
@@ -476,8 +494,12 @@ export class AdminOrdersService {
     };
   }
 
+  /**
+   * Pass null as currentPickupLocationId to skip the ownership check (super admin use case) —
+   * super admins can redirect any order between any two pickup locations.
+   */
   async redirectOrder(
-    currentPickupLocationId: string,
+    currentPickupLocationId: string | null,
     orderId: string,
     dto: AdminRedirectOrderDto,
     adminId: string,
@@ -491,12 +513,27 @@ export class AdminOrdersService {
       });
     }
 
-    if (!this.orderBelongsToPickupLocation(order, currentPickupLocationId)) {
+    if (
+      currentPickupLocationId &&
+      !this.orderBelongsToPickupLocation(order, currentPickupLocationId)
+    ) {
       throw new NotFoundException({
         success: false,
         error: {
           code: 'ORDER_NOT_FOUND',
           message: 'Order not found or does not belong to your pickup location',
+        },
+      });
+    }
+
+    const sourcePickupLocationId = this.getOrderPickupLocationId(order);
+
+    if (!sourcePickupLocationId) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'PICKUP_LOCATION_NOT_FOUND',
+          message: 'Order has no current pickup location.',
         },
       });
     }
@@ -520,7 +557,7 @@ export class AdminOrdersService {
       });
     }
 
-    if (dto.targetPickupLocationId === currentPickupLocationId) {
+    if (dto.targetPickupLocationId === sourcePickupLocationId) {
       throw new BadRequestException({
         success: false,
         error: {
@@ -556,7 +593,7 @@ export class AdminOrdersService {
     }
 
     const currentLocation =
-      await this.pickupLocationsRepository.findById(currentPickupLocationId);
+      await this.pickupLocationsRepository.findById(sourcePickupLocationId);
     const fromLocationName = currentLocation?.name ?? 'Unknown';
     const toLocationName = targetLocation.name;
 
@@ -599,10 +636,10 @@ export class AdminOrdersService {
     );
 
     // Notify old location: stats refresh + redirect event
-    const oldStats = await this.getOrderStats(currentPickupLocationId);
-    await this.adminGateway.emitOrderStatsUpdate(currentPickupLocationId, oldStats);
+    const oldStats = await this.getOrderStats(sourcePickupLocationId);
+    await this.adminGateway.emitOrderStatsUpdate(sourcePickupLocationId, oldStats);
     await this.adminGateway.emitToPickupLocation(
-      currentPickupLocationId,
+      sourcePickupLocationId,
       'order_redirected',
       {
         orderId,
