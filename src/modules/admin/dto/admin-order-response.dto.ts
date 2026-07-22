@@ -162,4 +162,10 @@ export class AdminOrderDetailsDto {
       'True when refund.processed webhook received (refund completed)',
   })
   hasBeenRefunded?: boolean;
+
+  @ApiPropertyOptional({
+    example: '507f1f77bcf86cd799439011',
+    description: 'Pickup location the order currently belongs to',
+  })
+  pickupLocationId?: string;
 }
