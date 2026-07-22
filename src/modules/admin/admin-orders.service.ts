@@ -238,6 +238,7 @@ export class AdminOrdersService {
       deliveryConfirmationCode: order.deliveryConfirmationCode,
       refundId: order.refundId,
       hasBeenRefunded: order.hasBeenRefunded ?? false,
+      pickupLocationId: this.getOrderPickupLocationId(order) ?? undefined,
     };
   }
 
