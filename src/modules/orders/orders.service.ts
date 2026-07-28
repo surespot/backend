@@ -51,8 +51,6 @@ import { AuthRepository } from '../auth/auth.repository';
 import { AdminMenuRepository } from '../admin/admin-menu.repository';
 import { ConfigService } from '@nestjs/config';
 import { SettingsService } from '../settings/settings.service';
-import { RedisService } from '../../common/redis/redis.service';
-import { createHash } from 'crypto';
 import { FoodCategory, PricingType } from '../food-items/schemas/food-item.schema';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -174,19 +172,10 @@ export class OrdersService {
     private readonly pickupLocationsRepository: PickupLocationsRepository,
     private readonly configService: ConfigService,
     private readonly settingsService: SettingsService,
-    private readonly redisService: RedisService,
     private readonly placesService: PlacesService,
     @InjectQueue('rider-search') private readonly riderSearchQueue: Queue,
     @InjectQueue('pickup-timeout') private readonly pickupTimeoutQueue: Queue,
   ) {}
-
-  private orderIdempotencyKey(userId: string, itemNames: string[]): string {
-    const hash = createHash('sha256')
-      .update(`${userId}:${[...itemNames].sort().join(',')}`)
-      .digest('hex');
-    return `order:idempotency:${hash}`;
-  }
-
 
   private formatPrice(price: number, currency: string = 'NGN'): string {
     if (price === 0) return 'Free';
@@ -850,33 +839,6 @@ export class OrdersService {
 
       const { cart, items, extras } = cartData;
 
-      // Idempotency: prevent placing the same order twice within 10 minutes.
-      // Key is derived from userId + sorted item names — different items or different
-      // user both get a different key, so legitimate back-to-back orders are allowed.
-      if (!this.isDemoUser(isDemo)) {
-        const itemNames = items.map((i) => i.name);
-        const idempotencyKey = this.orderIdempotencyKey(userId, itemNames);
-        const existingOrderId = await this.redisService.get(idempotencyKey);
-        if (existingOrderId) {
-          const existingOrder = await this.ordersRepository.findById(existingOrderId);
-          if (existingOrder) {
-            this.logger.log(
-              `Idempotency hit for user ${userId} — blocking duplicate of order ${existingOrder.orderNumber}`,
-            );
-            throw new ConflictException({
-              success: false,
-              error: {
-                code: 'DUPLICATE_ORDER',
-                message:
-                  'You placed this same order recently. Please wait a few minutes before trying again.',
-              },
-            });
-          }
-          // Stale key (order was deleted/cancelled) — proceed to create a new one
-          await this.redisService.del(idempotencyKey);
-        }
-      }
-
       // Build delivery address
       let deliveryAddress: any = null;
       let pickupLocationId: string | undefined;
@@ -1158,13 +1120,6 @@ export class OrdersService {
           await this.ordersRepository.updateOrder(activeOrder._id.toString(), {
             paymentIntentId: paystackResult.data.reference,
           });
-
-          // Set idempotency key — expires in 10 minutes
-          const idempotencyKey = this.orderIdempotencyKey(
-            userId,
-            items.map((i) => i.name),
-          );
-          await this.redisService.set(idempotencyKey, activeOrder._id.toString(), 600);
 
           return {
             success: true,
