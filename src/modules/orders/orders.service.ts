@@ -274,8 +274,10 @@ export class OrdersService {
           durationMinutes: Math.round(route.durationSeconds / 60),
         };
       }
-    } catch {
-      // fall through to Haversine
+    } catch (error) {
+      this.logger.warn(
+        `Routes API failed, falling back to Haversine: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
     const distanceKm = this.calculateDistance(originLat, originLng, destLat, destLng);
     return {

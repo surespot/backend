@@ -200,14 +200,13 @@ export class PlacesService {
 
     try {
       const bicycleResult = await callRoutes('BICYCLE');
-      if (!bicycleResult) return null;
-
-      if (bicycleResult.distanceMeters / 1000 > 5) {
-        const motoResult = await callRoutes('TWO_WHEELER');
-        return motoResult ?? bicycleResult;
+      if (bicycleResult && bicycleResult.distanceMeters / 1000 <= 5) {
+        return bicycleResult;
       }
 
-      return bicycleResult;
+      // No bicycle route (e.g. unsupported in this region) or distance > 5km
+      const motoResult = await callRoutes('TWO_WHEELER');
+      return motoResult ?? bicycleResult;
     } catch (error) {
       if (error instanceof AxiosError) {
         this.logger.warn(
