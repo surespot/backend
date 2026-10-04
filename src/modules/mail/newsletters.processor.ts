@@ -6,6 +6,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Newsletter, NewsletterDocument } from './schemas/newsletter.schema';
 import { User, UserDocument } from '../auth/schemas/user.schema';
+import { NewsletterSubscribersService } from './newsletter-subscribers.service';
 import { OrdersRepository } from '../orders/orders.repository';
 
 interface NewsletterJobData {
@@ -19,6 +20,7 @@ export class NewslettersProcessor extends WorkerHost {
   constructor(
     private readonly mailService: MailService,
     private readonly ordersRepository: OrdersRepository,
+    private readonly subscribersService: NewsletterSubscribersService,
     @InjectModel(Newsletter.name)
     private readonly newsletterModel: Model<NewsletterDocument>,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
@@ -87,6 +89,11 @@ export class NewslettersProcessor extends WorkerHost {
   private async getRecipients(
     newsletter: NewsletterDocument,
   ): Promise<Array<{ email: string; firstName: string }>> {
+    if (newsletter.audience === 'subscribers') {
+      const emails = await this.subscribersService.findActiveEmails();
+      return emails.map((email) => ({ email, firstName: 'there' }));
+    }
+
     const query: Record<string, unknown> = {
       isEmailVerified: true,
       isActive: true,

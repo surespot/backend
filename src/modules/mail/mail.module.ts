@@ -7,6 +7,12 @@ import { MailService } from './mail.service';
 import { NewsletterService } from './newsletter.service';
 import { NewslettersProcessor } from './newsletters.processor';
 import { Newsletter, NewsletterSchema } from './schemas/newsletter.schema';
+import {
+  NewsletterSubscriber,
+  NewsletterSubscriberSchema,
+} from './schemas/newsletter-subscriber.schema';
+import { NewsletterSubscribersController } from './newsletter-subscribers.controller';
+import { NewsletterSubscribersService } from './newsletter-subscribers.service';
 import { User, UserSchema } from '../auth/schemas/user.schema';
 import { OrdersModule } from '../orders/orders.module';
 import { existsSync } from 'fs';
@@ -21,6 +27,7 @@ import { BullModule } from '@nestjs/bullmq';
     MongooseModule.forFeature([
       { name: Newsletter.name, schema: NewsletterSchema },
       { name: User.name, schema: UserSchema },
+      { name: NewsletterSubscriber.name, schema: NewsletterSubscriberSchema },
     ]),
     forwardRef(() => OrdersModule),
     MailerModule.forRootAsync({
@@ -82,7 +89,13 @@ import { BullModule } from '@nestjs/bullmq';
       },
     }),
   ],
-  providers: [MailService, NewsletterService, NewslettersProcessor],
+  controllers: [NewsletterSubscribersController],
+  providers: [
+    MailService,
+    NewsletterService,
+    NewslettersProcessor,
+    NewsletterSubscribersService,
+  ],
   exports: [MailService, NewsletterService],
 })
 export class MailModule {}

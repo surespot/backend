@@ -8,6 +8,7 @@ export enum NewsletterAudienceType {
   ALL_RIDERS = 'riders',
   PICKUP_LOCATIONS = 'pickup-locations',
   REGIONS = 'regions',
+  SUBSCRIBERS = 'subscribers',
 }
 
 export enum NewsletterStatus {
