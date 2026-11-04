@@ -782,6 +782,16 @@ export class OrdersService {
         const existing = await this.ordersRepository.findByPaymentIntentId(
           dto.paymentIntentId,
         );
+        if (existing && existing.userId.toString() !== userId) {
+          // Someone else's payment reference: never return or reuse their order
+          throw new BadRequestException({
+            success: false,
+            error: {
+              code: 'PAYMENT_REFERENCE_INVALID',
+              message: 'This payment reference cannot be used for this order',
+            },
+          });
+        }
         if (existing) {
           this.logger.log(
             `Order already exists for paymentIntentId ${dto.paymentIntentId}, returning existing order`,
@@ -791,6 +801,14 @@ export class OrdersService {
             message: 'Order placed successfully',
             data: await this.formatOrder(existing),
           };
+        }
+
+        // The reference must be this user's own and not attached to another order
+        if (!this.isDemoUser(isDemo)) {
+          await this.transactionsService.assertReferenceUsableBy(
+            dto.paymentIntentId,
+            userId,
+          );
         }
       }
 
@@ -1084,6 +1102,7 @@ export class OrdersService {
             await this.transactionsService.linkTransactionToOrder(
               dto.paymentIntentId,
               activeOrder._id.toString(),
+              userId,
             );
           } catch (e) {
             this.logger.warn(
@@ -1231,8 +1250,8 @@ export class OrdersService {
           if (updatedOrder) {
             order = updatedOrder;
           }
-        } else if (!verification.success) {
-          // Payment failed, update order status
+        } else if (!verification.pending) {
+          // Payment definitively failed, update order status
           await this.ordersRepository.updateOrder(order._id.toString(), {
             paymentStatus: PaymentStatus.FAILED,
           });
@@ -1991,6 +2010,11 @@ export class OrdersService {
 
     if (paymentStatus === PaymentStatus.PAID) {
       extra.status = OrderStatus.CONFIRMED;
+    } else if (paymentStatus === PaymentStatus.FAILED) {
+      // Keep the order for support/fraud review instead of deleting it
+      extra.status = OrderStatus.CANCELLED;
+      extra.cancelledAt = new Date();
+      extra.cancellationReason = 'Payment failed';
     }
 
     const order = await this.ordersRepository.atomicUpdatePaymentStatus(
@@ -2183,14 +2207,19 @@ export class OrdersService {
         order.orderNumber,
         order._id.toString(),
       );
-      try {
-        await this.ordersRepository.deleteById(order._id.toString());
-      } catch (e) {
-        this.logger.warn(
-          `Could not delete failed-payment order ${order.orderNumber}: ${e instanceof Error ? e.message : String(e)}`,
-        );
-      }
     }
+  }
+
+  /**
+   * What a payment reference must cover: the total of the order it is attached to.
+   * Null when no order carries this reference yet.
+   */
+  async getPaymentExpectationByReference(
+    reference: string,
+  ): Promise<{ orderId: string; total: number } | null> {
+    const order = await this.ordersRepository.findByPaymentIntentId(reference);
+    if (!order) return null;
+    return { orderId: order._id.toString(), total: order.total };
   }
 
   // ============ Helper Methods ============

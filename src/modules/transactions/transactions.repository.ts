@@ -301,6 +301,34 @@ export class TransactionsRepository {
       .exec();
   }
 
+  /**
+   * Atomically move a transaction between statuses. Returns null when the
+   * transaction is not currently in one of the `from` statuses, so callers can
+   * run side effects exactly once.
+   */
+  async transitionStatus(
+    reference: string,
+    from: TransactionStatus[],
+    to: TransactionStatus,
+    data?: {
+      providerResponse?: Record<string, unknown>;
+      failureReason?: string;
+    },
+  ): Promise<TransactionDocument | null> {
+    const updateData: Record<string, unknown> = { status: to };
+    if (data?.providerResponse)
+      updateData.providerResponse = data.providerResponse;
+    if (data?.failureReason) updateData.failureReason = data.failureReason;
+
+    return this.transactionModel
+      .findOneAndUpdate(
+        { reference, status: { $in: from } },
+        { $set: updateData },
+        { new: true },
+      )
+      .exec();
+  }
+
   async updateByReference(
     reference: string,
     status: TransactionStatus,

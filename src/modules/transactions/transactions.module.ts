@@ -7,6 +7,7 @@ import { Transaction, TransactionSchema } from './schemas/transaction.schema';
 import { TransactionsController } from './transactions.controller';
 import { OrdersModule } from '../orders/orders.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { WalletsModule } from '../wallets/wallets.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     ]),
     forwardRef(() => OrdersModule),
     forwardRef(() => NotificationsModule),
+    forwardRef(() => WalletsModule),
   ],
   controllers: [TransactionsController],
   providers: [TransactionsService, TransactionsRepository, PaymentReconciliationScheduler],

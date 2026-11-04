@@ -5,6 +5,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import * as crypto from 'crypto';
 import { WalletsRepository } from './wallets.repository';
 import { TransactionsRepository } from '../transactions/transactions.repository';
 import { TransactionsService } from '../transactions/transactions.service';
@@ -531,40 +532,87 @@ export class WalletsService {
       });
     }
 
-    // Check balance
-    if ((wallet.walletBalance || 0) < amount) {
-      throw new BadRequestException({
-        success: false,
-        error: {
-          code: 'INSUFFICIENT_BALANCE',
-          message: 'Insufficient wallet balance',
-        },
+    // Reserve the funds BEFORE paying out. The balance check and the debit are one
+    // atomic operation, so concurrent requests cannot both pass it.
+    await this.walletsRepository.debitWallet(riderProfileId, amount);
+
+    // Lowercase + random suffix: unique per request, and echoed back by Paystack unchanged
+    const reference = `wth-${Date.now()}-${crypto.randomBytes(4).toString('hex')}-${riderProfileId.substring(0, 8)}`;
+
+    // Record the withdrawal as PENDING before any money moves, so webhooks can settle it
+    try {
+      await this.transactionsRepository.create({
+        riderProfileId,
+        type: TransactionType.RIDER_WITHDRAWAL,
+        amount: amount,
+        paymentMethod: 'bank_transfer',
+        provider: PaymentProvider.PAYSTACK,
+        reference,
+        status: TransactionStatus.PENDING,
       });
+    } catch (error) {
+      await this.walletsRepository.creditWallet(riderProfileId, amount);
+      throw error;
     }
 
     try {
-      // Generate unique reference
-      const reference = `WTH-${Date.now()}-${riderProfileId.substring(0, 8)}`;
-
       // Call Paystack to initiate transfer
-      const response = await fetch(`${this.paystackBaseUrl}/transfer`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.paystackSecretKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          source: 'balance',
-          amount: amount, // Amount in kobo
-          recipient: wallet.paystackRecipientCode,
-          reference,
-          reason: 'Rider withdrawal',
-        }),
-      });
-
-      const data = await response.json();
+      let response: Response;
+      let data: { status?: boolean; message?: string; data?: any };
+      try {
+        response = await fetch(`${this.paystackBaseUrl}/transfer`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.paystackSecretKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            source: 'balance',
+            amount: amount, // Amount in kobo
+            recipient: wallet.paystackRecipientCode,
+            reference,
+            reason: 'Rider withdrawal',
+          }),
+        });
+        data = await response.json();
+      } catch (networkError) {
+        // Outcome unknown: Paystack may have received the transfer. Keep the funds
+        // reserved and the transaction PENDING; the transfer webhooks settle it.
+        this.logger.error(
+          `[PAYMENT_ALERT] Withdrawal ${reference} for rider ${riderProfileId} has unknown outcome, funds kept reserved: ${networkError instanceof Error ? networkError.message : String(networkError)}`,
+        );
+        throw new BadRequestException({
+          success: false,
+          error: {
+            code: 'PAYSTACK_TRANSFER_UNCONFIRMED',
+            message:
+              'We could not confirm your withdrawal yet. Your balance will update once it is confirmed.',
+          },
+        });
+      }
 
       if (!data.status) {
+        if (response.status >= 500) {
+          this.logger.error(
+            `[PAYMENT_ALERT] Withdrawal ${reference} for rider ${riderProfileId} got a ${response.status} from Paystack, funds kept reserved`,
+          );
+          throw new BadRequestException({
+            success: false,
+            error: {
+              code: 'PAYSTACK_TRANSFER_UNCONFIRMED',
+              message:
+                'We could not confirm your withdrawal yet. Your balance will update once it is confirmed.',
+            },
+          });
+        }
+
+        // Definitive rejection: release the reservation
+        await this.transactionsService.releaseFailedWithdrawal(
+          reference,
+          riderProfileId,
+          amount,
+          data.message || 'Transfer rejected by Paystack',
+        );
         throw new BadRequestException({
           success: false,
           error: {
@@ -576,23 +624,16 @@ export class WalletsService {
 
       const transfer = data.data;
 
-      // Debit wallet immediately (Paystack will handle the actual transfer)
-      await this.walletsRepository.debitWallet(riderProfileId, amount);
-
-      // Create transaction record
-      await this.transactionsRepository.create({
-        riderProfileId,
-        type: TransactionType.RIDER_WITHDRAWAL,
-        amount: amount,
-        paymentMethod: 'bank_transfer',
-        provider: PaymentProvider.PAYSTACK,
-        reference: transfer.reference || reference,
-        status:
-          transfer.status === 'success'
-            ? TransactionStatus.SUCCESS
-            : TransactionStatus.PENDING,
-        providerResponse: transfer,
-      });
+      // Record Paystack's answer; only moves a still-PENDING transaction so it can
+      // never overwrite a status a webhook has already settled.
+      await this.transactionsRepository.transitionStatus(
+        reference,
+        [TransactionStatus.PENDING],
+        transfer.status === 'success'
+          ? TransactionStatus.SUCCESS
+          : TransactionStatus.PENDING,
+        { providerResponse: transfer },
+      );
 
       this.logger.log(
         `Withdrawal initiated for rider ${riderProfileId}: ₦${(amount / 100).toFixed(2)}`,
@@ -641,11 +682,17 @@ export class WalletsService {
         throw error;
       }
 
+      // Anything unexpected after funds were reserved: the transfer may or may not
+      // have gone out, so keep the reservation and let the webhooks settle it.
+      this.logger.error(
+        `[PAYMENT_ALERT] Withdrawal ${reference} for rider ${riderProfileId} ended in an unexpected state, funds kept reserved`,
+      );
       throw new BadRequestException({
         success: false,
         error: {
-          code: 'PAYSTACK_TRANSFER_FAILED',
-          message: 'Failed to initiate transfer',
+          code: 'PAYSTACK_TRANSFER_UNCONFIRMED',
+          message:
+            'We could not confirm your withdrawal yet. Your balance will update once it is confirmed.',
         },
       });
     }

@@ -16,7 +16,11 @@ async function bootstrap() {
     validateEnv();
   }
 
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  // rawBody: Paystack signs the exact bytes it sends, so webhook verification needs them untouched
+  const app = await NestFactory.create(AppModule, {
+    bufferLogs: true,
+    rawBody: true,
+  });
 
   // Route all NestJS Logger (new Logger()) calls through Winston → Loki
   app.useLogger(app.get(WINSTON_MODULE_NEST_PROVIDER));

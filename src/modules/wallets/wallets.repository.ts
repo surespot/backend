@@ -102,9 +102,26 @@ export class WalletsRepository {
       });
     }
 
-    const wallet = await this.findOrCreate(riderProfileId);
-    wallet.walletBalance = (wallet.walletBalance || 0) + amount;
-    return wallet.save();
+    await this.findOrCreate(riderProfileId);
+
+    // Atomic $inc: a read-modify-save would lose concurrent updates
+    const wallet = await this.walletModel
+      .findOneAndUpdate(
+        { riderProfileId: new Types.ObjectId(riderProfileId) },
+        { $inc: { walletBalance: amount } },
+        { new: true },
+      )
+      .exec();
+    if (!wallet) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'WALLET_NOT_FOUND',
+          message: 'Wallet not found for this rider',
+        },
+      });
+    }
+    return wallet;
   }
 
   /**
@@ -126,9 +143,21 @@ export class WalletsRepository {
       });
     }
 
-    const wallet = await this.findByRiderProfileIdOrThrow(riderProfileId);
+    // Check and debit in one atomic operation so concurrent debits cannot both pass
+    const wallet = await this.walletModel
+      .findOneAndUpdate(
+        {
+          riderProfileId: new Types.ObjectId(riderProfileId),
+          walletBalance: { $gte: amount },
+        },
+        { $inc: { walletBalance: -amount } },
+        { new: true },
+      )
+      .exec();
 
-    if ((wallet.walletBalance || 0) < amount) {
+    if (!wallet) {
+      // Distinguish a missing wallet from a too-small balance
+      await this.findByRiderProfileIdOrThrow(riderProfileId);
       throw new BadRequestException({
         success: false,
         error: {
@@ -138,8 +167,7 @@ export class WalletsRepository {
       });
     }
 
-    wallet.walletBalance = (wallet.walletBalance || 0) - amount;
-    return wallet.save();
+    return wallet;
   }
 
   /**
