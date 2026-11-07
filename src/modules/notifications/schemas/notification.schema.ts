@@ -18,6 +18,7 @@ export enum NotificationType {
   GENERAL = 'general',
   CHAT_MESSAGE = 'chat_message',
   NEW_REVIEW = 'new_review',
+  SPECIAL_REWARD = 'special_reward',
   PICKUP_LOCATION_AVAILABLE = 'pickup_location_available',
   WALLET_CREDITED = 'wallet_credited',
   WALLET_WITHDRAWAL_INITIATED = 'wallet_withdrawal_initiated',

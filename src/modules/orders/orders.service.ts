@@ -28,6 +28,10 @@ import { RiderLocationRepository } from '../riders/rider-location.repository';
 import { RidersRepository } from '../riders/riders.repository';
 import { RiderStatus } from '../riders/schemas/rider-profile.schema';
 import { PlacesService } from '../places/places.service';
+import {
+  RewardsService,
+  REWARD_CODE_NOT_RECOGNISED,
+} from '../rewards/rewards.service';
 import { Types, ClientSession } from 'mongoose';
 import { ValidateCheckoutDto } from './dto/validate-checkout.dto';
 import { PlaceOrderDto } from './dto/place-order.dto';
@@ -173,6 +177,7 @@ export class OrdersService {
     private readonly configService: ConfigService,
     private readonly settingsService: SettingsService,
     private readonly placesService: PlacesService,
+    private readonly rewardsService: RewardsService,
     @InjectQueue('rider-search') private readonly riderSearchQueue: Queue,
     @InjectQueue('pickup-timeout') private readonly pickupTimeoutQueue: Queue,
   ) {}
@@ -663,6 +668,7 @@ export class OrdersService {
     let discountAmount = cart.discountAmount;
     let discountPercent = cart.discountPercent;
     let promoCode = cart.promoCode;
+    let rewardGrantId: string | undefined;
 
     if (codeToValidate) {
       const cartTotal = adjustedSubtotal + cart.extrasTotal;
@@ -700,14 +706,32 @@ export class OrdersService {
           discountPercent = marketerValidation.marketer?.discountValue;
           promoCode = codeToValidate.toUpperCase();
         } else {
-          const message =
-            promoValidation.message !== 'Invalid or expired discount code'
-              ? promoValidation.message
-              : marketerValidation.message || promoValidation.message;
-          errors.push({
-            field: 'promoCode',
-            message: message || 'Invalid promo code',
-          });
+          // Last: a special-reward code the customer has earned (e.g. by reviewing)
+          const rewardValidation = await this.rewardsService.resolveForCheckout(
+            codeToValidate,
+            userId,
+            promoContext,
+          );
+          if (rewardValidation.valid) {
+            discountAmount = rewardValidation.discountAmount;
+            discountPercent =
+              rewardValidation.campaign.discountType === 'percentage'
+                ? rewardValidation.campaign.discountValue
+                : undefined;
+            promoCode = codeToValidate.toUpperCase();
+            rewardGrantId = rewardValidation.grantId;
+          } else {
+            // Show the most specific reason any validator gave, not the generic "unknown code"
+            const message = [
+              promoValidation.message,
+              marketerValidation.message,
+              rewardValidation.message,
+            ].find((m) => m && m !== REWARD_CODE_NOT_RECOGNISED);
+            errors.push({
+              field: 'promoCode',
+              message: message || 'Invalid or expired discount code',
+            });
+          }
         }
       }
     }
@@ -755,6 +779,7 @@ export class OrdersService {
           discountAmount,
           discountPercent,
           promoCode,
+          rewardGrantId,
           total,
         },
         deliveryFee,
@@ -971,6 +996,7 @@ export class OrdersService {
               discountPercent: validation.data.cart.discountPercent,
               promoCode: validation.data.cart.promoCode,
               promotionId,
+              rewardGrantId: validation.data.cart.rewardGrantId,
               marketerId,
               total: validation.data.cart.total,
               itemCount: cart.itemCount,
@@ -2061,6 +2087,26 @@ export class OrdersService {
         } catch (e) {
           this.logger.warn(
             `Could not record marketer usage for order ${order.orderNumber}: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      }
+
+      // Use up the special reward now that payment is confirmed
+      if (order.rewardGrantId) {
+        try {
+          const redeemed = await this.rewardsService.redeem(
+            order.rewardGrantId.toString(),
+            order.userId.toString(),
+            order._id.toString(),
+          );
+          if (!redeemed) {
+            this.logger.warn(
+              `[REWARD_ALERT] Order ${order.orderNumber} was paid with reward ${order.rewardGrantId.toString()} but it could not be marked redeemed (already used or revoked meanwhile)`,
+            );
+          }
+        } catch (e) {
+          this.logger.warn(
+            `Could not redeem reward for order ${order.orderNumber}: ${e instanceof Error ? e.message : String(e)}`,
           );
         }
       }

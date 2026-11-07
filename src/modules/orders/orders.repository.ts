@@ -92,6 +92,7 @@ export class OrdersRepository {
       promoCode?: string;
       promotionId?: string;
       marketerId?: string;
+      rewardGrantId?: string;
       total: number;
       itemCount: number;
       extrasCount: number;
@@ -152,6 +153,10 @@ export class OrdersRepository {
 
     if (data.marketerId) {
       orderData.marketerId = new Types.ObjectId(data.marketerId);
+    }
+
+    if (data.rewardGrantId) {
+      orderData.rewardGrantId = new Types.ObjectId(data.rewardGrantId);
     }
 
     if (data.pickupLocationId) {

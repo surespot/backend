@@ -15,7 +15,12 @@ import {
   FoodInteractionDocument,
   InteractionType,
 } from './schemas/food-interaction.schema';
-import { Review, ReviewDocument } from './schemas/review.schema';
+import {
+  Review,
+  ReviewDocument,
+  VISIBLE_REVIEW_FILTER,
+} from './schemas/review.schema';
+import { computeVisibleRatingStats } from './review-stats';
 import {
   GetFoodItemsFilterDto,
   SortBy,
@@ -898,27 +903,11 @@ export class FoodItemsRepository {
   ): Promise<{ averageRating: number; ratingCount: number }> {
     this.validateObjectId(foodItemId, 'foodItemId');
 
-    const result = await this.reviewModel
-      .aggregate<{ _id: null; averageRating: number; ratingCount: number }>([
-        { $match: { foodItemId: new Types.ObjectId(foodItemId) } },
-        {
-          $group: {
-            _id: null,
-            averageRating: { $avg: '$rating' },
-            ratingCount: { $sum: 1 },
-          },
-        },
-      ])
-      .exec();
-
-    if (!result.length) {
-      return { averageRating: 0, ratingCount: 0 };
-    }
-
-    const avg = result[0].averageRating;
-    const count = result[0].ratingCount;
-    const roundedAvg = Math.round(avg * 10) / 10; // 1 decimal place
-    return { averageRating: roundedAvg, ratingCount: count };
+    // Hidden reviews are excluded (see computeVisibleRatingStats)
+    return computeVisibleRatingStats(
+      this.reviewModel,
+      new Types.ObjectId(foodItemId),
+    );
   }
 
   async updateFoodItemRatingStats(
@@ -940,7 +929,8 @@ export class FoodItemsRepository {
     pickupLocationId: Types.ObjectId | undefined,
     dateRange: { start: Date; end: Date },
   ): Promise<DashboardReviewItem[]> {
-    const pipeline: PipelineStage[] = [];
+    // Hidden reviews must not show up anywhere reviews are displayed
+    const pipeline: PipelineStage[] = [{ $match: { ...VISIBLE_REVIEW_FILTER } }];
 
     if (pickupLocationId) {
       pipeline.push({ $match: { orderId: { $exists: true, $ne: null } } });

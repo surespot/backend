@@ -257,6 +257,18 @@ export class NotificationsProcessor extends WorkerHost {
         });
         break;
 
+      case NotificationType.SPECIAL_REWARD:
+        success = await this.gateway.sendToUser(user.userId, 'notification', {
+          id: notificationId,
+          type,
+          title: (data?.title as string) || 'Special reward',
+          message: (data?.message as string) || '',
+          data,
+          isRead: false,
+          createdAt: new Date().toISOString(),
+        });
+        break;
+
       case NotificationType.GENERAL:
         // Check if it's a rate reminder or welcome notification
         if (data?.isRateReminder && orderId) {

@@ -14,6 +14,7 @@ import { PromotionDocument } from './schemas/promotion.schema';
 import { STORAGE_SERVICE } from '../../common/storage/storage.constants';
 import type { IStorageService } from '../../common/storage/interfaces/storage.interface';
 import { FoodItemsRepository } from '../food-items/food-items.repository';
+import { calculateBenefit, validateBenefitFields } from './discount-calculator';
 
 export interface ValidateDiscountContext {
   orderAmount: number;
@@ -62,103 +63,7 @@ export class PromotionsService {
   private validateDiscountFields(
     dto: CreatePromotionDto | UpdatePromotionDto,
   ): void {
-    const needsDiscountValue = ['percentage', 'fixed_amount'].includes(
-      dto.discountType ?? '',
-    );
-    if (needsDiscountValue && dto.discountValue === undefined) {
-      throw new BadRequestException({
-        success: false,
-        error: {
-          code: 'PROMOTION_DISCOUNT_VALUE_REQUIRED',
-          message: 'discountValue is required for percentage and fixed_amount',
-        },
-      });
-    }
-
-    if (dto.discountValue !== undefined && !dto.discountType) {
-      throw new BadRequestException({
-        success: false,
-        error: {
-          code: 'PROMOTION_DISCOUNT_TYPE_REQUIRED',
-          message: 'discountType is required when discountValue is provided',
-        },
-      });
-    }
-
-    if (dto.discountType === 'percentage') {
-      if (
-        dto.discountValue === undefined ||
-        dto.discountValue < 0 ||
-        dto.discountValue > 100
-      ) {
-        throw new BadRequestException({
-          success: false,
-          error: {
-            code: 'PROMOTION_INVALID_PERCENTAGE',
-            message: 'Percentage discount must be between 0 and 100',
-          },
-        });
-      }
-    }
-
-    if (dto.discountType === 'fixed_amount') {
-      if (dto.discountValue === undefined || dto.discountValue <= 0) {
-        throw new BadRequestException({
-          success: false,
-          error: {
-            code: 'PROMOTION_INVALID_FIXED_AMOUNT',
-            message: 'Fixed amount discount must be greater than 0',
-          },
-        });
-      }
-    }
-
-    if (dto.discountType === 'free_category') {
-      if (!dto.targetCategory || dto.maxFreeQuantity === undefined) {
-        throw new BadRequestException({
-          success: false,
-          error: {
-            code: 'PROMOTION_FREE_CATEGORY_REQUIRED',
-            message:
-              'targetCategory and maxFreeQuantity are required for free_category',
-          },
-        });
-      }
-    }
-
-    if (dto.discountType === 'bogo') {
-      const hasTarget =
-        (dto.targetFoodItemIds && dto.targetFoodItemIds.length > 0) ||
-        dto.targetCategory;
-      if (
-        !hasTarget ||
-        dto.buyQuantity === undefined ||
-        dto.getFreeQuantity === undefined
-      ) {
-        throw new BadRequestException({
-          success: false,
-          error: {
-            code: 'PROMOTION_BOGO_REQUIRED',
-            message:
-              'bogo requires buyQuantity, getFreeQuantity, and (targetFoodItemIds or targetCategory)',
-          },
-        });
-      }
-    }
-
-    if (
-      dto.maxDiscountAmount !== undefined &&
-      dto.discountType !== 'percentage'
-    ) {
-      throw new BadRequestException({
-        success: false,
-        error: {
-          code: 'PROMOTION_MAX_DISCOUNT_INVALID',
-          message:
-            'maxDiscountAmount is only applicable for percentage discounts',
-        },
-      });
-    }
+    validateBenefitFields(dto, 'PROMOTION');
   }
 
   private toResponse(promotion: PromotionDocument) {
@@ -612,91 +517,22 @@ export class PromotionsService {
       };
     }
 
-    if (!promotion.discountType) {
-      return {
-        valid: false,
-        message: 'This promotion does not have discount configuration',
-      };
-    }
+    // Discount math is shared with special rewards (see discount-calculator.ts)
+    const result = await calculateBenefit(
+      promotion,
+      { orderAmount, deliveryFee, cartItems },
+      (ids) => this.foodItemsRepository.findCategoriesByIds(ids),
+      'promotion',
+    );
 
-    if (
-      promotion.minOrderAmount !== undefined &&
-      orderAmount < promotion.minOrderAmount
-    ) {
-      return {
-        valid: false,
-        message: `Minimum order amount of ₦${(promotion.minOrderAmount / 100).toFixed(2)} required`,
-      };
-    }
-
-    let discountAmount = 0;
-    let waivesDelivery = false;
-
-    switch (promotion.discountType) {
-      case 'percentage':
-        if (promotion.discountValue === undefined) {
-          return {
-            valid: false,
-            message: 'This promotion does not have discount configuration',
-          };
-        }
-        discountAmount = (orderAmount * promotion.discountValue) / 100;
-        if (
-          promotion.maxDiscountAmount !== undefined &&
-          discountAmount > promotion.maxDiscountAmount
-        ) {
-          discountAmount = promotion.maxDiscountAmount;
-        }
-        break;
-
-      case 'fixed_amount':
-        if (promotion.discountValue === undefined) {
-          return {
-            valid: false,
-            message: 'This promotion does not have discount configuration',
-          };
-        }
-        discountAmount = promotion.discountValue;
-        if (discountAmount > orderAmount) {
-          discountAmount = orderAmount;
-        }
-        break;
-
-      case 'free_delivery':
-        if (deliveryFee !== undefined && deliveryFee > 0) {
-          discountAmount = deliveryFee;
-        } else {
-          waivesDelivery = true;
-        }
-        break;
-
-      case 'free_category':
-        discountAmount = await this.calcFreeCategoryDiscount(
-          promotion,
-          orderAmount,
-          cartItems ?? [],
-        );
-        break;
-
-      case 'bogo':
-        discountAmount = await this.calcBogoDiscount(
-          promotion,
-          orderAmount,
-          cartItems ?? [],
-        );
-        break;
-
-      default:
-        return {
-          valid: false,
-          message: 'Unknown promotion type',
-        };
+    if (!result.valid) {
+      return { valid: false, message: result.message };
     }
 
     return {
       valid: true,
-      discountAmount: Math.round(discountAmount),
-      waivesDelivery,
+      discountAmount: result.discountAmount,
+      waivesDelivery: result.waivesDelivery,
       promotion: {
         id: promotion._id.toString(),
         name: promotion.name,
@@ -704,115 +540,6 @@ export class PromotionsService {
         discountValue: promotion.discountValue,
       },
     };
-  }
-
-  private async calcFreeCategoryDiscount(
-    promotion: PromotionDocument,
-    orderAmount: number,
-    cartItems: Array<{
-      foodItemId: string;
-      quantity: number;
-      price: number;
-      lineTotal: number;
-    }>,
-  ): Promise<number> {
-    if (
-      !promotion.targetCategory ||
-      promotion.maxFreeQuantity === undefined ||
-      cartItems.length === 0
-    ) {
-      return 0;
-    }
-
-    const categories = await this.foodItemsRepository.findCategoriesByIds(
-      cartItems.map((i) => i.foodItemId),
-    );
-
-    const qualifying: Array<{
-      price: number;
-      lineTotal: number;
-      quantity: number;
-    }> = [];
-    for (const item of cartItems) {
-      const cat = categories.get(item.foodItemId);
-      if (cat === promotion.targetCategory) {
-        const unitPrice =
-          item.quantity > 0 ? item.lineTotal / item.quantity : 0;
-        for (let q = 0; q < item.quantity; q++) {
-          qualifying.push({
-            price: unitPrice,
-            lineTotal: unitPrice,
-            quantity: 1,
-          });
-        }
-      }
-    }
-
-    const totalCartItems = cartItems.reduce((sum, i) => sum + i.quantity, 0);
-    qualifying.sort((a, b) => a.price - b.price);
-    const toTake = Math.min(
-      qualifying.length,
-      promotion.maxFreeQuantity,
-      Math.max(0, totalCartItems - 1),
-    );
-    return qualifying.slice(0, toTake).reduce((sum, u) => sum + u.price, 0);
-  }
-
-  private async calcBogoDiscount(
-    promotion: PromotionDocument,
-    orderAmount: number,
-    cartItems: Array<{
-      foodItemId: string;
-      quantity: number;
-      price: number;
-      lineTotal: number;
-    }>,
-  ): Promise<number> {
-    if (
-      promotion.buyQuantity === undefined ||
-      promotion.getFreeQuantity === undefined ||
-      cartItems.length === 0
-    ) {
-      return 0;
-    }
-
-    const categories = await this.foodItemsRepository.findCategoriesByIds(
-      cartItems.map((i) => i.foodItemId),
-    );
-
-    const targetIds = new Set(
-      promotion.targetFoodItemIds?.map((id) => id.toString()) ?? [],
-    );
-    const targetCategory = promotion.targetCategory;
-
-    const qualifies = (
-      foodItemId: string,
-      category: string | undefined,
-    ): boolean => {
-      if (targetIds.size > 0) return targetIds.has(foodItemId);
-      return targetCategory !== undefined && category === targetCategory;
-    };
-
-    const units: Array<{ price: number }> = [];
-    for (const item of cartItems) {
-      const cat = categories.get(item.foodItemId);
-      if (!qualifies(item.foodItemId, cat)) continue;
-      const unitPrice = item.quantity > 0 ? item.lineTotal / item.quantity : 0;
-      for (let q = 0; q < item.quantity; q++) {
-        units.push({ price: unitPrice });
-      }
-    }
-
-    const qualifyingCount = units.length;
-    const cycleSize = promotion.buyQuantity + promotion.getFreeQuantity;
-    let freeUnits =
-      Math.floor(qualifyingCount / cycleSize) * promotion.getFreeQuantity;
-    if (promotion.maxRedeemablePerOrder !== undefined) {
-      freeUnits = Math.min(freeUnits, promotion.maxRedeemablePerOrder);
-    }
-
-    units.sort((a, b) => a.price - b.price);
-    return units.slice(0, freeUnits).reduce((sum, u) => sum + u.price, 0);
   }
 
   /**
