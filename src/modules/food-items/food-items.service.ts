@@ -7,6 +7,7 @@ import {
   UnauthorizedException,
   Inject,
   Optional,
+  forwardRef,
 } from '@nestjs/common';
 import { FoodItemsRepository } from './food-items.repository';
 import { GetFoodItemsFilterDto } from './dto/get-food-items-filter.dto';
@@ -27,6 +28,7 @@ import type { IStorageService } from '../../common/storage/interfaces/storage.in
 import { OrdersRepository } from '../orders/orders.repository';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AdminMenuRepository } from '../admin/admin-menu.repository';
+import { ReviewsService } from '../reviews/reviews.service';
 import { Types } from 'mongoose';
 
 export interface FoodItemResponse {
@@ -97,6 +99,8 @@ export class FoodItemsService {
     @Inject(STORAGE_SERVICE) private readonly storageService: IStorageService,
     private readonly ordersRepository: OrdersRepository,
     private readonly notificationsService: NotificationsService,
+    @Inject(forwardRef(() => ReviewsService))
+    private readonly reviewsService: ReviewsService,
     @Optional() private readonly adminMenuRepository?: AdminMenuRepository,
   ) {}
 
@@ -955,85 +959,17 @@ export class FoodItemsService {
     }
   }
 
-  async createReview(
-    foodItemIdOrSlug: string,
-    userId: string,
-    dto: CreateReviewDto,
-  ) {
-    const foodItem = await this.foodItemsRepository.findById(
+  /**
+   * Review a food item. Delegates to ReviewsService, which requires the item to
+   * be in one of the customer's delivered orders, keeps ratings and moderation
+   * consistent, and attaches any running reward campaign.
+   */
+  createReview(foodItemIdOrSlug: string, userId: string, dto: CreateReviewDto) {
+    return this.reviewsService.submitSingleReview(
+      userId,
       foodItemIdOrSlug,
-      false,
+      dto,
     );
-    if (!foodItem) {
-      throw new NotFoundException({
-        success: false,
-        error: {
-          code: 'FOOD_ITEM_NOT_FOUND',
-          message: 'Food item not found',
-        },
-      });
-    }
-    const foodItemId = foodItem._id.toString();
-
-    const existing = await this.foodItemsRepository.findReviewByFoodItemAndUser(
-      foodItemId,
-      userId,
-    );
-    if (existing) {
-      throw new ConflictException({
-        success: false,
-        error: {
-          code: 'ALREADY_REVIEWED',
-          message: 'You have already reviewed this food item',
-        },
-      });
-    }
-
-    const review = await this.foodItemsRepository.createReview({
-      foodItemId,
-      userId,
-      rating: dto.rating,
-      comment: dto.comment,
-      orderId: dto.orderId,
-    });
-
-    const { averageRating, ratingCount } =
-      await this.foodItemsRepository.aggregateRatingStats(foodItemId);
-    await this.foodItemsRepository.updateFoodItemRatingStats(
-      foodItemId,
-      averageRating,
-      ratingCount,
-    );
-
-    if (review.orderId) {
-      this.notificationsService
-        .notifyPickupLocationAdminsNewReview(
-          review.orderId.toString(),
-          foodItem.name,
-          review.rating,
-          review._id.toString(),
-          review.comment,
-        )
-        .catch((err) => {
-          // Log but don't fail review creation if notification fails
-          this.logger.warn(
-            `Failed to notify admins of new review: ${err?.message ?? err}`,
-          );
-        });
-    }
-
-    return {
-      success: true,
-      message: 'Review created successfully',
-      data: {
-        id: review._id.toString(),
-        foodItemId,
-        userId,
-        rating: review.rating,
-        comment: review.comment,
-        createdAt: review.createdAt?.toISOString(),
-      },
-    };
   }
 
   async getLikedFoodItems(

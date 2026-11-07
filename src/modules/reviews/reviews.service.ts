@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   Logger,
@@ -33,6 +34,11 @@ import {
   OrderItem,
   OrderItemDocument,
 } from '../orders/schemas/order-item.schema';
+import {
+  FoodItem,
+  FoodItemDocument,
+} from '../food-items/schemas/food-item.schema';
+import { CreateReviewDto } from '../food-items/dto/create-review.dto';
 import { RewardsService } from '../rewards/rewards.service';
 import { RewardTrigger } from '../rewards/schemas/reward-campaign.schema';
 import type { RewardCampaignDocument } from '../rewards/schemas/reward-campaign.schema';
@@ -46,7 +52,6 @@ import {
 import {
   REVIEW_WINDOW_MS,
   buildReviewQueue,
-  isWithinReviewWindow,
   reviewWindowCutoff,
   QueueEntry,
 } from './review-queue';
@@ -69,6 +74,8 @@ export class ReviewsService {
     @InjectModel(Order.name) private readonly orderModel: Model<OrderDocument>,
     @InjectModel(OrderItem.name)
     private readonly orderItemModel: Model<OrderItemDocument>,
+    @InjectModel(FoodItem.name)
+    private readonly foodItemModel: Model<FoodItemDocument>,
     @InjectConnection() private readonly connection: Connection,
     private readonly rewardsService: RewardsService,
     private readonly ratingsService: ReviewRatingsService,
@@ -183,8 +190,12 @@ export class ReviewsService {
   // Submitting
   // ---------------------------------------------------------------------------
 
-  /** The order must be the customer's, delivered recently, and not already dealt with. */
-  private async loadReviewableOrder(
+  /**
+   * The order must be the customer's and delivered. There is deliberately NO
+   * time limit here: a customer can review anything from a delivered order at
+   * any time. The 2-day window only decides what the app *prompts* about.
+   */
+  private async loadDeliveredOrder(
     userId: string,
     orderId: string,
   ): Promise<OrderDocument> {
@@ -211,18 +222,6 @@ export class ReviewsService {
         },
       });
     }
-    if (!isWithinReviewWindow(order.deliveredAt)) {
-      throw new BadRequestException({
-        success: false,
-        error: {
-          code: 'REVIEW_WINDOW_CLOSED',
-          message: 'This order can no longer be reviewed',
-        },
-      });
-    }
-    if (await this.promptModel.exists({ orderId: order._id })) {
-      throw this.alreadyResolved();
-    }
     return order;
   }
 
@@ -231,7 +230,7 @@ export class ReviewsService {
       success: false,
       error: {
         code: 'ORDER_ALREADY_RESOLVED',
-        message: 'You have already reviewed or skipped this order',
+        message: 'You have already left a review for this whole order',
       },
     });
   }
@@ -299,7 +298,7 @@ export class ReviewsService {
     orderId: string,
     dto: SubmitItemReviewsDto,
   ) {
-    const order = await this.loadReviewableOrder(userId, orderId);
+    const order = await this.loadDeliveredOrder(userId, orderId);
     const meals = await this.loadOrderMeals(order._id);
 
     const ids = dto.reviews.map((r) => r.foodItemId);
@@ -342,17 +341,6 @@ export class ReviewsService {
 
     let created: ReviewDocument[] = [];
     await this.inTransaction(async (session) => {
-      await this.promptModel.create(
-        [
-          {
-            userId: userObjectId,
-            orderId: order._id,
-            status: ReviewPromptStatus.COMPLETED,
-            kind: 'items',
-          },
-        ],
-        { session },
-      );
       created = await this.reviewModel.insertMany(
         dto.reviews.map((r) => ({
           foodItemId: new Types.ObjectId(r.foodItemId),
@@ -368,6 +356,7 @@ export class ReviewsService {
       );
     });
 
+    await this.markOrderHandled(userId, order._id, 'items');
     await this.afterSubmit(
       created.map((r) => r.foodItemId),
       userId,
@@ -420,7 +409,10 @@ export class ReviewsService {
     orderId: string,
     dto: SubmitOrderReviewDto,
   ) {
-    const order = await this.loadReviewableOrder(userId, orderId);
+    const order = await this.loadDeliveredOrder(userId, orderId);
+    if (await this.orderReviewModel.exists({ orderId: order._id })) {
+      throw this.alreadyResolved();
+    }
     const meals = await this.loadOrderMeals(order._id);
 
     const alreadyReviewed = await this.findReviewedMeals(userId, [
@@ -445,17 +437,6 @@ export class ReviewsService {
 
     let orderReview!: OrderReviewDocument;
     await this.inTransaction(async (session) => {
-      await this.promptModel.create(
-        [
-          {
-            userId: userObjectId,
-            orderId: order._id,
-            status: ReviewPromptStatus.COMPLETED,
-            kind: 'order',
-          },
-        ],
-        { session },
-      );
       const [createdOrderReview] = await this.orderReviewModel.create(
         [
           {
@@ -486,6 +467,7 @@ export class ReviewsService {
       );
     });
 
+    await this.markOrderHandled(userId, order._id, 'order');
     await this.afterSubmit(foodItemIds, userId);
 
     if (campaign && !campaign.requiresApproval) {
@@ -525,7 +507,11 @@ export class ReviewsService {
     };
   }
 
-  /** Skip an order: it leaves the queue and is not asked about again. */
+  /**
+   * Skip an order: it leaves the prompt queue and is not asked about again.
+   * This only affects the prompt. The customer can still review the order's
+   * items later (e.g. from order history).
+   */
   async dismiss(userId: string, orderId: string) {
     const order = Types.ObjectId.isValid(orderId)
       ? await this.orderModel
@@ -542,13 +528,19 @@ export class ReviewsService {
     }
 
     try {
-      await this.promptModel.create({
-        userId: new Types.ObjectId(userId),
-        orderId: order._id,
-        status: ReviewPromptStatus.DISMISSED,
-      });
+      // $setOnInsert: skipping an order already handled must not change it
+      await this.promptModel.updateOne(
+        { orderId: order._id },
+        {
+          $setOnInsert: {
+            userId: new Types.ObjectId(userId),
+            status: ReviewPromptStatus.DISMISSED,
+          },
+        },
+        { upsert: true },
+      );
     } catch (err) {
-      // Already dealt with: skipping again is harmless
+      // Two skips racing each other: harmless
       if ((err as { code?: number }).code !== 11000) throw err;
     }
 
@@ -560,8 +552,218 @@ export class ReviewsService {
   }
 
   // ---------------------------------------------------------------------------
+  // Single-item review (POST /food-items/:id/reviews)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Review one meal, from a food item page or order history. The customer must
+   * have received it: it has to be in one of their delivered orders (the one in
+   * `dto.orderId`, or else their most recent delivered order containing it).
+   * No time limit. Earns the same reward as the order flow.
+   */
+  async submitSingleReview(
+    userId: string,
+    foodItemIdOrSlug: string,
+    dto: CreateReviewDto,
+  ) {
+    const foodItem = Types.ObjectId.isValid(foodItemIdOrSlug)
+      ? await this.foodItemModel.findById(foodItemIdOrSlug).exec()
+      : await this.foodItemModel.findOne({ slug: foodItemIdOrSlug }).exec();
+    if (!foodItem) {
+      throw new NotFoundException({
+        success: false,
+        error: {
+          code: 'FOOD_ITEM_NOT_FOUND',
+          message: 'Food item not found',
+        },
+      });
+    }
+
+    const order = await this.findDeliveredOrderContaining(
+      userId,
+      foodItem._id,
+      dto.orderId,
+    );
+
+    const userObjectId = new Types.ObjectId(userId);
+    if (
+      await this.reviewModel.exists({
+        foodItemId: foodItem._id,
+        userId: userObjectId,
+      })
+    ) {
+      throw new ConflictException({
+        success: false,
+        error: {
+          code: 'ALREADY_REVIEWED',
+          message: 'You have already reviewed this food item',
+        },
+      });
+    }
+
+    const campaign = await this.rewardsService.findEarningCampaign(
+      RewardTrigger.REVIEW,
+    );
+
+    let review: ReviewDocument;
+    try {
+      review = await this.reviewModel.create({
+        foodItemId: foodItem._id,
+        userId: userObjectId,
+        rating: dto.rating,
+        comment: dto.comment || undefined,
+        orderId: order._id,
+        source: ReviewSource.ITEM,
+        moderationStatus: ReviewModerationStatus.PENDING,
+        rewardCampaignId: campaign?._id,
+      });
+    } catch (err) {
+      if ((err as { code?: number }).code === 11000) {
+        throw new ConflictException({
+          success: false,
+          error: {
+            code: 'ALREADY_REVIEWED',
+            message: 'You have already reviewed this food item',
+          },
+        });
+      }
+      throw err;
+    }
+
+    await this.afterSubmit([foodItem._id], userId);
+
+    if (campaign && !campaign.requiresApproval) {
+      await this.rewardsService
+        .grant({
+          campaignId: campaign._id.toString(),
+          userId,
+          sourceType: REVIEW_SOURCE_TYPE,
+          sourceId: review._id.toString(),
+          orderId: order._id.toString(),
+        })
+        .catch((err) => this.logger.warn(`Auto reward grant failed: ${err}`));
+    }
+
+    this.notifyAdmins(
+      order._id.toString(),
+      foodItem.name,
+      review.rating,
+      review._id.toString(),
+      review.comment,
+    );
+
+    return {
+      success: true,
+      message: 'Review created successfully',
+      data: {
+        id: review._id.toString(),
+        foodItemId: foodItem._id.toString(),
+        userId,
+        orderId: order._id.toString(),
+        rating: review.rating,
+        comment: review.comment,
+        createdAt: review.createdAt?.toISOString(),
+        reward: await this.rewardOutcome(campaign, userId),
+      },
+    };
+  }
+
+  /**
+   * The customer's delivered order that contains this meal. With an explicit
+   * order id that order is checked; without one, the most recent matching
+   * delivered order is used (so older app builds that omit it still work).
+   */
+  private async findDeliveredOrderContaining(
+    userId: string,
+    foodItemId: Types.ObjectId,
+    orderId?: string,
+  ): Promise<OrderDocument> {
+    if (orderId) {
+      const order = await this.loadDeliveredOrder(userId, orderId);
+      const inOrder = await this.orderItemModel.exists({
+        orderId: order._id,
+        foodItemId,
+      });
+      if (!inOrder) {
+        throw new BadRequestException({
+          success: false,
+          error: {
+            code: 'ITEM_NOT_IN_ORDER',
+            message: 'You can only review items that were in this order',
+          },
+        });
+      }
+      return order;
+    }
+
+    const delivered = await this.orderModel
+      .find({
+        userId: new Types.ObjectId(userId),
+        status: OrderStatus.DELIVERED,
+      })
+      .select('_id deliveredAt')
+      .lean()
+      .exec();
+    const lines = delivered.length
+      ? await this.orderItemModel
+          .find({ orderId: { $in: delivered.map((o) => o._id) }, foodItemId })
+          .select('orderId')
+          .lean()
+          .exec()
+      : [];
+    const matching = new Set(lines.map((l) => l.orderId.toString()));
+    const latest = delivered
+      .filter((o) => matching.has(o._id.toString()))
+      .sort(
+        (a, b) =>
+          (b.deliveredAt?.getTime() ?? 0) - (a.deliveredAt?.getTime() ?? 0),
+      )[0];
+    if (!latest) {
+      throw new ForbiddenException({
+        success: false,
+        error: {
+          code: 'NOT_ORDERED',
+          message: 'You can only review meals you have ordered and received',
+        },
+      });
+    }
+    return this.loadDeliveredOrder(userId, latest._id.toString());
+  }
+
+  // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * Remember that this order has been reviewed so it leaves the prompt queue.
+   * Bookkeeping only (the review itself is already saved), so it must never
+   * fail the request, and it never blocks reviewing again later.
+   */
+  private async markOrderHandled(
+    userId: string,
+    orderId: Types.ObjectId,
+    kind: 'items' | 'order',
+  ): Promise<void> {
+    try {
+      await this.promptModel.updateOne(
+        { orderId },
+        {
+          $set: {
+            userId: new Types.ObjectId(userId),
+            status: ReviewPromptStatus.COMPLETED,
+            kind,
+          },
+        },
+        { upsert: true },
+      );
+    } catch (err) {
+      if ((err as { code?: number }).code !== 11000) {
+        this.logger.warn(
+          `Could not mark order ${orderId.toString()} as reviewed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  }
 
   /** Reviews are live straight away, so refresh the ratings they affect. */
   private async afterSubmit(
