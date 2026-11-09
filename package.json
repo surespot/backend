@@ -20,7 +20,8 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "seed": "ts-node -r tsconfig-paths/register scripts/seed.ts",
     "seed:demo-rider": "ts-node -r tsconfig-paths/register scripts/seed-demo-rider.ts",
-    "seed:demo-user": "ts-node -r tsconfig-paths/register scripts/seed-demo-user.ts"
+    "seed:demo-user": "ts-node -r tsconfig-paths/register scripts/seed-demo-user.ts",
+    "seed:review-rewards": "ts-node -r tsconfig-paths/register scripts/seed-review-rewards.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.993.0",

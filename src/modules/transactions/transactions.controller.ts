@@ -9,6 +9,8 @@ import {
   Req,
   Get,
   Query,
+  UnauthorizedException,
+  RawBodyRequest,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -115,10 +117,26 @@ export class TransactionsController {
     description: 'Webhook processed successfully',
   })
   async handleWebhook(
-    @Req() req: Request,
-    @Headers('x-paystack-signature') signature: string,
+    @Req() req: RawBodyRequest<Request>,
+    @Headers('x-paystack-signature') signature: string | undefined,
     @Body() body: { event?: string; data?: Record<string, unknown> },
   ) {
+    // The signature is mandatory and is computed over the raw request bytes
+    const isValid =
+      !!signature &&
+      !!req.rawBody &&
+      this.transactionsService.verifyWebhookSignature(req.rawBody, signature);
+
+    if (!isValid) {
+      throw new UnauthorizedException({
+        success: false,
+        error: {
+          code: 'INVALID_SIGNATURE',
+          message: 'Invalid webhook signature',
+        },
+      });
+    }
+
     const event = body?.event as string;
     const data = body?.data as Record<string, unknown>;
 
@@ -130,24 +148,6 @@ export class TransactionsController {
           message: 'Invalid webhook payload',
         },
       };
-    }
-
-    // Verify webhook signature if provided
-    if (signature) {
-      const isValid = this.transactionsService.verifyWebhookSignature(
-        JSON.stringify(body),
-        signature,
-      );
-
-      if (!isValid) {
-        return {
-          success: false,
-          error: {
-            code: 'INVALID_SIGNATURE',
-            message: 'Invalid webhook signature',
-          },
-        };
-      }
     }
 
     await this.transactionsService.handleWebhook(event, data);

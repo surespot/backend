@@ -119,6 +119,24 @@ export class TransactionsRepository {
       .exec();
   }
 
+  /** The rider-earning record for an order, if one was already written */
+  async findRiderEarningByOrderId(
+    orderId: string,
+  ): Promise<TransactionDocument | null> {
+    this.validateObjectId(orderId, 'orderId');
+    return this.transactionModel
+      .findOne({
+        orderId: new Types.ObjectId(orderId),
+        type: TransactionType.RIDER_EARNING,
+      })
+      .exec();
+  }
+
+  async deleteById(id: string): Promise<void> {
+    this.validateObjectId(id, 'transactionId');
+    await this.transactionModel.deleteOne({ _id: id }).exec();
+  }
+
   async findByUserId(
     userId: string,
     limit: number = 20,
@@ -298,6 +316,34 @@ export class TransactionsRepository {
 
     return this.transactionModel
       .findByIdAndUpdate(id, { $set: updateData }, { new: true })
+      .exec();
+  }
+
+  /**
+   * Atomically move a transaction between statuses. Returns null when the
+   * transaction is not currently in one of the `from` statuses, so callers can
+   * run side effects exactly once.
+   */
+  async transitionStatus(
+    reference: string,
+    from: TransactionStatus[],
+    to: TransactionStatus,
+    data?: {
+      providerResponse?: Record<string, unknown>;
+      failureReason?: string;
+    },
+  ): Promise<TransactionDocument | null> {
+    const updateData: Record<string, unknown> = { status: to };
+    if (data?.providerResponse)
+      updateData.providerResponse = data.providerResponse;
+    if (data?.failureReason) updateData.failureReason = data.failureReason;
+
+    return this.transactionModel
+      .findOneAndUpdate(
+        { reference, status: { $in: from } },
+        { $set: updateData },
+        { new: true },
+      )
       .exec();
   }
 

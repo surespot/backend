@@ -38,6 +38,8 @@ import { HealthModule } from './modules/health/health.module';
 import { PlacesModule } from './modules/places/places.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { MarketersModule } from './modules/marketers/marketers.module';
+import { RewardsModule } from './modules/rewards/rewards.module';
+import { ReviewsModule } from './modules/reviews/reviews.module';
 import { CorrelationMiddleware } from './common/correlation/correlation.middleware';
 import { HttpMetricsMiddleware } from './common/metrics/http-metrics.middleware';
 
@@ -161,6 +163,10 @@ import { HttpMetricsMiddleware } from './common/metrics/http-metrics.middleware'
 
     // Marketers (affiliate) module
     MarketersModule,
+
+    // Special rewards (earned codes) and post-delivery reviews
+    RewardsModule,
+    ReviewsModule,
 
     // Food Items module
     FoodItemsModule,

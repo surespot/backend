@@ -17,7 +17,12 @@ import {
 import { OrdersService } from '../orders/orders.service';
 import { PaymentStatus } from '../orders/schemas/order.schema';
 import { NotificationsService } from '../notifications/notifications.service';
+import { WalletsRepository } from '../wallets/wallets.repository';
 import * as crypto from 'crypto';
+
+// Paystack statuses that mean the payment will not complete. Anything else that is
+// not 'success' (pending, ongoing, processing, queued) is still in flight.
+const FINAL_FAILURE_STATUSES = ['failed', 'reversed', 'abandoned'];
 
 export interface InitializePaymentResult {
   transactionId: string;
@@ -58,6 +63,7 @@ export class TransactionsService {
     private readonly notificationsService: NotificationsService,
     @Inject(forwardRef(() => OrdersService))
     private readonly ordersService: OrdersService,
+    private readonly walletsRepository: WalletsRepository,
   ) {
     this.paystackSecretKey =
       this.configService.get<string>('PAYSTACK_SECRET_KEY') || '';
@@ -87,7 +93,7 @@ export class TransactionsService {
     metadata?: Record<string, unknown>,
   ): Promise<{ success: boolean; data: InitializePaymentResult }> {
     // Generate unique reference
-    const reference = `TXN-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+    const reference = `TXN-${Date.now()}-${crypto.randomBytes(8).toString('hex')}`;
 
     try {
       // Call Paystack initialize endpoint
@@ -105,9 +111,9 @@ export class TransactionsService {
             reference,
             callback_url: 'https://api.surespot.app/checkout/success',
             metadata: {
+              ...metadata,
               ...(orderId && { orderId }),
               userId,
-              ...metadata,
             },
           }),
         },
@@ -177,7 +183,32 @@ export class TransactionsService {
   async linkTransactionToOrder(
     reference: string,
     orderId: string,
+    userId: string,
   ): Promise<TransactionResponse> {
+    const transaction = await this.assertReferenceUsableBy(
+      reference,
+      userId,
+      orderId,
+    );
+
+    // Update transaction with orderId
+    transaction.orderId = transaction.orderId || (orderId as any);
+    await transaction.save();
+
+    this.logger.log(`Transaction ${reference} linked to order ${orderId}`);
+
+    return this.formatTransaction(transaction);
+  }
+
+  /**
+   * Ensure a payment reference belongs to this user and is not already attached
+   * to a different order. Returns the transaction.
+   */
+  async assertReferenceUsableBy(
+    reference: string,
+    userId: string,
+    orderId?: string,
+  ): Promise<TransactionDocument> {
     const transaction =
       await this.transactionsRepository.findByReference(reference);
 
@@ -191,13 +222,85 @@ export class TransactionsService {
       });
     }
 
-    // Update transaction with orderId
-    transaction.orderId = transaction.orderId || (orderId as any);
-    await transaction.save();
+    const ownedByUser = transaction.userId?.toString() === userId;
+    const attachedElsewhere =
+      !!transaction.orderId &&
+      (!orderId || transaction.orderId.toString() !== orderId);
 
-    this.logger.log(`Transaction ${reference} linked to order ${orderId}`);
+    if (
+      transaction.type !== TransactionType.PAYMENT ||
+      !ownedByUser ||
+      attachedElsewhere
+    ) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'PAYMENT_REFERENCE_INVALID',
+          message: 'This payment reference cannot be used for this order',
+        },
+      });
+    }
 
-    return this.formatTransaction(transaction);
+    return transaction;
+  }
+
+  /**
+   * Fetch the authoritative state of a transaction from Paystack
+   */
+  private async fetchPaystackTransaction(
+    reference: string,
+  ): Promise<Record<string, any>> {
+    const response = await fetch(
+      `${this.paystackBaseUrl}/transaction/verify/${encodeURIComponent(reference)}`,
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${this.paystackSecretKey}`,
+        },
+      },
+    );
+
+    const data: { status: boolean; message?: string; data?: any } =
+      await response.json();
+
+    if (!data.status) {
+      throw new BadRequestException({
+        success: false,
+        error: {
+          code: 'PAYMENT_VERIFICATION_FAILED',
+          message: data.message || 'Failed to verify payment',
+        },
+      });
+    }
+
+    return data.data;
+  }
+
+  /**
+   * False when Paystack confirmed less than the order this reference is attached
+   * to costs. Not-yet-attached references pass; they are re-checked once the order
+   * exists (placeOrder verifies again after linking).
+   */
+  private async paidAmountCoversOrder(
+    reference: string,
+    paystackData: Record<string, any>,
+  ): Promise<boolean> {
+    const expected =
+      await this.ordersService.getPaymentExpectationByReference(reference);
+    if (!expected) return true;
+
+    const paid = Number(paystackData.amount);
+    const covered =
+      paystackData.currency === 'NGN' &&
+      Number.isFinite(paid) &&
+      paid >= expected.total;
+
+    if (!covered) {
+      this.logger.error(
+        `[PAYMENT_ALERT] Amount mismatch for reference ${reference}: Paystack confirmed ${paystackData.amount} ${paystackData.currency}, order ${expected.orderId} total is ${expected.total} NGN kobo. Order left unpaid; needs manual review/refund.`,
+      );
+    }
+    return covered;
   }
 
   /**
@@ -205,36 +308,52 @@ export class TransactionsService {
    */
   async verifyPayment(reference: string): Promise<{
     success: boolean;
+    /** True when Paystack has not reached a final state yet (nothing was changed) */
+    pending?: boolean;
     transaction: TransactionResponse;
     paystackData?: Record<string, unknown>;
   }> {
     try {
-      // Call Paystack verify endpoint
-      const response = await fetch(
-        `${this.paystackBaseUrl}/transaction/verify/${reference}`,
-        {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${this.paystackSecretKey}`,
-          },
-        },
-      );
+      const paystackData = await this.fetchPaystackTransaction(reference);
+      const isSuccess = paystackData.status === 'success';
 
-      const data: { status: boolean; message?: string; data?: any } =
-        await response.json();
+      // pending / ongoing / processing / queued: the customer may still complete the
+      // payment (bank transfer, USSD), so do not fail or cancel anything yet.
+      if (!isSuccess && !FINAL_FAILURE_STATUSES.includes(paystackData.status)) {
+        const existing =
+          await this.transactionsRepository.findByReference(reference);
+        if (!existing) {
+          throw new NotFoundException({
+            success: false,
+            error: {
+              code: 'TRANSACTION_NOT_FOUND',
+              message: 'Transaction not found',
+            },
+          });
+        }
 
-      if (!data.status) {
+        this.logger.log(
+          `Payment for reference ${reference} is still ${paystackData.status} at Paystack, leaving it unresolved`,
+        );
+
+        return {
+          success: false,
+          pending: true,
+          transaction: this.formatTransaction(existing),
+          paystackData,
+        };
+      }
+
+      if (isSuccess && !(await this.paidAmountCoversOrder(reference, paystackData))) {
         throw new BadRequestException({
           success: false,
           error: {
-            code: 'PAYMENT_VERIFICATION_FAILED',
-            message: data.message || 'Failed to verify payment',
+            code: 'PAYMENT_AMOUNT_MISMATCH',
+            message:
+              'The amount paid does not cover this order. Please contact support.',
           },
         });
       }
-
-      const paystackData = data.data;
-      const isSuccess = paystackData.status === 'success';
 
       // Update transaction status
       const status = isSuccess
@@ -637,20 +756,25 @@ export class TransactionsService {
   /**
    * Verify Paystack webhook signature
    */
-  verifyWebhookSignature(payload: string, signature: string): boolean {
+  verifyWebhookSignature(payload: Buffer | string, signature: string): boolean {
     if (!this.paystackSecretKey) {
-      this.logger.warn(
-        'PAYSTACK_SECRET_KEY not configured, skipping signature verification',
+      // Fail closed: without the secret nothing can be authenticated
+      this.logger.error(
+        'PAYSTACK_SECRET_KEY not configured, rejecting webhook',
       );
-      return true; // Allow in development
+      return false;
     }
 
-    const hash = crypto
+    const expected = crypto
       .createHmac('sha512', this.paystackSecretKey)
       .update(payload)
-      .digest('hex');
+      .digest();
+    const received = Buffer.from(signature, 'hex');
 
-    return hash === signature;
+    return (
+      received.length === expected.length &&
+      crypto.timingSafeEqual(received, expected)
+    );
   }
 
   /**
@@ -678,6 +802,13 @@ export class TransactionsService {
       case 'refund.pending':
         // Refund initiated but not yet settled — no action needed, refund.processed fires when done
         break;
+      case 'transfer.success':
+        await this.handleTransferSuccess(data);
+        break;
+      case 'transfer.failed':
+      case 'transfer.reversed':
+        await this.handleTransferFailed(data, event);
+        break;
       default:
         this.logger.warn(`Unhandled webhook event: ${event}`);
     }
@@ -686,7 +817,23 @@ export class TransactionsService {
   private async handleChargeSuccess(
     data: Record<string, unknown>,
   ): Promise<void> {
-    const reference = data.reference as string;
+    const reference = data.reference;
+    if (typeof reference !== 'string' || !reference) {
+      this.logger.warn('charge.success webhook without a reference, ignoring');
+      return;
+    }
+
+    // Never trust the payload: confirm the charge and its amount with Paystack
+    const paystackData = await this.fetchPaystackTransaction(reference);
+    if (paystackData.status !== 'success') {
+      this.logger.warn(
+        `charge.success webhook for ${reference} but Paystack reports status ${paystackData.status}, ignoring`,
+      );
+      return;
+    }
+    if (!(await this.paidAmountCoversOrder(reference, paystackData))) {
+      return; // already alerted; retrying the webhook would not change the outcome
+    }
 
     const session = await this.transactionsRepository.startSession();
     let transaction: Awaited<
@@ -697,7 +844,12 @@ export class TransactionsService {
         transaction = await this.transactionsRepository.updateByReference(
           reference,
           TransactionStatus.SUCCESS,
-          { providerResponse: data, paidAt: new Date() },
+          {
+            providerResponse: paystackData,
+            paidAt: paystackData.paid_at
+              ? new Date(paystackData.paid_at)
+              : new Date(),
+          },
           session,
         );
 
@@ -723,6 +875,74 @@ export class TransactionsService {
     if (transaction) {
       this.logger.log(`Transaction ${reference} marked as successful`);
     }
+  }
+
+  private async handleTransferSuccess(
+    data: Record<string, unknown>,
+  ): Promise<void> {
+    const reference = data.reference;
+    if (typeof reference !== 'string' || !reference) return;
+
+    const transaction = await this.transactionsRepository.transitionStatus(
+      reference,
+      [TransactionStatus.PENDING],
+      TransactionStatus.SUCCESS,
+      { providerResponse: data },
+    );
+    if (transaction) {
+      this.logger.log(`Withdrawal ${reference} confirmed by Paystack`);
+    }
+  }
+
+  private async handleTransferFailed(
+    data: Record<string, unknown>,
+    event: string,
+  ): Promise<void> {
+    const reference = data.reference;
+    if (typeof reference !== 'string' || !reference) return;
+
+    const transaction =
+      await this.transactionsRepository.findByReference(reference);
+    if (
+      !transaction ||
+      transaction.type !== TransactionType.RIDER_WITHDRAWAL ||
+      !transaction.riderProfileId
+    ) {
+      return;
+    }
+
+    await this.releaseFailedWithdrawal(
+      reference,
+      transaction.riderProfileId.toString(),
+      transaction.amount,
+      `Paystack ${event}`,
+    );
+  }
+
+  /**
+   * Release a reserved withdrawal back to the rider's wallet. The
+   * PENDING/SUCCESS -> FAILED transition is atomic, so retries and duplicate
+   * webhooks credit at most once.
+   */
+  async releaseFailedWithdrawal(
+    reference: string,
+    riderProfileId: string,
+    amount: number,
+    reason: string,
+  ): Promise<boolean> {
+    const transitioned = await this.transactionsRepository.transitionStatus(
+      reference,
+      [TransactionStatus.PENDING, TransactionStatus.SUCCESS],
+      TransactionStatus.FAILED,
+      { failureReason: reason },
+    );
+    if (!transitioned) return false;
+
+    await this.walletsRepository.creditWallet(riderProfileId, amount);
+    this.logger.warn(
+      `Withdrawal ${reference} failed (${reason}); ${amount} kobo returned to rider ${riderProfileId}`,
+    );
+    return true;
   }
 
   private async handleChargeFailed(

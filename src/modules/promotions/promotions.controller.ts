@@ -39,8 +39,7 @@ export class PromotionsController {
 
   @Post()
   @ApiBearerAuth()
-  // @UseGuards(JwtAuthGuard, RolesGuard)
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Create a new promotion with image' })

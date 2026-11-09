@@ -48,6 +48,11 @@ export class PaymentReconciliationScheduler implements OnApplicationBootstrap {
           this.logger.log(
             `Reconciled: order ${order.orderNumber} (${ref}) confirmed`,
           );
+        } else if (result.pending) {
+          unknown++;
+          this.logger.log(
+            `Order ${order.orderNumber} (${ref}) is still in flight at Paystack, will retry`,
+          );
         } else {
           failed++;
           this.logger.log(
@@ -67,7 +72,7 @@ export class PaymentReconciliationScheduler implements OnApplicationBootstrap {
     );
   }
 
-  @Cron('0 * * * *') // hourly hard cutoff for orders Paystack never replied to
+  @Cron('0 * * * *') // hourly cutoff for orders Paystack never replied to
   async cancelAbandonedOrders() {
     const TWO_HOURS = 2 * 60 * 60 * 1000;
     const ONE_HOUR = 60 * 60 * 1000;
@@ -78,26 +83,52 @@ export class PaymentReconciliationScheduler implements OnApplicationBootstrap {
       this.ordersRepository.findOrphanedPendingCardOrders(ONE_HOUR),
     ]);
 
-    const all = [...stale, ...orphaned];
-    if (all.length === 0) {
+    if (stale.length === 0 && orphaned.length === 0) {
       this.logger.log('cancelAbandonedOrders: no abandoned or orphaned orders found');
       return;
     }
 
-    this.logger.log(
-      `Deleting ${stale.length} abandoned + ${orphaned.length} orphaned order(s)...`,
+    // PENDING means "not confirmed as paid", not "unpaid": ask Paystack one last
+    // time. Success marks the order paid; a definitive failure cancels it (via
+    // the FAILED transition). If we cannot get an answer the customer may have
+    // been charged, so leave the order alone and raise an alert instead.
+    let resolved = 0;
+    let skipped = 0;
+    for (const order of stale) {
+      const ref = order.paymentIntentId as string;
+      try {
+        const result = await this.transactionsService.verifyPayment(ref);
+        if (result.pending) {
+          skipped++;
+          this.logger.error(
+            `[PAYMENT_ALERT] Order ${order.orderNumber} (${ref}) is >2h PENDING and Paystack still reports it in flight, leaving it untouched for manual review`,
+          );
+        } else {
+          resolved++;
+        }
+      } catch (err) {
+        skipped++;
+        this.logger.error(
+          `[PAYMENT_ALERT] Order ${order.orderNumber} (${ref}) is >2h PENDING and could not be verified with Paystack, leaving it untouched for manual review: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
+    // No reference means no payment can exist for these; cancel, never delete
+    const cancelledOrphans = await this.ordersRepository.cancelPendingUnpaidOrders(
+      orphaned.map((o) => o._id),
+      'Payment was never initialized',
     );
 
-    const deleted = await this.ordersRepository.deleteManyByIds(
-      all.map((o) => o._id),
+    this.logger.warn(
+      `cancelAbandonedOrders: resolved ${resolved}, skipped ${skipped} (unverifiable), cancelled ${cancelledOrphans} orphaned order(s)`,
     );
-    this.logger.warn(`Deleted ${deleted} abandoned/orphaned order(s)`);
   }
 
   private async cleanupFailedPaymentOrders() {
-    const count = await this.ordersRepository.deleteOrdersWithFailedPayment();
+    const count = await this.ordersRepository.cancelOrdersWithFailedPayment();
     if (count > 0) {
-      this.logger.log(`Startup cleanup: deleted ${count} failed-payment order(s)`);
+      this.logger.log(`Startup cleanup: cancelled ${count} failed-payment order(s)`);
     }
   }
 }

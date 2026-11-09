@@ -1,3 +1,4 @@
+import { randomInt } from 'crypto';
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types, ClientSession } from 'mongoose';
@@ -29,6 +30,20 @@ export interface PaginationResult<T> {
     hasPrev: boolean;
   };
 }
+
+/**
+ * Orders cancelled because payment failed or was abandoned. They are kept for
+ * support and fraud review, but must never surface in customer, admin or
+ * analytics views. Use as `$nor: NEVER_PAID_CANCELLED`.
+ */
+const NEVER_PAID_CANCELLED = [
+  { paymentStatus: PaymentStatus.FAILED },
+  {
+    status: OrderStatus.CANCELLED,
+    paymentStatus: PaymentStatus.PENDING,
+    paymentMethod: { $in: ['card', 'paystack'] },
+  },
+];
 
 @Injectable()
 export class OrdersRepository {
@@ -78,6 +93,7 @@ export class OrdersRepository {
       promoCode?: string;
       promotionId?: string;
       marketerId?: string;
+      rewardGrantId?: string;
       total: number;
       itemCount: number;
       extrasCount: number;
@@ -128,9 +144,7 @@ export class OrdersRepository {
     };
 
     // Generate a 4-digit delivery confirmation code for door-delivery orders
-    orderData.deliveryConfirmationCode = Math.floor(
-      1000 + Math.random() * 9000,
-    ).toString();
+    orderData.deliveryConfirmationCode = randomInt(1000, 10000).toString();
 
     if (data.promotionId) {
       orderData.promotionId = new Types.ObjectId(data.promotionId);
@@ -138,6 +152,10 @@ export class OrdersRepository {
 
     if (data.marketerId) {
       orderData.marketerId = new Types.ObjectId(data.marketerId);
+    }
+
+    if (data.rewardGrantId) {
+      orderData.rewardGrantId = new Types.ObjectId(data.rewardGrantId);
     }
 
     if (data.pickupLocationId) {
@@ -509,6 +527,32 @@ export class OrdersRepository {
     return updatedOrder;
   }
 
+  /**
+   * Atomically move an order OUT_FOR_DELIVERY -> DELIVERED for its assigned rider.
+   * Returns null when the order is no longer in that state (already delivered, cancelled,
+   * reassigned), so only one concurrent caller can ever win the transition.
+   */
+  async markDeliveredIfOutForDelivery(
+    orderId: string,
+    riderProfileId: string,
+  ): Promise<OrderDocument | null> {
+    this.validateObjectId(orderId, 'orderId');
+    this.validateObjectId(riderProfileId, 'riderProfileId');
+
+    return this.orderModel
+      .findOneAndUpdate(
+        {
+          _id: new Types.ObjectId(orderId),
+          status: OrderStatus.OUT_FOR_DELIVERY,
+          assignedRiderId: new Types.ObjectId(riderProfileId),
+        },
+        { $set: { status: OrderStatus.DELIVERED, deliveredAt: new Date() } },
+        { new: true },
+      )
+      .populate('pickupLocationId')
+      .exec();
+  }
+
   async unassignRiderFromOrder(orderId: string): Promise<OrderDocument | null> {
     this.validateObjectId(orderId, 'orderId');
     return this.orderModel
@@ -606,7 +650,10 @@ export class OrdersRepository {
     this.validateObjectId(userId, 'userId');
 
     return this.orderModel
-      .find({ userId: new Types.ObjectId(userId) })
+      .find({
+        userId: new Types.ObjectId(userId),
+        $nor: NEVER_PAID_CANCELLED,
+      })
       .sort({ createdAt: -1 })
       .limit(limit)
       .populate('pickupLocationId')
@@ -625,7 +672,7 @@ export class OrdersRepository {
         ? new Types.ObjectId(pickupLocationId)
         : pickupLocationId;
     const userIds = await this.orderModel
-      .distinct('userId', { pickupLocationId: id })
+      .distinct('userId', { pickupLocationId: id, $nor: NEVER_PAID_CANCELLED })
       .exec();
     return userIds.map((oid) => (oid as Types.ObjectId).toString());
   }
@@ -638,7 +685,10 @@ export class OrdersRepository {
   ): Promise<Array<{ userId: Types.ObjectId }>> {
     const objectIds = pickupLocationIds.map((id) => new Types.ObjectId(id));
     return this.orderModel
-      .find({ pickupLocationId: { $in: objectIds } })
+      .find({
+        pickupLocationId: { $in: objectIds },
+        $nor: NEVER_PAID_CANCELLED,
+      })
       .select('userId')
       .lean()
       .exec() as Promise<Array<{ userId: Types.ObjectId }>>;
@@ -1148,6 +1198,7 @@ export class OrdersRepository {
     const matchStage: Record<string, unknown> = {
       createdAt: { $gte: dayStart, $lte: dayEnd },
       paymentMethod: { $ne: 'demo' },
+      $nor: NEVER_PAID_CANCELLED,
     };
 
     if (pickupLocationId) {
@@ -1191,6 +1242,7 @@ export class OrdersRepository {
     const matchStage: Record<string, unknown> = {
       createdAt: { $gte: startDate, $lte: endDate },
       paymentMethod: { $ne: 'demo' },
+      $nor: NEVER_PAID_CANCELLED,
     };
 
     if (pickupLocationId) {
@@ -1236,6 +1288,7 @@ export class OrdersRepository {
     const orderMatchStage: Record<string, unknown> = {
       createdAt: { $gte: startDate, $lte: endDate },
       paymentMethod: { $ne: 'demo' },
+      $nor: NEVER_PAID_CANCELLED,
     };
 
     if (pickupLocationId) {
@@ -1403,7 +1456,11 @@ export class OrdersRepository {
   ): Promise<Record<OrderStatus, number>> {
     const matchStage: Record<string, unknown> = {
       paymentMethod: { $ne: 'demo' },
-      $nor: [{ paymentMethod: 'card', paymentStatus: 'pending' }, { paymentMethod: 'paystack', paymentStatus: 'pending' }],
+      $nor: [
+        { paymentMethod: 'card', paymentStatus: 'pending' },
+        { paymentMethod: 'paystack', paymentStatus: 'pending' },
+        ...NEVER_PAID_CANCELLED,
+      ],
     };
     if (pickupLocationId) {
       matchStage.pickupLocationId = pickupLocationId;
@@ -1519,16 +1576,51 @@ export class OrdersRepository {
     return result.deletedCount > 0;
   }
 
-  async deleteManyByIds(ids: Types.ObjectId[]): Promise<number> {
+  /**
+   * Cancel orders that are still PENDING/PENDING. The status filter makes this
+   * race-safe: an order whose payment was confirmed in the meantime is skipped.
+   */
+  async cancelPendingUnpaidOrders(
+    ids: Types.ObjectId[],
+    reason: string,
+  ): Promise<number> {
     if (ids.length === 0) return 0;
-    const result = await this.orderModel.deleteMany({ _id: { $in: ids } }).exec();
-    return result.deletedCount ?? 0;
+    const result = await this.orderModel
+      .updateMany(
+        {
+          _id: { $in: ids },
+          status: OrderStatus.PENDING,
+          paymentStatus: PaymentStatus.PENDING,
+        },
+        {
+          $set: {
+            status: OrderStatus.CANCELLED,
+            cancelledAt: new Date(),
+            cancellationReason: reason,
+          },
+        },
+      )
+      .exec();
+    return result.modifiedCount ?? 0;
   }
 
-  async deleteOrdersWithFailedPayment(): Promise<number> {
+  /** Legacy cleanup: failed-payment orders that were never cancelled */
+  async cancelOrdersWithFailedPayment(): Promise<number> {
     const result = await this.orderModel
-      .deleteMany({ paymentStatus: PaymentStatus.FAILED })
+      .updateMany(
+        {
+          paymentStatus: PaymentStatus.FAILED,
+          status: { $ne: OrderStatus.CANCELLED },
+        },
+        {
+          $set: {
+            status: OrderStatus.CANCELLED,
+            cancelledAt: new Date(),
+            cancellationReason: 'Payment failed',
+          },
+        },
+      )
       .exec();
-    return result.deletedCount ?? 0;
+    return result.modifiedCount ?? 0;
   }
 }

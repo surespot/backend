@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument, Types } from 'mongoose';
+import { HydratedDocument, Schema as MongooseSchema, Types } from 'mongoose';
 
 export type OrderDocument = HydratedDocument<Order>;
 
@@ -117,6 +117,14 @@ export class Order {
 
   @Prop({ type: Types.ObjectId, ref: 'Marketer' })
   marketerId?: Types.ObjectId;
+
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'RewardGrant',
+    index: true,
+    sparse: true,
+  })
+  rewardGrantId?: Types.ObjectId; // Special-reward grant applied to this order
 
   @Prop({ type: Number, default: 0, min: 0 })
   total: number; // Final total (in kobo)

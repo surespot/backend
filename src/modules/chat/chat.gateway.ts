@@ -25,6 +25,8 @@ import {
 } from '../notifications/schemas/websocket-connection.schema';
 import { AuthRepository } from '../auth/auth.repository';
 import { ChatService } from './chat.service';
+import { isAccessTokenPayload } from '../auth/jwt-token.util';
+import { socketCors } from '../../common/websocket/socket-cors';
 
 interface AuthenticatedSocket extends Socket {
   userId?: string;
@@ -32,7 +34,7 @@ interface AuthenticatedSocket extends Socket {
 }
 
 @WebSocketGateway({
-  cors: { origin: '*', credentials: true },
+  cors: socketCors,
   namespace: '/chat',
   pingTimeout: 20000,
   pingInterval: 25000,
@@ -93,7 +95,7 @@ export class ChatGateway
 
       const userId = payload.sub;
 
-      if (!userId) {
+      if (!userId || !isAccessTokenPayload(payload)) {
         this.logger.warn(
           `Connection rejected: No userId in token for socket ${client.id}`,
         );
@@ -201,6 +203,13 @@ export class ChatGateway
       return { success: false, error: 'Not authenticated' };
     }
 
+    if (
+      typeof data?.conversationId !== 'string' ||
+      !(await this.chatService.isParticipant(data.conversationId, client.userId))
+    ) {
+      return { success: false, error: 'Access denied' };
+    }
+
     const roomName = `conversation:${data.conversationId}`;
     await client.join(roomName);
 
@@ -285,6 +294,10 @@ export class ChatGateway
     }
 
     const roomName = `conversation:${data.conversationId}`;
+    // Only sockets that were admitted to the room (participants) may signal into it
+    if (!client.rooms.has(roomName)) {
+      return;
+    }
     // Emit to all in conversation room except sender
     client.to(roomName).emit('user-typing', {
       conversationId: data.conversationId,
@@ -306,6 +319,9 @@ export class ChatGateway
     }
 
     const roomName = `conversation:${data.conversationId}`;
+    if (!client.rooms.has(roomName)) {
+      return;
+    }
     // Emit to all in conversation room except sender
     client.to(roomName).emit('user-typing', {
       conversationId: data.conversationId,

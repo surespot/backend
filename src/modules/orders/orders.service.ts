@@ -1,3 +1,4 @@
+import { randomInt } from 'crypto';
 import {
   Injectable,
   NotFoundException,
@@ -28,6 +29,10 @@ import { RiderLocationRepository } from '../riders/rider-location.repository';
 import { RidersRepository } from '../riders/riders.repository';
 import { RiderStatus } from '../riders/schemas/rider-profile.schema';
 import { PlacesService } from '../places/places.service';
+import {
+  RewardsService,
+  REWARD_CODE_NOT_RECOGNISED,
+} from '../rewards/rewards.service';
 import { Types, ClientSession } from 'mongoose';
 import { ValidateCheckoutDto } from './dto/validate-checkout.dto';
 import { PlaceOrderDto } from './dto/place-order.dto';
@@ -173,6 +178,7 @@ export class OrdersService {
     private readonly configService: ConfigService,
     private readonly settingsService: SettingsService,
     private readonly placesService: PlacesService,
+    private readonly rewardsService: RewardsService,
     @InjectQueue('rider-search') private readonly riderSearchQueue: Queue,
     @InjectQueue('pickup-timeout') private readonly pickupTimeoutQueue: Queue,
   ) {}
@@ -187,7 +193,7 @@ export class OrdersService {
    * Generate a random 4-digit confirmation code
    */
   private generateDeliveryConfirmationCode(): string {
-    return Math.floor(1000 + Math.random() * 9000).toString();
+    return randomInt(1000, 10000).toString();
   }
 
   /**
@@ -663,6 +669,7 @@ export class OrdersService {
     let discountAmount = cart.discountAmount;
     let discountPercent = cart.discountPercent;
     let promoCode = cart.promoCode;
+    let rewardGrantId: string | undefined;
 
     if (codeToValidate) {
       const cartTotal = adjustedSubtotal + cart.extrasTotal;
@@ -700,14 +707,32 @@ export class OrdersService {
           discountPercent = marketerValidation.marketer?.discountValue;
           promoCode = codeToValidate.toUpperCase();
         } else {
-          const message =
-            promoValidation.message !== 'Invalid or expired discount code'
-              ? promoValidation.message
-              : marketerValidation.message || promoValidation.message;
-          errors.push({
-            field: 'promoCode',
-            message: message || 'Invalid promo code',
-          });
+          // Last: a special-reward code the customer has earned (e.g. by reviewing)
+          const rewardValidation = await this.rewardsService.resolveForCheckout(
+            codeToValidate,
+            userId,
+            promoContext,
+          );
+          if (rewardValidation.valid) {
+            discountAmount = rewardValidation.discountAmount;
+            discountPercent =
+              rewardValidation.campaign.discountType === 'percentage'
+                ? rewardValidation.campaign.discountValue
+                : undefined;
+            promoCode = codeToValidate.toUpperCase();
+            rewardGrantId = rewardValidation.grantId;
+          } else {
+            // Show the most specific reason any validator gave, not the generic "unknown code"
+            const message = [
+              promoValidation.message,
+              marketerValidation.message,
+              rewardValidation.message,
+            ].find((m) => m && m !== REWARD_CODE_NOT_RECOGNISED);
+            errors.push({
+              field: 'promoCode',
+              message: message || 'Invalid or expired discount code',
+            });
+          }
         }
       }
     }
@@ -755,6 +780,7 @@ export class OrdersService {
           discountAmount,
           discountPercent,
           promoCode,
+          rewardGrantId,
           total,
         },
         deliveryFee,
@@ -782,6 +808,16 @@ export class OrdersService {
         const existing = await this.ordersRepository.findByPaymentIntentId(
           dto.paymentIntentId,
         );
+        if (existing && existing.userId.toString() !== userId) {
+          // Someone else's payment reference: never return or reuse their order
+          throw new BadRequestException({
+            success: false,
+            error: {
+              code: 'PAYMENT_REFERENCE_INVALID',
+              message: 'This payment reference cannot be used for this order',
+            },
+          });
+        }
         if (existing) {
           this.logger.log(
             `Order already exists for paymentIntentId ${dto.paymentIntentId}, returning existing order`,
@@ -791,6 +827,14 @@ export class OrdersService {
             message: 'Order placed successfully',
             data: await this.formatOrder(existing),
           };
+        }
+
+        // The reference must be this user's own and not attached to another order
+        if (!this.isDemoUser(isDemo)) {
+          await this.transactionsService.assertReferenceUsableBy(
+            dto.paymentIntentId,
+            userId,
+          );
         }
       }
 
@@ -953,6 +997,7 @@ export class OrdersService {
               discountPercent: validation.data.cart.discountPercent,
               promoCode: validation.data.cart.promoCode,
               promotionId,
+              rewardGrantId: validation.data.cart.rewardGrantId,
               marketerId,
               total: validation.data.cart.total,
               itemCount: cart.itemCount,
@@ -1084,6 +1129,7 @@ export class OrdersService {
             await this.transactionsService.linkTransactionToOrder(
               dto.paymentIntentId,
               activeOrder._id.toString(),
+              userId,
             );
           } catch (e) {
             this.logger.warn(
@@ -1231,8 +1277,8 @@ export class OrdersService {
           if (updatedOrder) {
             order = updatedOrder;
           }
-        } else if (!verification.success) {
-          // Payment failed, update order status
+        } else if (!verification.pending) {
+          // Payment definitively failed, update order status
           await this.ordersRepository.updateOrder(order._id.toString(), {
             paymentStatus: PaymentStatus.FAILED,
           });
@@ -1991,6 +2037,11 @@ export class OrdersService {
 
     if (paymentStatus === PaymentStatus.PAID) {
       extra.status = OrderStatus.CONFIRMED;
+    } else if (paymentStatus === PaymentStatus.FAILED) {
+      // Keep the order for support/fraud review instead of deleting it
+      extra.status = OrderStatus.CANCELLED;
+      extra.cancelledAt = new Date();
+      extra.cancellationReason = 'Payment failed';
     }
 
     const order = await this.ordersRepository.atomicUpdatePaymentStatus(
@@ -2037,6 +2088,26 @@ export class OrdersService {
         } catch (e) {
           this.logger.warn(
             `Could not record marketer usage for order ${order.orderNumber}: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      }
+
+      // Use up the special reward now that payment is confirmed
+      if (order.rewardGrantId) {
+        try {
+          const redeemed = await this.rewardsService.redeem(
+            order.rewardGrantId.toString(),
+            order.userId.toString(),
+            order._id.toString(),
+          );
+          if (!redeemed) {
+            this.logger.warn(
+              `[REWARD_ALERT] Order ${order.orderNumber} was paid with reward ${order.rewardGrantId.toString()} but it could not be marked redeemed (already used or revoked meanwhile)`,
+            );
+          }
+        } catch (e) {
+          this.logger.warn(
+            `Could not redeem reward for order ${order.orderNumber}: ${e instanceof Error ? e.message : String(e)}`,
           );
         }
       }
@@ -2183,14 +2254,19 @@ export class OrdersService {
         order.orderNumber,
         order._id.toString(),
       );
-      try {
-        await this.ordersRepository.deleteById(order._id.toString());
-      } catch (e) {
-        this.logger.warn(
-          `Could not delete failed-payment order ${order.orderNumber}: ${e instanceof Error ? e.message : String(e)}`,
-        );
-      }
     }
+  }
+
+  /**
+   * What a payment reference must cover: the total of the order it is attached to.
+   * Null when no order carries this reference yet.
+   */
+  async getPaymentExpectationByReference(
+    reference: string,
+  ): Promise<{ orderId: string; total: number } | null> {
+    const order = await this.ordersRepository.findByPaymentIntentId(reference);
+    if (!order) return null;
+    return { orderId: order._id.toString(), total: order.total };
   }
 
   // ============ Helper Methods ============
@@ -2227,6 +2303,7 @@ export class OrdersService {
   private async formatOrder(
     order: OrderDocument,
     riderBaseFeeKobo?: number,
+    options?: { hideDeliveryCode?: boolean },
   ): Promise<OrderResponse> {
     const orderItems = await this.ordersRepository.findOrderItemsByOrderId(
       order._id.toString(),
@@ -2306,7 +2383,10 @@ export class OrdersService {
       assignedRiderId: order.assignedRiderId?.toString(),
       assignedAt: order.assignedAt?.toISOString(),
       assignedBy: order.assignedBy?.toString(),
-      deliveryConfirmationCode: order.deliveryConfirmationCode,
+      // The code is the customer's proof of delivery. Riders must never receive it.
+      deliveryConfirmationCode: options?.hideDeliveryCode
+        ? undefined
+        : order.deliveryConfirmationCode,
       refundId: order.refundId,
       hasBeenRefunded: order.hasBeenRefunded ?? false,
       ...(riderBaseFeeKobo !== undefined && {
@@ -2740,7 +2820,9 @@ export class OrdersService {
       }
       const demoOrders = await this.ordersRepository.findDemoReadyOrders(demoCustomer._id.toString());
       const validDemoOrders = demoOrders.filter((o) => o.deliveryAddress?.address);
-      const formattedOrders = await Promise.all(validDemoOrders.map((o) => this.formatOrder(o, riderBaseFeeKobo)));
+      const formattedOrders = await Promise.all(validDemoOrders.map((o) =>
+          this.formatOrder(o, riderBaseFeeKobo, { hideDeliveryCode: true }),
+        ));
       return {
         success: true,
         message: 'Eligible orders retrieved successfully',
@@ -2861,7 +2943,9 @@ export class OrdersService {
     const totalPages = Math.ceil(total / limit);
 
     const formattedOrders = await Promise.all(
-      paginatedOrders.map((order) => this.formatOrder(order, riderBaseFeeKobo)),
+      paginatedOrders.map((order) =>
+        this.formatOrder(order, riderBaseFeeKobo, { hideDeliveryCode: true }),
+      ),
     );
 
     return {
@@ -3137,7 +3221,11 @@ export class OrdersService {
 
     // At this point, order is guaranteed to be non-null
     const acceptSiteSettings = await this.settingsService.get().catch(() => null);
-    const formattedOrder = await this.formatOrder(order, acceptSiteSettings?.riderBaseFeeKobo ?? 50000);
+    const formattedOrder = await this.formatOrder(
+      order,
+      acceptSiteSettings?.riderBaseFeeKobo ?? 50000,
+      { hideDeliveryCode: true },
+    );
 
     await this.notifyRiderAssigned(order, riderProfile._id.toString(), `${riderProfile.firstName || ''} ${riderProfile.lastName || ''}`.trim() || 'A rider');
 
@@ -3181,7 +3269,9 @@ export class OrdersService {
     const assignedRiderBaseFee = assignedSiteSettings?.riderBaseFeeKobo ?? 50000;
 
     const formattedOrders = await Promise.all(
-      orders.items.map((order) => this.formatOrder(order, assignedRiderBaseFee)),
+      orders.items.map((order) =>
+        this.formatOrder(order, assignedRiderBaseFee, { hideDeliveryCode: true }),
+      ),
     );
 
     return {
@@ -3288,18 +3378,20 @@ export class OrdersService {
       }
     }
 
-    // Update order status to DELIVERED
-    const updatedOrder = await this.ordersRepository.updateOrder(orderId, {
-      status: OrderStatus.DELIVERED,
-      deliveredAt: new Date(),
-    });
+    // Atomic OUT_FOR_DELIVERY -> DELIVERED. Of any concurrent requests only one gets the
+    // order back, so delivery side effects (notification, earnings credit) run exactly once.
+    const updatedOrder = await this.ordersRepository.markDeliveredIfOutForDelivery(
+      orderId,
+      riderProfile._id.toString(),
+    );
 
     if (!updatedOrder) {
-      throw new InternalServerErrorException({
+      throw new BadRequestException({
         success: false,
         error: {
-          code: 'ORDER_UPDATE_FAILED',
-          message: 'Failed to update order status',
+          code: 'INVALID_ORDER_STATUS',
+          message:
+            'This order is no longer out for delivery. It may already have been marked as delivered.',
         },
       });
     }
@@ -3392,7 +3484,9 @@ export class OrdersService {
     return {
       success: true,
       message: 'Order marked as delivered successfully',
-      data: await this.formatOrder(updatedOrder, deliveryRiderBaseFee),
+      data: await this.formatOrder(updatedOrder, deliveryRiderBaseFee, {
+        hideDeliveryCode: true,
+      }),
     };
   }
 
@@ -3518,7 +3612,11 @@ export class OrdersService {
     return {
       success: true,
       message: 'Order marked as picked up successfully',
-      data: await this.formatOrder(updatedOrder, pickupSiteSettings?.riderBaseFeeKobo ?? 50000),
+      data: await this.formatOrder(
+        updatedOrder,
+        pickupSiteSettings?.riderBaseFeeKobo ?? 50000,
+        { hideDeliveryCode: true },
+      ),
     };
   }
 
