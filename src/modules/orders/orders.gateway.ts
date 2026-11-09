@@ -14,6 +14,8 @@ import { ConfigService } from '@nestjs/config';
 import { AuthRepository } from '../auth/auth.repository';
 import { RidersRepository } from '../riders/riders.repository';
 import { UserRole } from '../auth/schemas/user.schema';
+import { socketCors } from '../../common/websocket/socket-cors';
+import { isAccessTokenPayload } from '../auth/jwt-token.util';
 
 interface AuthenticatedRiderSocket extends Socket {
   userId?: string;
@@ -22,7 +24,7 @@ interface AuthenticatedRiderSocket extends Socket {
 }
 
 @WebSocketGateway({
-  cors: { origin: '*', credentials: true },
+  cors: socketCors,
   namespace: '/orders',
   pingTimeout: 20000,
   pingInterval: 25000,
@@ -86,7 +88,7 @@ export class OrdersGateway
 
       const userId = payload.sub;
 
-      if (!userId) {
+      if (!userId || !isAccessTokenPayload(payload)) {
         this.logger.warn(
           `Connection rejected: No userId in token for socket ${client.id}`,
         );

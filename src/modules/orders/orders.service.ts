@@ -1,3 +1,4 @@
+import { randomInt } from 'crypto';
 import {
   Injectable,
   NotFoundException,
@@ -192,7 +193,7 @@ export class OrdersService {
    * Generate a random 4-digit confirmation code
    */
   private generateDeliveryConfirmationCode(): string {
-    return Math.floor(1000 + Math.random() * 9000).toString();
+    return randomInt(1000, 10000).toString();
   }
 
   /**
@@ -2302,6 +2303,7 @@ export class OrdersService {
   private async formatOrder(
     order: OrderDocument,
     riderBaseFeeKobo?: number,
+    options?: { hideDeliveryCode?: boolean },
   ): Promise<OrderResponse> {
     const orderItems = await this.ordersRepository.findOrderItemsByOrderId(
       order._id.toString(),
@@ -2381,7 +2383,10 @@ export class OrdersService {
       assignedRiderId: order.assignedRiderId?.toString(),
       assignedAt: order.assignedAt?.toISOString(),
       assignedBy: order.assignedBy?.toString(),
-      deliveryConfirmationCode: order.deliveryConfirmationCode,
+      // The code is the customer's proof of delivery. Riders must never receive it.
+      deliveryConfirmationCode: options?.hideDeliveryCode
+        ? undefined
+        : order.deliveryConfirmationCode,
       refundId: order.refundId,
       hasBeenRefunded: order.hasBeenRefunded ?? false,
       ...(riderBaseFeeKobo !== undefined && {
@@ -2815,7 +2820,9 @@ export class OrdersService {
       }
       const demoOrders = await this.ordersRepository.findDemoReadyOrders(demoCustomer._id.toString());
       const validDemoOrders = demoOrders.filter((o) => o.deliveryAddress?.address);
-      const formattedOrders = await Promise.all(validDemoOrders.map((o) => this.formatOrder(o, riderBaseFeeKobo)));
+      const formattedOrders = await Promise.all(validDemoOrders.map((o) =>
+          this.formatOrder(o, riderBaseFeeKobo, { hideDeliveryCode: true }),
+        ));
       return {
         success: true,
         message: 'Eligible orders retrieved successfully',
@@ -2936,7 +2943,9 @@ export class OrdersService {
     const totalPages = Math.ceil(total / limit);
 
     const formattedOrders = await Promise.all(
-      paginatedOrders.map((order) => this.formatOrder(order, riderBaseFeeKobo)),
+      paginatedOrders.map((order) =>
+        this.formatOrder(order, riderBaseFeeKobo, { hideDeliveryCode: true }),
+      ),
     );
 
     return {
@@ -3212,7 +3221,11 @@ export class OrdersService {
 
     // At this point, order is guaranteed to be non-null
     const acceptSiteSettings = await this.settingsService.get().catch(() => null);
-    const formattedOrder = await this.formatOrder(order, acceptSiteSettings?.riderBaseFeeKobo ?? 50000);
+    const formattedOrder = await this.formatOrder(
+      order,
+      acceptSiteSettings?.riderBaseFeeKobo ?? 50000,
+      { hideDeliveryCode: true },
+    );
 
     await this.notifyRiderAssigned(order, riderProfile._id.toString(), `${riderProfile.firstName || ''} ${riderProfile.lastName || ''}`.trim() || 'A rider');
 
@@ -3256,7 +3269,9 @@ export class OrdersService {
     const assignedRiderBaseFee = assignedSiteSettings?.riderBaseFeeKobo ?? 50000;
 
     const formattedOrders = await Promise.all(
-      orders.items.map((order) => this.formatOrder(order, assignedRiderBaseFee)),
+      orders.items.map((order) =>
+        this.formatOrder(order, assignedRiderBaseFee, { hideDeliveryCode: true }),
+      ),
     );
 
     return {
@@ -3363,18 +3378,20 @@ export class OrdersService {
       }
     }
 
-    // Update order status to DELIVERED
-    const updatedOrder = await this.ordersRepository.updateOrder(orderId, {
-      status: OrderStatus.DELIVERED,
-      deliveredAt: new Date(),
-    });
+    // Atomic OUT_FOR_DELIVERY -> DELIVERED. Of any concurrent requests only one gets the
+    // order back, so delivery side effects (notification, earnings credit) run exactly once.
+    const updatedOrder = await this.ordersRepository.markDeliveredIfOutForDelivery(
+      orderId,
+      riderProfile._id.toString(),
+    );
 
     if (!updatedOrder) {
-      throw new InternalServerErrorException({
+      throw new BadRequestException({
         success: false,
         error: {
-          code: 'ORDER_UPDATE_FAILED',
-          message: 'Failed to update order status',
+          code: 'INVALID_ORDER_STATUS',
+          message:
+            'This order is no longer out for delivery. It may already have been marked as delivered.',
         },
       });
     }
@@ -3467,7 +3484,9 @@ export class OrdersService {
     return {
       success: true,
       message: 'Order marked as delivered successfully',
-      data: await this.formatOrder(updatedOrder, deliveryRiderBaseFee),
+      data: await this.formatOrder(updatedOrder, deliveryRiderBaseFee, {
+        hideDeliveryCode: true,
+      }),
     };
   }
 
@@ -3593,7 +3612,11 @@ export class OrdersService {
     return {
       success: true,
       message: 'Order marked as picked up successfully',
-      data: await this.formatOrder(updatedOrder, pickupSiteSettings?.riderBaseFeeKobo ?? 50000),
+      data: await this.formatOrder(
+        updatedOrder,
+        pickupSiteSettings?.riderBaseFeeKobo ?? 50000,
+        { hideDeliveryCode: true },
+      ),
     };
   }
 

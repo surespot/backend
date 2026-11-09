@@ -8,7 +8,10 @@ import {
   Inject,
   forwardRef,
   Optional,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
+import { RedisService } from '../../common/redis/redis.service';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
@@ -115,6 +118,8 @@ export class AuthService {
     @Optional()
     @Inject(forwardRef(() => NotificationsService))
     private readonly notificationsService: NotificationsService | null,
+    @Optional()
+    private readonly redisService?: RedisService,
   ) {
     this.otpExpiryMinutes = Number(
       this.configService.get('OTP_EXPIRY_MINUTES') ?? 5,
@@ -1581,6 +1586,86 @@ export class AuthService {
     }
   }
 
+  // ============ LOGIN LOCKOUT ============
+
+  private static readonly LOGIN_MAX_FAILURES = 5;
+  private static readonly LOGIN_LOCK_SECONDS = 15 * 60;
+
+  /**
+   * The counter belongs to the ACCOUNT once it is found, so typing the email, the phone number
+   * or a different spelling of either all feed the same count. Identifiers that match no account
+   * are counted per identifier, so a lockout never reveals which accounts exist.
+   */
+  private loginFailKey(
+    user: { _id: { toString(): string } } | null,
+    identifier: string,
+  ): string {
+    return user
+      ? `auth:login-fail:user:${user._id.toString()}`
+      : `auth:login-fail:ident:${identifier.trim().toLowerCase()}`;
+  }
+
+  /**
+   * After 5 failed logins for the same account, further attempts are refused for 15 minutes
+   * (counted from the first failure) and a successful login clears the count. Redis trouble
+   * never blocks logins: the lockout simply does not apply.
+   */
+  private async assertLoginNotLocked(key: string): Promise<void> {
+    if (!this.redisService) return;
+    let failures = 0;
+    let retryAfter = AuthService.LOGIN_LOCK_SECONDS;
+    try {
+      failures = Number((await this.redisService.get(key)) ?? 0);
+      if (failures >= AuthService.LOGIN_MAX_FAILURES) {
+        const ttl = await this.redisService.ttl(key);
+        if (ttl > 0) {
+          retryAfter = ttl;
+        } else if (ttl === -1) {
+          // A locked counter with no expiry would lock the account forever: heal it
+          await this.redisService.expire(key, AuthService.LOGIN_LOCK_SECONDS);
+        }
+      }
+    } catch (err) {
+      this.logger.warn('Login lockout check skipped: Redis unavailable', {
+        context: 'AuthService',
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
+
+    if (failures >= AuthService.LOGIN_MAX_FAILURES) {
+      throw new HttpException(
+        {
+          success: false,
+          error: {
+            code: 'AUTH_TOO_MANY_ATTEMPTS',
+            message: `Too many failed login attempts. Try again in ${Math.ceil(retryAfter / 60)} minute(s), or reset your password.`,
+            details: { retryAfter },
+          },
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+  }
+
+  private async recordLoginFailure(key: string): Promise<void> {
+    if (!this.redisService) return;
+    try {
+      await this.redisService.incrWithTtl(key, AuthService.LOGIN_LOCK_SECONDS);
+    } catch {
+      // fail open
+    }
+  }
+
+  private async clearLoginFailures(key: string): Promise<void> {
+    if (!this.redisService) return;
+    try {
+      await this.redisService.del(key);
+    } catch {
+      // fail open
+    }
+  }
+
   // ============ LOGIN FLOW ============
 
   async login(dto: LoginDto): Promise<{
@@ -1592,7 +1677,14 @@ export class AuthService {
     const user = await this.authRepository.findUserByEmailOrPhone(
       dto.identifier,
     );
+
+    // Too many recent failures for this account: refuse before checking the password
+    const failKey = this.loginFailKey(user, dto.identifier);
+    await this.assertLoginNotLocked(failKey);
+
     if (!user || !user.password) {
+      // Unknown identifiers are counted too, so lockouts do not reveal which accounts exist
+      await this.recordLoginFailure(failKey);
       throw new UnauthorizedException({
         success: false,
         error: {
@@ -1605,6 +1697,7 @@ export class AuthService {
     // Verify password
     const isPasswordValid = await bcrypt.compare(dto.password, user.password);
     if (!isPasswordValid) {
+      await this.recordLoginFailure(failKey);
       throw new UnauthorizedException({
         success: false,
         error: {
@@ -1613,6 +1706,8 @@ export class AuthService {
         },
       });
     }
+
+    await this.clearLoginFailures(failKey);
 
     // Check if user is active
     if (!user.isActive) {
@@ -1679,21 +1774,27 @@ export class AuthService {
     // Update last login
     await this.authRepository.updateLastLoginAt(user._id);
 
-    // TEMP: push-notification pipeline smoke test — remove once FCM/APNS delivery is verified end-to-end
-    this.notificationsService
-      ?.queueNotification(
-        user._id.toString(),
-        NotificationType.GENERAL,
-        'Welcome to Surespot',
-        'Welcome to Surespot!',
-        { isLoginPushTest: true },
-        [NotificationChannel.IN_APP, NotificationChannel.PUSH],
-      )
-      .catch((err) => {
-        this.logger.warn(
-          `Failed to send login push test notification to user ${user._id.toString()}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      });
+    // Welcome-back nudge on customer logins. Riders and admins are skipped: the
+    // "order some food" copy makes no sense for them.
+    if (user.role === UserRole.USER) {
+      const firstName = user.firstName?.trim();
+      this.notificationsService
+        ?.queueNotification(
+          user._id.toString(),
+          NotificationType.GENERAL,
+          firstName
+            ? `Welcome back, ${firstName}!`
+            : 'Welcome back to Surespot!',
+          'Hungry? Your next favourite meal is just a few taps away. Order now.',
+          { isWelcomeBack: true },
+          [NotificationChannel.IN_APP, NotificationChannel.PUSH],
+        )
+        .catch((err) => {
+          this.logger.warn(
+            `Failed to send welcome-back notification to user ${user._id.toString()}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+    }
 
     // Generate tokens
     const tokens = await this.generateTokenPair(user._id.toString(), user.role);
@@ -2248,12 +2349,26 @@ export class AuthService {
     data: { tokens: TokenPair };
   }> {
     // Verify reset token
-    let payload: { phone?: string; email?: string };
+    let payload: { phone?: string; email?: string; purpose?: string };
     try {
-      payload = this.jwtService.verify<{ phone?: string; email?: string }>(
-        resetToken,
-      );
+      payload = this.jwtService.verify<{
+        phone?: string;
+        email?: string;
+        purpose?: string;
+      }>(resetToken);
     } catch {
+      throw new UnauthorizedException({
+        success: false,
+        error: {
+          code: 'AUTH_TOKEN_INVALID',
+          message: 'Invalid or expired reset token',
+        },
+      });
+    }
+
+    // Only a token minted by the password-reset OTP step may reset a password.
+    // (Signup, email-verification and completion tokens carry a phone/email too.)
+    if (payload.purpose !== 'password_reset') {
       throw new UnauthorizedException({
         success: false,
         error: {
@@ -2513,6 +2628,7 @@ export class AuthService {
       {
         sub: userId,
         role,
+        type: 'access',
       },
       {
         expiresIn: this.jwtAccessExpiry,
@@ -2524,6 +2640,7 @@ export class AuthService {
         sub: userId,
         role,
         family,
+        type: 'refresh',
       },
       {
         expiresIn: this.jwtRefreshExpiry,

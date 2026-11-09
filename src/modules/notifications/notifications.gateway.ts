@@ -23,6 +23,8 @@ import {
   NotificationChannel,
 } from './schemas/notification.schema';
 import { emitToRoomWithRetry } from '../../common/websocket/emit-with-retry.util';
+import { socketCors } from '../../common/websocket/socket-cors';
+import { isAccessTokenPayload } from '../auth/jwt-token.util';
 
 interface AuthenticatedSocket extends Socket {
   userId?: string;
@@ -31,7 +33,7 @@ interface AuthenticatedSocket extends Socket {
 }
 
 @WebSocketGateway({
-  cors: { origin: '*', credentials: true },
+  cors: socketCors,
   namespace: '/notifications',
   pingTimeout: 20000,
   pingInterval: 25000,
@@ -115,7 +117,7 @@ export class NotificationsGateway
 
     const userId = payload.sub;
 
-    if (!userId) {
+    if (!userId || !isAccessTokenPayload(payload)) {
       this.logger.warn(
         `Connection rejected: No userId in token for socket ${client.id}`,
       );

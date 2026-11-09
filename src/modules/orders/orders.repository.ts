@@ -1,3 +1,4 @@
+import { randomInt } from 'crypto';
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types, ClientSession } from 'mongoose';
@@ -143,9 +144,7 @@ export class OrdersRepository {
     };
 
     // Generate a 4-digit delivery confirmation code for door-delivery orders
-    orderData.deliveryConfirmationCode = Math.floor(
-      1000 + Math.random() * 9000,
-    ).toString();
+    orderData.deliveryConfirmationCode = randomInt(1000, 10000).toString();
 
     if (data.promotionId) {
       orderData.promotionId = new Types.ObjectId(data.promotionId);
@@ -526,6 +525,32 @@ export class OrdersRepository {
       .exec();
 
     return updatedOrder;
+  }
+
+  /**
+   * Atomically move an order OUT_FOR_DELIVERY -> DELIVERED for its assigned rider.
+   * Returns null when the order is no longer in that state (already delivered, cancelled,
+   * reassigned), so only one concurrent caller can ever win the transition.
+   */
+  async markDeliveredIfOutForDelivery(
+    orderId: string,
+    riderProfileId: string,
+  ): Promise<OrderDocument | null> {
+    this.validateObjectId(orderId, 'orderId');
+    this.validateObjectId(riderProfileId, 'riderProfileId');
+
+    return this.orderModel
+      .findOneAndUpdate(
+        {
+          _id: new Types.ObjectId(orderId),
+          status: OrderStatus.OUT_FOR_DELIVERY,
+          assignedRiderId: new Types.ObjectId(riderProfileId),
+        },
+        { $set: { status: OrderStatus.DELIVERED, deliveredAt: new Date() } },
+        { new: true },
+      )
+      .populate('pickupLocationId')
+      .exec();
   }
 
   async unassignRiderFromOrder(orderId: string): Promise<OrderDocument | null> {

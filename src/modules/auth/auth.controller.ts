@@ -1,3 +1,4 @@
+import { Throttle } from '@nestjs/throttler';
 import {
   Controller,
   Get,
@@ -32,6 +33,10 @@ import type { Request, Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import {
+  TargetRateLimit,
+  TargetRateLimitGuard,
+} from './guards/target-rate-limit.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { SendOtpDto } from './dto/send-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
@@ -127,7 +132,13 @@ export class AuthController {
     return res.redirect(`${redirectUrl}/auth/google/callback?${params}`);
   }
 
+  // OTP routes are limited per phone/email (TargetRateLimit), which is what protects a number
+  // from being spammed or guessed at. The per-IP limit is only a loose ceiling, because many
+  // real users share one IP behind a mobile carrier's NAT.
   @Post('phone/send-otp')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @UseGuards(TargetRateLimitGuard)
+  @TargetRateLimit('reg-send', 5)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Send OTP for phone registration' })
   @ApiResponse({
@@ -157,6 +168,9 @@ export class AuthController {
   }
 
   @Post('phone/verify-otp')
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  @UseGuards(TargetRateLimitGuard)
+  @TargetRateLimit('reg-verify', 10)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Verify OTP for phone registration' })
   @ApiResponse({
@@ -182,6 +196,9 @@ export class AuthController {
   }
 
   @Post('phone/resend-otp')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @UseGuards(TargetRateLimitGuard)
+  @TargetRateLimit('reg-send', 5)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Resend OTP' })
   @ApiResponse({
@@ -193,6 +210,9 @@ export class AuthController {
   }
 
   @Post('email/send-otp')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @UseGuards(TargetRateLimitGuard)
+  @TargetRateLimit('reg-send', 5)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Send OTP for email registration' })
   @ApiResponse({
@@ -222,6 +242,9 @@ export class AuthController {
   }
 
   @Post('email/verify-otp')
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  @UseGuards(TargetRateLimitGuard)
+  @TargetRateLimit('reg-verify', 10)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Verify OTP for email registration' })
   @ApiResponse({
@@ -247,6 +270,9 @@ export class AuthController {
   }
 
   @Post('admin/pickup/verify-login-code')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @UseGuards(TargetRateLimitGuard)
+  @TargetRateLimit('admin-verify', 10)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:
@@ -268,6 +294,7 @@ export class AuthController {
   }
 
   @Post('admin/bootstrap/verify-code')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   @ApiTags('admin-bootstrap')
   @ApiOperation({
@@ -284,6 +311,7 @@ export class AuthController {
   }
 
   @Post('admin/bootstrap/create')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @HttpCode(HttpStatus.CREATED)
   @ApiTags('admin-bootstrap')
   @ApiOperation({
@@ -320,6 +348,9 @@ export class AuthController {
   }
 
   @Post('email/resend-otp')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @UseGuards(TargetRateLimitGuard)
+  @TargetRateLimit('reg-send', 5)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Resend OTP for email registration' })
   @ApiResponse({
@@ -497,6 +528,7 @@ export class AuthController {
   }
 
   @Post('login')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Login with phone and password' })
   @ApiResponse({
@@ -575,6 +607,9 @@ export class AuthController {
   }
 
   @Post('password/reset/send-otp')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @UseGuards(TargetRateLimitGuard)
+  @TargetRateLimit('reset-send', 5)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Send OTP for password reset' })
   @ApiResponse({
@@ -596,6 +631,9 @@ export class AuthController {
   }
 
   @Post('password/reset/verify-otp')
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  @UseGuards(TargetRateLimitGuard)
+  @TargetRateLimit('reset-verify', 10)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Verify OTP for password reset' })
   @ApiResponse({
@@ -621,6 +659,7 @@ export class AuthController {
   }
 
   @Post('password/reset/update')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Update password after OTP verification' })
   @ApiHeader({
@@ -657,6 +696,9 @@ export class AuthController {
   }
 
   @Post('password/reset/email/send-otp')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @UseGuards(TargetRateLimitGuard)
+  @TargetRateLimit('reset-send', 5)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Send OTP for email password reset' })
   @ApiResponse({
@@ -682,6 +724,9 @@ export class AuthController {
   }
 
   @Post('password/reset/email/verify-otp')
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  @UseGuards(TargetRateLimitGuard)
+  @TargetRateLimit('reset-verify', 10)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Verify OTP for email password reset' })
   @ApiResponse({
@@ -748,6 +793,7 @@ export class AuthController {
   }
 
   @Post('account/add-email')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
@@ -786,6 +832,7 @@ export class AuthController {
   }
 
   @Post('account/verify-email-otp')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
@@ -956,6 +1003,7 @@ export class AuthController {
   }
 
   @Post('phone/change-request')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -982,6 +1030,7 @@ export class AuthController {
   }
 
   @Post('phone/change-verify')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

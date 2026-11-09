@@ -3,10 +3,14 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
 import { AuthRepository } from '../auth.repository';
+import { isAccessTokenPayload } from '../jwt-token.util';
 
 export interface JwtPayload {
   sub: string; // userId
   role: string;
+  type?: string;
+  family?: string;
+  purpose?: string;
   iat?: number;
   exp?: number;
 }
@@ -28,7 +32,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   async validate(payload: JwtPayload) {
     const userId = payload.sub;
 
-    if (!userId) {
+    // Refresh tokens and one-off tokens (signup, reset, ...) are signed with the same secret
+    // but must never authenticate an API call.
+    if (!userId || !isAccessTokenPayload(payload)) {
       throw new UnauthorizedException({
         success: false,
         error: {

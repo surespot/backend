@@ -27,6 +27,14 @@ async function bootstrap() {
 
   const configService = app.get(ConfigService);
 
+  // The API sits behind nginx (see playbooks/setup.yml). Without this every request appears to
+  // come from nginx's address, so the rate limiter would count all users as one client.
+  // TRUST_PROXY_HOPS = number of proxies in front of the app (default 1).
+  const trustProxyHops = Number(configService.get('TRUST_PROXY_HOPS') ?? 1);
+  if (trustProxyHops > 0) {
+    app.getHttpAdapter().getInstance().set('trust proxy', trustProxyHops);
+  }
+
   // Use Redis adapter for Socket.io when REDIS_HOST is set (multi-instance deployments)
   const redisIoAdapter = new RedisIoAdapter(app);
   await redisIoAdapter.connectToRedis();
@@ -70,15 +78,17 @@ async function bootstrap() {
     ],
   });
 
-  // Swagger setup
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('SureSpot API')
-    .setDescription('SureSpot food delivery API')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('docs', app, document);
+  // Swagger is a developer tool: it maps every endpoint, so it is not served in production
+  if (process.env.NODE_ENV !== 'production') {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('SureSpot API')
+      .setDescription('SureSpot food delivery API')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup('docs', app, document);
+  }
 
   // Graceful shutdown: drain connections on SIGTERM/SIGINT
   app.enableShutdownHooks();

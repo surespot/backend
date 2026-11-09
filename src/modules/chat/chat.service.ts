@@ -464,6 +464,22 @@ export class ChatService {
   /**
    * Mark conversation as read
    */
+  /**
+   * Whether the user is a participant of the conversation. Never throws: an
+   * unknown or malformed conversation id simply is not accessible.
+   */
+  async isParticipant(conversationId: string, userId: string): Promise<boolean> {
+    try {
+      const conversation = await this.chatRepository.findById(conversationId);
+      if (!conversation) return false;
+      return conversation.participants.some(
+        (p) => p.userId?._id?.toString() === userId,
+      );
+    } catch {
+      return false;
+    }
+  }
+
   async markRead(conversationId: string, userId: string) {
     // Verify user is participant
     const conversation = await this.chatRepository.findById(conversationId);

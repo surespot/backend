@@ -119,6 +119,24 @@ export class TransactionsRepository {
       .exec();
   }
 
+  /** The rider-earning record for an order, if one was already written */
+  async findRiderEarningByOrderId(
+    orderId: string,
+  ): Promise<TransactionDocument | null> {
+    this.validateObjectId(orderId, 'orderId');
+    return this.transactionModel
+      .findOne({
+        orderId: new Types.ObjectId(orderId),
+        type: TransactionType.RIDER_EARNING,
+      })
+      .exec();
+  }
+
+  async deleteById(id: string): Promise<void> {
+    this.validateObjectId(id, 'transactionId');
+    await this.transactionModel.deleteOne({ _id: id }).exec();
+  }
+
   async findByUserId(
     userId: string,
     limit: number = 20,

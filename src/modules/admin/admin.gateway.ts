@@ -19,6 +19,8 @@ import {
   WebSocketConnectionDocument,
 } from '../notifications/schemas/websocket-connection.schema';
 import { emitToRoomWithRetry } from '../../common/websocket/emit-with-retry.util';
+import { socketCors } from '../../common/websocket/socket-cors';
+import { isAccessTokenPayload } from '../auth/jwt-token.util';
 
 interface AuthenticatedAdminSocket extends Socket {
   userId?: string;
@@ -27,7 +29,7 @@ interface AuthenticatedAdminSocket extends Socket {
 }
 
 @WebSocketGateway({
-  cors: { origin: '*', credentials: true },
+  cors: socketCors,
   namespace: '/admin',
   pingTimeout: 20000,
   pingInterval: 25000,
@@ -98,6 +100,14 @@ export class AdminGateway
       }
 
       const userId = payload.sub;
+
+      if (!userId || !isAccessTokenPayload(payload)) {
+        this.logger.warn(
+          `Admin connection rejected: not an access token for socket ${client.id}`,
+        );
+        client.disconnect();
+        return;
+      }
 
       // Fetch user from database
       const user = await this.authRepository.findUserById(userId);

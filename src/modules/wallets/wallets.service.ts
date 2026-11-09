@@ -246,20 +246,49 @@ export class WalletsService {
       return;
     }
 
-    // Credit wallet balance
-    await this.walletsRepository.creditWallet(riderProfileId, amount);
+    // One earning per order, ever. The record is written first under a deterministic
+    // reference (unique index), so a repeated or concurrent call stops here, before any
+    // money moves. The lookup also covers earnings written under the old reference format.
+    const alreadyCredited =
+      await this.transactionsRepository.findRiderEarningByOrderId(orderId);
+    if (alreadyCredited) {
+      this.logger.warn(
+        `Rider earning for order ${orderId} was already credited, skipping`,
+      );
+      return;
+    }
 
-    // Create transaction record (initially pending)
-    const reference = `EARN-${orderNumber}-${Date.now()}`;
-    const transaction = await this.transactionsRepository.create({
-      riderProfileId,
-      orderId,
-      type: TransactionType.RIDER_EARNING,
-      amount,
-      paymentMethod: 'per_delivery',
-      provider: PaymentProvider.PAYSTACK,
-      reference,
-    });
+    const reference = `EARN-${orderId}`;
+    let transaction: Awaited<ReturnType<typeof this.transactionsRepository.create>>;
+    try {
+      transaction = await this.transactionsRepository.create({
+        riderProfileId,
+        orderId,
+        type: TransactionType.RIDER_EARNING,
+        amount,
+        paymentMethod: 'per_delivery',
+        provider: PaymentProvider.PAYSTACK,
+        reference,
+      });
+    } catch (error) {
+      if ((error as { code?: number })?.code === 11000) {
+        this.logger.warn(
+          `Rider earning for order ${orderId} is being credited by another request, skipping`,
+        );
+        return;
+      }
+      throw error;
+    }
+
+    // Credit wallet balance. If it fails, drop the record so the credit can be retried.
+    try {
+      await this.walletsRepository.creditWallet(riderProfileId, amount);
+    } catch (error) {
+      await this.transactionsRepository
+        .deleteById(transaction._id.toString())
+        .catch(() => undefined);
+      throw error;
+    }
 
     // Mark transaction as successful
     await this.transactionsRepository.updateStatus(
