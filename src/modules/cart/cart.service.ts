@@ -6,6 +6,10 @@ import {
 import { CartRepository } from './cart.repository';
 import { FoodItemsRepository } from '../food-items/food-items.repository';
 import { PromotionsService } from '../promotions/promotions.service';
+import {
+  RewardsService,
+  REWARD_CODE_NOT_RECOGNISED,
+} from '../rewards/rewards.service';
 import { MarketersService } from '../marketers/marketers.service';
 import { AdminMenuRepository } from '../admin/admin-menu.repository';
 import { AddItemToCartDto } from './dto/add-item-to-cart.dto';
@@ -72,6 +76,7 @@ export class CartService {
     private readonly foodItemsRepository: FoodItemsRepository,
     private readonly promotionsService: PromotionsService,
     private readonly marketersService: MarketersService,
+    private readonly rewardsService: RewardsService,
     private readonly adminMenuRepository: AdminMenuRepository,
   ) {}
 
@@ -635,14 +640,34 @@ export class CartService {
         waivesDelivery = marketerResult.waivesDelivery;
         marketerId = marketerResult.marketer?.id;
       } else {
-        const message =
-          promoResult.message !== 'Invalid or expired discount code'
-            ? promoResult.message
-            : marketerResult.message || promoResult.message;
-        throw new BadRequestException({
-          success: false,
-          error: { code: 'PROMO_CODE_INVALID', message: message || 'Invalid promo code' },
-        });
+        // Last: a special-reward code the customer has earned (e.g. by reviewing)
+        const rewardResult = await this.rewardsService.resolveForCheckout(
+          code,
+          userId,
+          promoContext,
+        );
+        if (rewardResult.valid) {
+          discountAmount = rewardResult.discountAmount;
+          discountPercent =
+            rewardResult.campaign.discountType === 'percentage'
+              ? rewardResult.campaign.discountValue
+              : undefined;
+          waivesDelivery = rewardResult.waivesDelivery;
+        } else {
+          // Show the most specific reason any validator gave, not the generic "unknown code"
+          const message = [
+            promoResult.message,
+            marketerResult.message,
+            rewardResult.message,
+          ].find((m) => m && m !== REWARD_CODE_NOT_RECOGNISED);
+          throw new BadRequestException({
+            success: false,
+            error: {
+              code: 'PROMO_CODE_INVALID',
+              message: message || 'Invalid or expired discount code',
+            },
+          });
+        }
       }
     }
 
@@ -773,10 +798,25 @@ export class CartService {
           discountPercent = undefined;
         }
       } else {
-        // Promo no longer valid, remove it
-        await this.cartRepository.clearCartPromo(cartId);
-        discountAmount = 0;
-        discountPercent = undefined;
+        // Not a promotion or marketer code: it may be a special-reward code
+        const rewardValidation = await this.rewardsService.resolveForCheckout(
+          cart.promoCode,
+          cart.userId.toString(),
+          promoContext,
+        );
+        if (rewardValidation.valid) {
+          discountAmount = rewardValidation.discountAmount;
+          discountPercent =
+            rewardValidation.campaign.discountType === 'percentage'
+              ? rewardValidation.campaign.discountValue
+              : undefined;
+          total = Math.max(0, total - discountAmount);
+        } else {
+          // Promo no longer valid, remove it
+          await this.cartRepository.clearCartPromo(cartId);
+          discountAmount = 0;
+          discountPercent = undefined;
+        }
       }
     }
 

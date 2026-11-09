@@ -11,6 +11,7 @@ import { AuthModule } from '../auth/auth.module';
 import { FoodItemsModule } from '../food-items/food-items.module';
 import { PromotionsModule } from '../promotions/promotions.module';
 import { MarketersModule } from '../marketers/marketers.module';
+import { RewardsModule } from '../rewards/rewards.module';
 import { AdminMenuRepository } from '../admin/admin-menu.repository';
 import {
   PickupLocationItemAvailability,
@@ -34,6 +35,7 @@ import {
     forwardRef(() => FoodItemsModule),
     PromotionsModule,
     MarketersModule,
+    forwardRef(() => RewardsModule),
   ],
   controllers: [CartController],
   providers: [CartService, CartRepository, CartScheduler, AdminMenuRepository],
